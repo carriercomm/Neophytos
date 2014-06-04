@@ -116,47 +116,52 @@ class Client:
 		# decrypt message (drop off encrypted type field)
 		data = self.crypter.decrypt(data[1:])
 		type = data[0]
+		data = data[1:]
 		
 		# process message based on type
 		if type == ServerType.LoginResult:
 			print('login result data:[%s]' % data)
-			if data[1:2] == b'y':
+			if data[0] == b'y':
 				return True
 			return False
 		if type == ServerType.DirList:
-			return data[1:].split('/')
+			# i hate to chop strings but...later make more efficent
+			list = []
+			while len(data) > 0:
+				# parse header
+				fnamesz, frev = struct.unpack_from('>HI', data)
+				# grab out name
+				fname = data[2 + 4: 2 + 4 + fnamesz]
+				# chop off part we just read
+				data = data[2 + 4 + fnamesz:]
+				# build list
+				list.append((fname, frev))
+			# return list
+			return list
 		if type == ServerType.FileRead:
-			return data[1:]
+			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileWrite:
-			if data[1:2] == b'y':
-				return True
-			return False
+			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileSize:
-			return struct.unpack_from('>Q', data[1:])
+			return struct.unpack_from('>BQ', data)
 		if type == ServerType.FileTrun:
-			if data[1:2] == b'y':
-				return True
-			return False
+			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileDel:
-			if data[1:2] == b'y':
-				return True
-			return False
+			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileCopy:
-			if data[1:2] == b'y':
-				return True
-			return False
+			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileMove:
-			if data[1:2] == b'y':
-				return True
-			return False
+			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileHash:
-			return data[1:]
+			return (struct.unpack_from('>B', data)[0], data[1:])
 		if type == ServerType.FileStash:
-			if data[1:2] == b'y':
-				return True
-			return False
+			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileGetStashes:
-			return data[1:].split('/')
+			parts =  data.split('.')
+			out = []
+			for part in parts:
+				out.append(int(part))
+			return out
 		raise UnknownMessageTypeException('%s' % type)
 	
 	# read a single message from the stream and exits after specified time

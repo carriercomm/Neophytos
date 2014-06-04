@@ -9,6 +9,12 @@ from misc import *
 
 import pubcrypt
 
+class DoubleTypeOrRevException(Exception):
+	pass
+	
+class NodeTypeUnknownException(Exception):
+	pass
+
 class ServerClient:
 	def __init__(self, sock, addr, kpub, kpri):
 		self.sock = sock
@@ -44,6 +50,21 @@ class ServerClient:
 		# process the message
 		self.ProcessMessage(msg, vector)
 		
+	def SanitizePath(self, path):
+		while path.find(b'..') < 0:
+			path = path.replace(b'..', b'.')
+		return path
+		
+	def GetPathParts(self, fname)
+		# break out base path if specified otherwise consider in root
+		pos = fname.rfind(b'/')
+		if pos < 0:
+			fbase = '/'
+		else:
+			fbase = fname[0:pos]
+			fname = fname[pos + 1:]
+		return fbase, fname
+			
 	def ProcessMessage(self, msg, vector):
 		type = msg[0]
 		msg = msg[1:]
@@ -82,6 +103,7 @@ class ServerClient:
 				print('account does not exist')
 				self.WriteMessage(struct.pack('>B', ServerType.LoginResult) + b'n')
 				return
+			print('loading account')
 			# load account information
 			fd = open('./accounts/%s' % aid, 'r')
 			self.info = eval(fd.read())
@@ -102,16 +124,122 @@ class ServerClient:
 			
 		# return a list of nodes in directory
 		if type == ClientType.DirList:
-			cpath = msg
+			# remove any dot dots to prevent backing out of root
+			cpath = '%s/%s' % (self.info['disk-path'], self.SanitizePath(msg))
+			nodes = os.listdir(cpath)
+			objs = []
+			for node in nodes:
+				# break node into appropriate parts
+				frev = node[0:node.find('.')]
+				fname = bytes(node[node.find('.') + 1:], 'utf8')
+				# there should be only one type of each fname
+				if (fname, frev) not in objs:
+					# store so we can detect duplicates
+					objs.append((fname, frev))
+				else:
+					# since were in development stage get our attention!
+					raise DoubleTypeOrRevException()
+					# remove it before it causes more problems
+					os.remove('%s/%s' % (cpath, node))
+			# serialize output into list of entries
+			out = []
+			for key in objs:
+				out.append(struct.pack('>HI', len(key[0]), key[1]) + key[0])
+			out = b''.join(out)
+			
+			self.WriteMessage(struct.pack('>B', ServerType.DirList) + out)	
+			return
+
+		if type == ClientType.FileSize:
+			rev = struct.unpack_from('>H', msg)[0]
+			fname = msg[2:]
+			
+			fbase, fname = self.GetPathParts(fname)
+			
+			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			if os.path.exists(fpath) is False:
+				self.WriteMessage(struct.pack('>BBQ', ServerType.FileSize, 0, 0), vector)
+				return
+			
+			fd = open(fpath, 'rb')
+			fd.seek(0, 2)
+			sz = fd.tell()
+			fd.close()
+			
+			self.WriteMessage(struct.pack('>BBQ', ServerType.FileSize, 1, sz), vector)
+			return
+			
+		if type == ClientType.FileTrun:
+			rev, newsize = struct.unpack_from('>HQ', msg)
+			fname = msg[2 + 8:]
+			
+			fbase, fname = self.GetPathParts(fname)
+			
+			# this will either create the file OR change the size of it
+			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			fd = open(fpath, 'wb')
+			fd.truncate(newsize)
+			fd.close()
+			self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 1), vector)
+			return
 			
 		if type == ClientType.FileRead:
+			rev, offset, length = struct.unpack_from('>HQQ', msg)
+			fname = msg[2 + 8 + 8:]
+			
+			# maximum read length default is 1MB (anything bigger must be split into separate requests)
+			# OR.. we could spawn a special thread that would lock this client and perform the work
+			# in parallel with this main thread
+			if length > self.info.get('max-read-length', 1024 * 1024 * 1):
+				self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 2), vector)
+				return
+
+			# get path parts
+			fbase, fname = self.GetPathParts(fname)
+			
+			# build full path to file (including revision)
+			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			if os.path.exists(fpath) is False:
+				# oops.. no such file (lets tell them it failed)
+				self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 0), vector)
+				return
+			# okay open the file and read from it
+			# later.. i might want to cache file descriptors to increase performance (or even mmap files actually)
+			fd = open(fpath, 'rb')
+			fd.seek(offset)
+			data = fd.read(length)
+			fd.close()
+			
+			self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 1) + data, vector)
 			return
 		if type == ClientType.FileWrite:
+			rev, offset, fnamesz = struct.unpack_from('>HQH', msg)
+			fname = msg[2 + 8:2 + 8 + fnamesz]
+			data = msg[2 + 8 + fnamesz:]
+			
+			if length > self.info.get('max-write-length', 1024 * 1024 * 1):
+				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
+				return
+			
+			fbase, fname = self.GetPathParts(fname)
+			
+			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			if os.path.exists(fpath) is False:
+				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 0), vector)
+				return
+			
+			fd = open(fpath, 'wb')
+			fd.seek(0, 2)
+			max = fd.tell()
+			if offset + len(data) >= max:
+				# you can not write past end of the file (use truncate command)
+				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
+				return
+			fd.seek(offset)
+			fd.write(data)
+			fd.close()
+			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 1))
 			return
-		if type == ClientType.FileSize:
-			pass
-		if type == ClientType.FileTrun:
-			pass
 		if type == ClientType.FileDel:
 			pass
 		if type == ClientType.FileCopy:
