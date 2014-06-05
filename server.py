@@ -3,6 +3,7 @@ import sys
 import socket
 import select
 import struct
+import shutil
 
 from pkttypes import *
 from misc import *
@@ -15,11 +16,16 @@ class DoubleTypeOrRevException(Exception):
 class NodeTypeUnknownException(Exception):
 	pass
 
+class DataBufferOverflowException(Exception):
+	pass
+	
 class ServerClient:
-	def __init__(self, sock, addr, kpub, kpri):
+	def __init__(self, sock, addr, kpub, kpri, server):
 		self.sock = sock
 		self.addr = addr
 		self.hdr = b''
+		
+		self.server = server
 		
 		self.kpub = kpub
 		self.kpri = kpri
@@ -47,17 +53,19 @@ class ServerClient:
 		if msg is None:
 			return
 			
+		print('type-vector', type(vector))
+			
 		# process the message
 		self.ProcessMessage(msg, vector)
 		
 	def SanitizePath(self, path):
-		while path.find(b'..') < 0:
+		while path.find(b'..') > -1:
 			path = path.replace(b'..', b'.')
 		return path
 		
-	def GetPathParts(self, fname)
+	def GetPathParts(self, fname):
 		# break out base path if specified otherwise consider in root
-		pos = fname.rfind(b'/')
+		pos = fname.rfind('/')
 		if pos < 0:
 			fbase = '/'
 		else:
@@ -71,14 +79,14 @@ class ServerClient:
 		
 		# unencrypted messages
 		if type == ClientType.GetPublicKey:
-			self.WriteMessage(struct.pack('>BH', ServerType.PublicKey, len(self.kpub[0])) + self.kpub[0] + self.kpub[1])
+			self.WriteMessage(struct.pack('>BH', ServerType.PublicKey, len(self.kpub[0])) + self.kpub[0] + self.kpub[1], vector)
 			print('len(kpub[0]):%s' % (len(self.kpub[0])))
 			return
 		if type == ClientType.SetupCrypt:
 			key = pubcrypt.decrypt(msg, self.kpri)
 			print('key:%s' % key)
 			self.crypter = SymCrypt(key)
-			self.WriteMessage(struct.pack('>B', ServerType.SetupCrypt))
+			self.WriteMessage(struct.pack('>B', ServerType.SetupCrypt), vector)
 			return
 		# anything else must be encrypted
 		if type != ClientType.Encrypted:
@@ -101,7 +109,7 @@ class ServerClient:
 			# check that account exists
 			if os.path.exists('./accounts/%s' % aid) is False:
 				print('account does not exist')
-				self.WriteMessage(struct.pack('>B', ServerType.LoginResult) + b'n')
+				self.WriteMessage(struct.pack('>B', ServerType.LoginResult) + b'n', vector)
 				return
 			print('loading account')
 			# load account information
@@ -113,46 +121,52 @@ class ServerClient:
 			if os.path.exists(diskpath) is False:
 				os.makedirs(diskpath)
 			print('login good')
-			self.WriteMessage(struct.pack('>B', ServerType.LoginResult) + b'y')
+			self.WriteMessage(struct.pack('>B', ServerType.LoginResult) + b'y', vector)
 			return
 			
 		# anything past this point needs to
 		# be logged into the system
 		if self.info is None:
-			self.WriteMessage(struct.pack('>B', ServerType.LoginRequired))
+			self.WriteMessage(struct.pack('>B', ServerType.LoginRequired), vector)
 			return
 			
 		# return a list of nodes in directory
 		if type == ClientType.DirList:
 			# remove any dot dots to prevent backing out of root
-			cpath = '%s/%s' % (self.info['disk-path'], self.SanitizePath(msg))
+			print('doing directory listing')
+			cpath = '%s/%s' % (self.info['disk-path'], self.SanitizePath(msg).decode('utf8', 'ignore'))
+			print('	calling os.listdir(%s)' % cpath)
 			nodes = os.listdir(cpath)
 			objs = []
+			print('	iterating nodes')
 			for node in nodes:
 				# break node into appropriate parts
-				frev = node[0:node.find('.')]
+				frev = int(node[0:node.find('.')])
 				fname = bytes(node[node.find('.') + 1:], 'utf8')
 				# there should be only one type of each fname
 				if (fname, frev) not in objs:
 					# store so we can detect duplicates
 					objs.append((fname, frev))
+					print('	added fname:%s frev:%s' % (fname, frev))
 				else:
 					# since were in development stage get our attention!
 					raise DoubleTypeOrRevException()
 					# remove it before it causes more problems
 					os.remove('%s/%s' % (cpath, node))
 			# serialize output into list of entries
+			print('	serializing')
 			out = []
 			for key in objs:
+				print('key[0]:[%s]' % key[0])
 				out.append(struct.pack('>HI', len(key[0]), key[1]) + key[0])
 			out = b''.join(out)
-			
-			self.WriteMessage(struct.pack('>B', ServerType.DirList) + out)	
+			print('	writing message')
+			self.WriteMessage(struct.pack('>B', ServerType.DirList) + out, vector)	
 			return
 
 		if type == ClientType.FileSize:
 			rev = struct.unpack_from('>H', msg)[0]
-			fname = msg[2:]
+			fname = msg[2:].decode('utf8', 'ignore')
 			
 			fbase, fname = self.GetPathParts(fname)
 			
@@ -170,8 +184,9 @@ class ServerClient:
 			return
 			
 		if type == ClientType.FileTrun:
+			print('truncating file')
 			rev, newsize = struct.unpack_from('>HQ', msg)
-			fname = msg[2 + 8:]
+			fname = msg[2 + 8:].decode('utf8', 'ignore')
 			
 			fbase, fname = self.GetPathParts(fname)
 			
@@ -185,7 +200,7 @@ class ServerClient:
 			
 		if type == ClientType.FileRead:
 			rev, offset, length = struct.unpack_from('>HQQ', msg)
-			fname = msg[2 + 8 + 8:]
+			fname = msg[2 + 8 + 8:].decode('utf8', 'ignore')
 			
 			# maximum read length default is 1MB (anything bigger must be split into separate requests)
 			# OR.. we could spawn a special thread that would lock this client and perform the work
@@ -212,10 +227,74 @@ class ServerClient:
 			
 			self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 1) + data, vector)
 			return
+		if type == ClientType.FileCopy or type == ClientType.FileMove:
+			srcrev, dstrev, srclen = struct.unpack_from('>HHH', msg)
+			fsrc = msg[2 * 3:2 * 3 + srclen].decode('utf8', 'ignore')
+			fdst = msg[2 * 3 + srclen:].decode('utf8', 'ignore')
+			
+			fsrcbase, fsrcname = self.GetPathParts(fsrc)
+			fdstbase, fdstname = self.GetPathParts(fdst)
+			
+			fsrcpath = '%s/%s/%s.%s' % (self.info['disk-path'], fsrcbase, srcrev, fsrcname)
+			fdstpath = '%s/%s/%s.%s' % (self.info['disk-path'], fdstbase, dstrev, fdstname)
+			
+			if os.path.exists(fdstpath) is True:
+				if type == ClientType.FileCopy:
+					self.WriteMessage(struct.pack('>BB', ServerType.FileCopy, 0), vector)
+				else:
+					self.WriteMessage(struct.pack('>BB', ServerType.FileMove, 0), vector)
+				return
+			
+			if type == ClientType.FileMove:
+				# handles move across different file systems (or uses rename)
+				shutil.move(fsrcpath, fdstpath)
+				self.WriteMessage(struct.pack('>BB', ServerType.FileMove, 1), vector)
+			else:
+				# handles copy across different file systems
+				shutil.copyfile(fsrcpath, fdstpath)
+				self.WriteMessage(struct.pack('>BB', ServerType.FileCopy, 1), vector)
+			return
+			
+		if type == ClientType.FileDel:
+			rev = struct.unpack_from('>H', msg)[0]
+			fname = msg[2:].decode('utf8', 'ignore')
+			
+			fbase, fname = self.GetPathParts(fname)
+			
+			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			if os.path.exists(fpath) is False:
+				self.WriteMessage(struct.pack('>BB', ServerType.FileDel, 0), vector)
+				return
+			os.remove(fpath)
+			self.WriteMessage(struct.pack('>BB', ServerType.FileDel, 1), vector)
+			return
+		if type == ClientType.FileHash:
+			rev, offset, length = struct.unpack_from('>HQQ', msg)
+			fname = msg[2 + 8 * 2:].decode('utf8', 'ignore')
+			
+			fbase, fname = self.GetPathParts(fname)
+			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)			
+			
+			if os.path.exists(fpath) is False:
+				self.WriteMessage(struct.pack('>BB', ServerType.FileHash, 0), vector)
+				return
+			
+			fd = open(fpath, 'r+b')
+			fd.seek(offset)
+			data = fd.read(length)
+			fd.close()
+			
+			data = HASHIT(data)
+			
+			self.WriteMessage(struct.pack('>BB', ServerType.FileHash, 1) + data, vector)
+			return
 		if type == ClientType.FileWrite:
 			rev, offset, fnamesz = struct.unpack_from('>HQH', msg)
-			fname = msg[2 + 8:2 + 8 + fnamesz]
-			data = msg[2 + 8 + fnamesz:]
+			fname = msg[2 + 8 + 2:2 + 8 + 2 + fnamesz].decode('utf8', 'ignore')
+			data = msg[2 + 8 + 2 + fnamesz:]
+			length = len(data)
+			
+			print('len(data)', len(data))
 			
 			if length > self.info.get('max-write-length', 1024 * 1024 * 1):
 				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
@@ -224,13 +303,15 @@ class ServerClient:
 			fbase, fname = self.GetPathParts(fname)
 			
 			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			print('fpath', fpath)
 			if os.path.exists(fpath) is False:
 				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 0), vector)
 				return
 			
-			fd = open(fpath, 'wb')
+			fd = open(fpath, 'r+b')
 			fd.seek(0, 2)
 			max = fd.tell()
+			print('max:%s' % max)
 			if offset + len(data) >= max:
 				# you can not write past end of the file (use truncate command)
 				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
@@ -238,22 +319,14 @@ class ServerClient:
 			fd.seek(offset)
 			fd.write(data)
 			fd.close()
-			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 1))
-			return
-		if type == ClientType.FileDel:
-			pass
-		if type == ClientType.FileCopy:
-			pass
-		if type == ClientType.FileMove:
-			pass
-		if type == ClientType.FileHash:
-			pass
+			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 1), vector)
+			return			
 		if type == ClientType.FileStash:
 			pass
 		if type == ClientType.FileGetStashes:
 			pass
 		
-	def WriteMessage(self, data, vector = 0):		
+	def WriteMessage(self, data, vector):		
 		# get type
 		type = data[0]
 		
@@ -277,6 +350,10 @@ class ServerClient:
 	def ProcessData(self, data):
 		self.data = self.data + data
 		
+		if len(self.data) > 1024 * 1024 * 10:
+			print('client buffer too big - dropping client')
+			raise DataBufferOverflowException()
+		
 		print('processing data', len(self.data))
 		# do we need to read a message header and can we?
 		if self.wsz is None and len(self.data) >= 8 + 4:
@@ -299,7 +376,6 @@ class ServerClient:
 		
 		# return the message and vector
 		self.wsz = None
-		self.wvector = None
 		return (_ret, self.wvector)
 		
 class Server:
@@ -333,7 +409,7 @@ class Server:
 			# accept incoming connections
 			if self.sock in readable:
 				nsock, caddr = self.sock.accept()
-				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri)
+				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self)
 				self.sc[caddr] = nsc
 				self.socktosc[nsock] = nsc
 				readable.remove(self.sock)
@@ -349,8 +425,22 @@ class Server:
 						del self.sc[sc.GetAddr()]
 						del self.socktosc[sock]
 					else:
+						# for production this should be enabled to
+						# keep the server from die-ing a horrible
+						# death due to one client problem, for now
+						# i am leaving it commented so i can easily
+						# find problems by crashing the server
+						#try:
 						sc.HandleData(data)
-			
+						'''
+						except Exception:
+							# to keep from killing the server and
+							# any other clients just kill the client
+							# and keep going
+							del self.sc[sc.GetAddr()]
+							del self.socktosc[sc.GetSock()]
+							sc.GetSock().close()
+						'''
 			# handle any exceptions
 			for sock in exc:
 				sc = self.socktosc[sock]

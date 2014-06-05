@@ -96,6 +96,7 @@ class Client:
 				to = None
 			sv, v, d = self.ReadMessage(to)
 			msg = self.ProcessMessage(sv, v, d)
+			print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
 			if lookfor == v:
 				return msg
 			if v in self.keepresult:
@@ -121,11 +122,12 @@ class Client:
 		# process message based on type
 		if type == ServerType.LoginResult:
 			print('login result data:[%s]' % data)
-			if data[0] == b'y':
+			if data[0] == ord('y'):
 				return True
 			return False
 		if type == ServerType.DirList:
-			# i hate to chop strings but...later make more efficent
+			# i hate to chop strings but...later make more efficient
+			print('parsing DirList results')
 			list = []
 			while len(data) > 0:
 				# parse header
@@ -139,7 +141,7 @@ class Client:
 			# return list
 			return list
 		if type == ServerType.FileRead:
-			return struct.unpack_from('>B', data)[0]
+			return (struct.unpack_from('>B', data)[0], data[1:])
 		if type == ServerType.FileWrite:
 			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileSize:
@@ -197,7 +199,9 @@ class Client:
 		self.sock.send(struct.pack('>IQ', len(data), vector))
 		self.sock.send(data)
 		if block:
+			print('blocking by handling messages')
 			res = self.HandleMessages(None, lookfor = vector)
+			print('	returned with res:%s' % (res,))
 			return res
 		if discard:
 			return vector
@@ -216,10 +220,10 @@ class Client:
 		return self.WriteMessage(struct.pack('>BHQ', ClientType.FileTrun, fid[1], newsize) + fid[0], block, discard)
 	def FileDel(self, fid, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileDel, fid[1]) + fid[0], block, discard)
-	def FileCopy(self, fid, newpath, block = True, discard = True):
-		return self.WriteMessage(struct.pack('>BHH', ClientType.FileCopy, fid[1], len(fid[0])) + fid[0] + newpath, block, discard)
+	def FileCopy(self, srcfid, dstfid, block = True, discard = True):
+		return self.WriteMessage(struct.pack('>BHHH', ClientType.FileCopy, srcfid[1], dstfid[1], len(srcfid[0])) + srcfid[0] + dstfid[0], block, discard)
 	def FileMove(self, fid, newfile, block = True, discard = True):
-		return self.WriteMessage(struct.pack('>BHH', ClientType.FileMove, fid[1], len(fid[0])) + fid[0] + newpath, block, discard)
+		return self.WriteMessage(struct.pack('>BHHH', ClientType.FileMove, srcfid[1], dstfid[1], len(srcfid[0])) + srcfid[0] + dstfid[0], block, discard)
 	def FileHash(self, fid, offset, length, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BHQQ', ClientType.FileHash, fid[1], offset, length) + fid[0], block, discard)
 	def FileStash(self, fid, block = True, discard = True):
@@ -236,6 +240,18 @@ def main():
 	
 	print('requesting directory list')
 	list = client.DirList(b'/')
+	
+	print('truncating file')
+	result = client.FileTrun((b'test', 0), 1024)
+	print('FileTrun.result:%s' % result)
+	
+	result = client.FileWrite((b'test', 0), 0, b'hello world')
+	print('FileWrite.result:%s' % result)
+	
+	result = client.FileRead((b'test', 0), 0, 11)
+	print('FileRead.result:%s' % (result,))
+	
+	result = client.GetHash((b'test', 0), 0, 11)
 	
 	while True:
 		continue
