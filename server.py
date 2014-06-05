@@ -4,6 +4,7 @@ import socket
 import select
 import struct
 import shutil
+import hashlib
 
 from pkttypes import *
 from misc import *
@@ -53,7 +54,7 @@ class ServerClient:
 		if msg is None:
 			return
 			
-		print('type-vector', type(vector))
+		#print('type-vector', type(vector))
 			
 		# process the message
 		self.ProcessMessage(msg, vector)
@@ -92,15 +93,15 @@ class ServerClient:
 		if type != ClientType.Encrypted:
 			return
 		
-		print('processing encrypted message')
+		#print('processing encrypted message')
 		
 		# decrypt message
 		msg = self.crypter.decrypt(msg)
 		type = msg[0]
 		msg = msg[1:]
 		
-		print('	type:%s' % type)
-		print('	msg:%s' % msg)
+		#print('	type:%s' % type)
+		#print('	msg:%s' % msg)
 		
 		# will associate client with an account
 		if type == ClientType.Login:
@@ -133,12 +134,12 @@ class ServerClient:
 		# return a list of nodes in directory
 		if type == ClientType.DirList:
 			# remove any dot dots to prevent backing out of root
-			print('doing directory listing')
+			#print('doing directory listing')
 			cpath = '%s/%s' % (self.info['disk-path'], self.SanitizePath(msg).decode('utf8', 'ignore'))
-			print('	calling os.listdir(%s)' % cpath)
+			#print('	calling os.listdir(%s)' % cpath)
 			nodes = os.listdir(cpath)
 			objs = []
-			print('	iterating nodes')
+			#print('	iterating nodes')
 			for node in nodes:
 				# break node into appropriate parts
 				frev = int(node[0:node.find('.')])
@@ -147,20 +148,20 @@ class ServerClient:
 				if (fname, frev) not in objs:
 					# store so we can detect duplicates
 					objs.append((fname, frev))
-					print('	added fname:%s frev:%s' % (fname, frev))
+					#print('	added fname:%s frev:%s' % (fname, frev))
 				else:
 					# since were in development stage get our attention!
 					raise DoubleTypeOrRevException()
 					# remove it before it causes more problems
 					os.remove('%s/%s' % (cpath, node))
 			# serialize output into list of entries
-			print('	serializing')
+			#print('	serializing')
 			out = []
 			for key in objs:
 				print('key[0]:[%s]' % key[0])
 				out.append(struct.pack('>HI', len(key[0]), key[1]) + key[0])
 			out = b''.join(out)
-			print('	writing message')
+			#print('	writing message')
 			self.WriteMessage(struct.pack('>B', ServerType.DirList) + out, vector)	
 			return
 
@@ -192,9 +193,26 @@ class ServerClient:
 			
 			# this will either create the file OR change the size of it
 			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
-			fd = open(fpath, 'wb')
-			fd.truncate(newsize)
-			fd.close()
+			#fd = open(fpath, 'wb')
+			#fd.truncate(newsize)
+			#fd.close()
+			#print('newsize:%s' % newsize)
+			# make directories
+			dirpath = fpath[0:fpath.rfind('/')]
+			if os.path.exists(dirpath) is False:
+				os.makedirs(dirpath)
+			# make file if needed
+			if os.path.exists(fpath) is False:
+				# make file
+				#print('created')
+				fd = os.open(fpath, os.O_CREAT)
+				os.close(fd)
+			# open existing
+			#print('open existing')
+			fd = os.open(fpath, os.O_RDWR)
+			#print('fd:%s newsize:%s' % (fd, newsize))
+			os.ftruncate(fd, newsize)
+			os.close(fd)
 			self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 1), vector)
 			return
 			
@@ -284,7 +302,10 @@ class ServerClient:
 			data = fd.read(length)
 			fd.close()
 			
-			data = HASHIT(data)
+			#print('rdata', data)
+			
+			# hash the data and return the hash
+			data = hashlib.sha512(data).digest()
 			
 			self.WriteMessage(struct.pack('>BB', ServerType.FileHash, 1) + data, vector)
 			return
@@ -294,7 +315,7 @@ class ServerClient:
 			data = msg[2 + 8 + 2 + fnamesz:]
 			length = len(data)
 			
-			print('len(data)', len(data))
+			#print('len(data)', len(data))
 			
 			if length > self.info.get('max-write-length', 1024 * 1024 * 1):
 				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
@@ -303,7 +324,7 @@ class ServerClient:
 			fbase, fname = self.GetPathParts(fname)
 			
 			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
-			print('fpath', fpath)
+			#print('fpath', fpath)
 			if os.path.exists(fpath) is False:
 				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 0), vector)
 				return
@@ -311,11 +332,12 @@ class ServerClient:
 			fd = open(fpath, 'r+b')
 			fd.seek(0, 2)
 			max = fd.tell()
-			print('max:%s' % max)
-			if offset + len(data) >= max:
+			#print('max:%s' % max)
+			if offset + len(data) > max:
 				# you can not write past end of the file (use truncate command)
 				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
 				return
+			#print('WRITING-data', data)
 			fd.seek(offset)
 			fd.write(data)
 			fd.close()
@@ -334,7 +356,7 @@ class ServerClient:
 		if type == ServerType.PublicKey:
 			pass
 		else:
-			print('encrypting type:%s' % type)
+			#print('encrypting type:%s' % type)
 			# normal encrypt	
 			data = bytes((ServerType.Encrypted,)) + self.crypter.crypt(data)
 		
@@ -354,17 +376,17 @@ class ServerClient:
 			print('client buffer too big - dropping client')
 			raise DataBufferOverflowException()
 		
-		print('processing data', len(self.data))
+		#print('processing data', len(self.data))
 		# do we need to read a message header and can we?
 		if self.wsz is None and len(self.data) >= 8 + 4:
-			print('reading sz and vector')
+			#print('reading sz and vector')
 			sz, vector = struct.unpack_from('>IQ', self.data)
-			print('sz:%s vector:%x' % (sz, vector))
+			#print('sz:%s vector:%x' % (sz, vector))
 			self.wsz = sz
 			self.wvector = vector
 			self.data = self.data[8 + 4:]
 		
-		print('checking for enough data (%s of %s)' % (len(self.data), self.wsz))
+		#print('checking for enough data (%s of %s)' % (len(self.data), self.wsz))
 		# not enough data to read message portion
 		if len(self.data) < self.wsz:
 			return (None, None)

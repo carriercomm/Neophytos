@@ -2,6 +2,8 @@ import os
 import sys
 import socket
 import struct
+import hashlib
+import math
 
 import pubcrypt
 
@@ -96,7 +98,7 @@ class Client:
 				to = None
 			sv, v, d = self.ReadMessage(to)
 			msg = self.ProcessMessage(sv, v, d)
-			print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
+			#print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
 			if lookfor == v:
 				return msg
 			if v in self.keepresult:
@@ -108,7 +110,7 @@ class Client:
 	def ProcessMessage(self, svector, vector, data):
 		type = data[0]
 		
-		print('got type %s' % type)
+		#print('got type %s' % type)
 		
 		# only process encrypted messages
 		if type != ServerType.Encrypted:
@@ -168,12 +170,12 @@ class Client:
 	
 	# read a single message from the stream and exits after specified time
 	def ReadMessage(self, timeout = None):
-		print('reading message')
+		#print('reading message')
 		self.sock.settimeout(timeout)
 		sz, svector, vector = struct.unpack('>IQQ', self.sock.recv(4 + 8 + 8))
-		print('read header')
+		#print('read header')
 		data = self.sock.recv(sz)
-		print('read data', data)
+		#print('read data', data)
 		return svector, vector, data
 		
 	def WriteMessage(self, data, block, discard):
@@ -193,15 +195,15 @@ class Client:
 				data = data[0:1] + pubcrypt.crypt(data[1:], self.pubkey)
 			else:
 				# normal encrypt (keep type field unencrypted)
-				print('encrypting message:[%s]' % (data))
+				#print('encrypting message:[%s]' % (data))
 				data = bytes([ClientType.Encrypted]) + self.crypter.crypt(data)
 		
 		self.sock.send(struct.pack('>IQ', len(data), vector))
 		self.sock.send(data)
 		if block:
-			print('blocking by handling messages')
+			#print('blocking by handling messages')
 			res = self.HandleMessages(None, lookfor = vector)
-			print('	returned with res:%s' % (res,))
+			#print('	returned with res:%s' % (res,))
 			return res
 		if discard:
 			return vector
@@ -230,14 +232,211 @@ class Client:
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileStash, fid[1]) + fid[0])
 	def FileGetStashes(self, fid, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileGetStashes, fid[1]) + fid[0])
+
+class Client2(Client):
+	def __HashLocalFile(self, fd, offset, length):
+		fd.seek(offset)
+		data = fd.read(length)
+		#print('ldata', data)
+		return hashlib.sha512(data).digest()
+
+	def UploadFile(self, fid, fd, lsz):
+		max = 1024 * 1024
+		x = 0
+		c = math.ceil(lsz / max)
+		fd.seek(0)
+		while x < c:
+			if x * max + max > lsz:
+				_sz = lsz - (x * max)
+			else:
+				_sz = max
+			off = x * max
+			print('  uploading offset:%x/%x size:%x' % (off, lsz, _sz))
+			self.FileWrite(fid, off, fd.read(_sz))
+			x = x + 1
+	
+	def __FilePatch(self, lfd, rfd, offset, sz, match, info):
+		rhash = self.FileHash(rfd, offset, sz)[1]
+		lhash = self.__HashLocalFile(lfd, offset, sz)
 		
+		tfsz = info['total-size']
+		unet = info.get('net-traffic', 0)
+		gbytes = info.get('good-bytes', 0)
+		
+		print('		unet:%x gbytes:%x hashing offset:%x length:%x' % (unet, gbytes, offset, sz))
+		
+		# at this point it is completely pointless to continue
+		# as we have already consumed enough net traffic to have
+		# uploading the file whole (so we are just wasting time
+		# and bandwidth to continue onward)
+		if unet >= tfsz - gbytes:
+			return
+			
+		# at this point in time we should likely consider giving
+		# up and exclude the good range we have found if ny
+		#if unet >= (tfsz - gbytes) / 4:
+		if unet >= tfsz / 4:
+			return
+		
+		if rhash != lhash:
+			# split target area into 2, if we have an extra byte
+			# then throw that onto one but not the other (since
+			# we are not going to split by bits lol!)
+			divide = 20
+			pasz = sz / divide
+			pasz = math.floor(pasz)
+			rem = sz - (pasz * divide)
+			
+			#x = 0
+			#while x < divide:
+				
+			
+			if sz & 1 == 1:
+				asz = int(sz / 2)
+				bsz = asz + 1
+			else:
+				asz = int(sz / 2)
+				bsz = asz
+			# do not patch anything less than 1024
+			if asz < 4096:
+				return
+			info['net-traffic'] = info.get('net-traffic', 0) + 200
+			# about 100 bytes consumed per call in net traffic
+			self.__FilePatch(lfd, rfd, offset, asz, match, info)
+			self.__FilePatch(lfd, rfd, offset + asz, bsz, match, info)
+		else:
+			# record parts that do not need to be updated
+			info['good-bytes'] = info.get('good-bytes', 0) + sz
+			match.append((offset, sz))
+			print('found good area offset:%s sz:%s' % (offset, sz))
+		return
+	'''
+		@sdescription:		Will upload or update the remote file with this local
+							file by trying to patch it instead of uploading it all.
+	'''
+	def FilePatch(self, fid, lfile):
+		fd = open(lfile, 'r+b')
+		# get length of local file
+		fd.seek(0, 2)
+		lsz = fd.tell()
+		fd.seek(0)
+		print('patching remote file %s with local file %s' % (fid[0], lfile))
+		print('	setup')
+		# get length of remote file if it exists
+		rsz = self.FileSize(fid)[1]
+		# either make remote smaller or bigger
+		print('rsz:%s lsz:%s' % (rsz, lsz))
+			
+		if rsz != lsz:
+			self.FileTrun(fid, lsz)
+
+		if rsz < lsz / 2:
+			# just upload it whole
+			self.UploadFile(fid, fd, lsz)
+			fd.close()
+			return
+			
+		#self.FileWrite(fid, 0, b'hello world')
+		#exit()
+			
+		#rhash = self.FileHash(fid, 25, 25)[1]
+		#lhash = self.__HashLocalFile(fd, 25, 25)
+		#print(rhash)
+		#print(lhash)
+		
+		#print(self.FileRead(fid, 25, 25))
+		#exit()
+			
+		# prepare structures
+		match = []
+		info = {
+			'total-size':		lsz
+		}
+		# build match list
+		print(' hash scanning')
+		
+		# break it into maximum sized chunks
+		# in order to prevent oversized buffer
+		# on the server (done on server to prevent
+		# some DoS attacks)
+		max = 1024 * 1024
+		pcnt = math.ceil(lsz / max)
+		x = 0
+		while x < pcnt:
+			if x * max + max > lsz:
+				_sz = lsz - (x * max)
+			else:
+				_sz = max
+			off = x * max
+				
+			self.__FilePatch(fd, fid, off, _sz, match, info)
+			x = x + 1
+		# we need to invert the match list to
+		# determine what regions we need to write
+		# to bring the file up to date
+		print('	inverting')
+		invert = []
+		invert.append((0, info['total-size']))
+		for good in match:
+			gx = good[0]
+			gw = good[1]
+			for bad in invert:
+				bx = bad[0]
+				bw = bad[1]
+				chg = False
+				if gx == bx and gx + gw == bx + bw:
+					#print('whole')
+					bw = 0
+					chg = True
+				else:
+					if gx == bx and gx + gw < bx + bw:
+						#print('left side')
+						# left side
+						bx = gx + gw
+						bw = bw - gw
+						chg = True
+					if gx > bx and gx + gw == bx + bw:
+						# right side
+						#print('right side')
+						bw = bw - gw
+						chg = True
+					if gx > bx and gx + gw < bx + bw:
+						# middle (left side)
+						#print('middle')
+						_bw = bw
+						bw = gx - bx
+						# middle (right side)
+						_bx = gx + gw
+						_bw = _bw - (bw + gw)
+						invert.append((_bx, _bw))
+						chg = True
+				if chg:
+					# remove old one and add new one
+					invert.remove(bad)
+					if bw > 0:
+						invert.append((bx, bw))
+					# exit out if found it
+					break
+			# invert iteration
+		# match iteration
+	
+		# now only upload the bad parts
+		for bad in invert:
+			bx = bad[0]
+			bw = bad[1]
+			fd.seek(bx)
+			data = fd.read(bw)
+			print('writing bad (%s:%s)' % (bx, bw))
+			self.FileWrite(fid, bx, data)
+		fd.close()
 		
 def main():
-	client = Client('localhost', 4322, b'Kdje493FMncSxZs')
+	client = Client2('localhost', 4322, b'Kdje493FMncSxZs')
 	print('setup connection')
 	client.Connect()
 	print('	setup connection done')
 	
+	'''
 	print('requesting directory list')
 	list = client.DirList(b'/')
 	
@@ -251,9 +450,14 @@ def main():
 	result = client.FileRead((b'test', 0), 0, 11)
 	print('FileRead.result:%s' % (result,))
 	
-	result = client.GetHash((b'test', 0), 0, 11)
+	result = client.FileHash((b'test', 0), 0, 11)
+	print('SZ', len(result[1]))
+	'''
+	
+	#result = client.FilePatch((b'sample', 0), './sample')
 	
 	while True:
 		continue
-	
-main()
+
+if __name__ == '__main__':
+	main()
