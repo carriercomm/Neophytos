@@ -6,11 +6,32 @@ import threading
 import os
 import hashlib
 import time
+from ctypes import *
 
 class SymCrypt:
 	def __init__(self, key):
 		self.xkey = key[0:len(key) >> 1]
 		self.mkey = key[len(key) >> 1:]
+		
+		# try to load native support for encryption/decryption
+		try:
+			self.so = cdll.LoadLibrary('./native/native.so')
+			self.so_crypt = CFUNCTYPE(c_int)(('crypt', self.so))
+			self.so_decrypt = CFUNCTYPE(c_int)(('decrypt', self.so))
+		except OSError:
+			# well.. we tried.. fallback to Python code (SLOW..)
+			self.so_crypt = None
+			self.so_decrypt = None
+		
+		#data = b'hello world from python to C'
+		# int crypt(uint8 *xkey, int xkeysz, uint8 *mkey,  int mkeysz, uint8 *data, int dsz) {
+		#self.so_crypt(c_char_p(self.xkey), c_int(len(self.xkey)), c_char_p(self.mkey), c_int(len(self.mkey)), c_char_p(data), c_int(len(data)))
+		#data = self.crypt(data)
+		#self.so_decrypt(c_char_p(self.xkey), c_int(len(self.xkey)), c_char_p(self.mkey), c_int(len(self.mkey)), c_char_p(data), c_int(len(data)))
+		#data = self.decrypt(data)
+		#print('@@', self.xkey)
+		#print('##', data.decode('utf8', 'ignore'))
+		#exit()
 		
 	def __both(self, data):
 		di = 0
@@ -39,7 +60,7 @@ class SymCrypt:
 			kv = key[ki]
 			if kv == 0:
 				kv = 1
-			tondx = (dl - 1) % kv
+			tondx =  (dl - 1) % kv
 			
 			data[di] = data[tondx]
 			data[tondx] = b
@@ -92,12 +113,18 @@ class SymCrypt:
 		@+:					key during creation of the SymCrypt class.
 	'''
 	def crypt(self, data):
+		if self.so_crypt is not None:
+			self.so_crypt(c_char_p(self.xkey), c_int(len(self.xkey)), c_char_p(self.mkey), c_int(len(self.mkey)), c_char_p(data), c_int(len(data)))
+			return data
 		return self.mix(self.__both(data))
 	'''
 		@sdescription:		This will decrypt the data using the specified
 		@+:					key during creation of the SymCrypt class.
 	'''
 	def decrypt(self, data):
+		if self.so_decrypt is not None:
+			self.so_decrypt(c_char_p(self.xkey), c_int(len(self.xkey)), c_char_p(self.mkey), c_int(len(self.mkey)), c_char_p(data), c_int(len(data)))
+			return data
 		return self.__both(self.unmix(data))
 		
 class IDGen:

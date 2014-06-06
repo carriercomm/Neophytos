@@ -256,14 +256,9 @@ class Client2(Client):
 			x = x + 1
 	
 	def __FilePatch(self, lfd, rfd, offset, sz, match, info):
-		rhash = self.FileHash(rfd, offset, sz)[1]
-		lhash = self.__HashLocalFile(lfd, offset, sz)
-		
 		tfsz = info['total-size']
 		unet = info.get('net-traffic', 0)
 		gbytes = info.get('good-bytes', 0)
-		
-		print('		unet:%x gbytes:%x hashing offset:%x length:%x' % (unet, gbytes, offset, sz))
 		
 		# at this point it is completely pointless to continue
 		# as we have already consumed enough net traffic to have
@@ -278,44 +273,74 @@ class Client2(Client):
 		if unet >= tfsz / 4:
 			return
 		
-		if rhash != lhash:
-			# split target area into 2, if we have an extra byte
-			# then throw that onto one but not the other (since
-			# we are not going to split by bits lol!)
+		# dont do larger than 1MB chunk
+		divide = sz / (1024 * 1024)
+		# change it up if we have less than 20
+		if divide < 20:
 			divide = 20
-			pasz = sz / divide
-			pasz = math.floor(pasz)
-			rem = sz - (pasz * divide)
-			
-			#x = 0
-			#while x < divide:
-				
-			
-			if sz & 1 == 1:
-				asz = int(sz / 2)
-				bsz = asz + 1
-			else:
-				asz = int(sz / 2)
-				bsz = asz
-			# do not patch anything less than 1024
-			if asz < 4096:
-				return
-			info['net-traffic'] = info.get('net-traffic', 0) + 200
-			# about 100 bytes consumed per call in net traffic
-			self.__FilePatch(lfd, rfd, offset, asz, match, info)
-			self.__FilePatch(lfd, rfd, offset + asz, bsz, match, info)
+			# if the size is less than 4096 then change that
+			# to a minimum of 4096
+			if sz / divide < 4096:
+				divide = math.ceil(sz / 4096)
+		
+		print('divide:%s sz:%s' % (divide, sz))
+		
+		# calculate actual chunk size to hash and count
+		# with remainder either as a separate chunk or
+		# combined with last
+		pasz = sz / divide
+		pasz = math.floor(pasz)
+		rem = sz - (pasz * divide)
+		
+		go = []
+		# build the primary checks
+		x = 0
+		while x < divide - 1:
+			go.append((offset + x * pasz, pasz))
+			x = x + 1
+		if rem > pasz / 2:
+			# split it into two separate checks
+			go.append((offset + x * pasz, pasz))
+			go.append((offset + x * pasz + pasz, rem))
 		else:
-			# record parts that do not need to be updated
-			info['good-bytes'] = info.get('good-bytes', 0) + sz
-			match.append((offset, sz))
-			print('found good area offset:%s sz:%s' % (offset, sz))
+			# combine into one
+			go.append((offset + x * pasz, pasz + rem))
+		
+		# iterate through checks
+		for c in go:
+			rhash = self.FileHash(rfd, c[0], c[1])[1]
+			lhash = self.__HashLocalFile(lfd, c[0], c[1])
+			info['net-traffic'] = info.get('net-traffic', 0) + 200
+			
+			# debug message
+			print('    unet:%x gbytes:%x hashing offset:%x length:%x' % (unet, gbytes, c[0], c[1]))
+			
+			# should we go deeper
+			if c[1] < 4096:
+				continue
+				
+			if rhash != lhash:
+				# go deeper
+				self.__FilePatch(lfd, rfd, c[0], c[1], match, info)
+			else:
+				# record parts that do not need to be updated
+				info['good-bytes'] = info.get('good-bytes', 0) + sz
+				match.append((offset, sz))
+				print('found good area offset:%s sz:%s' % (c[0], c[1]))
 		return
 	'''
 		@sdescription:		Will upload or update the remote file with this local
 							file by trying to patch it instead of uploading it all.
 	'''
 	def FilePatch(self, fid, lfile):
-		fd = open(lfile, 'r+b')
+		try:
+			fd = open(lfile, 'rb')
+		except IOError as e:
+			# for some reason we are unable to access
+			# the file so just print an exception and
+			# skip this file
+			print(e)
+			return 
 		# get length of local file
 		fd.seek(0, 2)
 		lsz = fd.tell()
@@ -424,10 +449,26 @@ class Client2(Client):
 		for bad in invert:
 			bx = bad[0]
 			bw = bad[1]
-			fd.seek(bx)
-			data = fd.read(bw)
-			print('writing bad (%s:%s)' % (bx, bw))
-			self.FileWrite(fid, bx, data)
+			
+			# cut it into max sized pieces
+			divide = math.ceil(bw / (1024 * 1024))
+			rem = int(bw - (divide * 1024 * 1024))
+			
+			x = 0
+			while x < divide:
+				o = x * 1024 * 1024
+				fd.seek(bx + o)
+				data = fd.read(1024 * 1024)
+				print('writing bad (%s:%s)' % (bx + o, 1024 * 1024))
+				self.FileWrite(fid, bx + o, data)
+				x = x + 1
+			if rem > 0:
+				o = x * 1024 * 1024
+				fd.seek(bx + o)
+				data = fd.read(rem)
+				print('writing bad (%s:%s)' % (bx + o, rem))
+				self.FileWrite(fid, bx + o, data)
+
 		fd.close()
 		
 def main():
