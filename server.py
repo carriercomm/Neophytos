@@ -39,6 +39,12 @@ class ServerClient:
 		self.info = None
 		
 		self.sock.settimeout(0)
+		
+		# i might like to make this dynamic.. per client
+		# and also dynamic in the way that the client can
+		# query this value and adjust locally also
+		# TODO: implement the above
+		self.maxbuffer = 1024 * 1024 * 8
 	
 	def GetAddr(self):
 		return self.addr
@@ -223,7 +229,7 @@ class ServerClient:
 			# maximum read length default is 1MB (anything bigger must be split into separate requests)
 			# OR.. we could spawn a special thread that would lock this client and perform the work
 			# in parallel with this main thread
-			if length > self.info.get('max-read-length', 1024 * 1024 * 1):
+			if length > self.info.get('max-read-length', self.maxbuffer):
 				self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 2), vector)
 				return
 
@@ -284,6 +290,23 @@ class ServerClient:
 				self.WriteMessage(struct.pack('>BB', ServerType.FileDel, 0), vector)
 				return
 			os.remove(fpath)
+			# get the base path (without file name part)
+			base = fpath[0:fpath.rfind('/')]
+			# start deleting directories if they are empty
+			while True:
+				# figure out how much is in this directory
+				nodes = os.listdir(base)
+				# if zero nodes then the directory is empty and
+				# no reason to let directories pile up on the
+				# server side for no reason
+				if len(nodes) > 0:
+					break
+				# should be safe as it will only delete a
+				# directory if it is empty
+				os.remove(base)
+				# drop down again
+				base = base[0:base.rfind('/')]
+			
 			self.WriteMessage(struct.pack('>BB', ServerType.FileDel, 1), vector)
 			return
 		if type == ClientType.FileHash:
@@ -317,7 +340,7 @@ class ServerClient:
 			
 			#print('len(data)', len(data))
 			
-			if length > self.info.get('max-write-length', 1024 * 1024 * 1):
+			if length > self.info.get('max-write-length', self.maxbuffer):
 				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
 				return
 			

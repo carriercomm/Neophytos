@@ -234,14 +234,18 @@ class Client:
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileGetStashes, fid[1]) + fid[0])
 
 class Client2(Client):
+	def __init__(self, rhost, rport, aid):
+		Client.__init__(self, rhost, rport, aid)
+		self.maxbuffer = 1024 * 1024 * 8
+
 	def __HashLocalFile(self, fd, offset, length):
 		fd.seek(offset)
 		data = fd.read(length)
-		#print('ldata', data)
+		
 		return hashlib.sha512(data).digest()
 
 	def UploadFile(self, fid, fd, lsz):
-		max = 1024 * 1024
+		max = self.maxbuffer
 		x = 0
 		c = math.ceil(lsz / max)
 		fd.seek(0)
@@ -274,7 +278,7 @@ class Client2(Client):
 			return
 		
 		# dont do larger than 1MB chunk
-		divide = sz / (1024 * 1024)
+		divide = sz / self.maxbuffer
 		# change it up if we have less than 20
 		if divide < 20:
 			divide = 20
@@ -384,7 +388,7 @@ class Client2(Client):
 		# in order to prevent oversized buffer
 		# on the server (done on server to prevent
 		# some DoS attacks)
-		max = 1024 * 1024
+		max = self.maxbuffer
 		pcnt = math.ceil(lsz / max)
 		x = 0
 		while x < pcnt:
@@ -451,19 +455,19 @@ class Client2(Client):
 			bw = bad[1]
 			
 			# cut it into max sized pieces
-			divide = math.ceil(bw / (1024 * 1024))
-			rem = int(bw - (divide * 1024 * 1024))
+			divide = math.floor(bw / self.maxbuffer)
+			rem = int(bw - (divide * self.maxbuffer))
 			
 			x = 0
 			while x < divide:
-				o = x * 1024 * 1024
+				o = x * self.maxbuffer
 				fd.seek(bx + o)
-				data = fd.read(1024 * 1024)
-				print('writing bad (%s:%s)' % (bx + o, 1024 * 1024))
+				data = fd.read(self.maxbuffer)
+				print('writing bad (%s:%s)' % (bx + o, self.maxbuffer))
 				self.FileWrite(fid, bx + o, data)
 				x = x + 1
 			if rem > 0:
-				o = x * 1024 * 1024
+				o = x * self.maxbuffer
 				fd.seek(bx + o)
 				data = fd.read(rem)
 				print('writing bad (%s:%s)' % (bx + o, rem))

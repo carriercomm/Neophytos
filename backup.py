@@ -214,7 +214,7 @@ def dobackup(name, rhost, rport, sac, cfg, dpath, filter, base = None, c = None)
 		fpath = '%s/%s' % (dpath, node)
 		# if directory..
 		if os.path.isdir(fpath):
-			dobackup(fpath, rhost, rport, sac, cfg, fpath, filter, base, c)
+			dobackup(name, rhost, rport, sac, cfg, fpath, filter, base = base, c = c)
 			continue
 		# run filters
 		for f in filter:
@@ -236,7 +236,6 @@ def dobackup(name, rhost, rport, sac, cfg, dpath, filter, base = None, c = None)
 			print('PROCESSING [%s]' % _fpath)
 			# fpath
 			lfile = fpath
-			print('name', name)
 			fid = (bytes('%s/%s' % (name, _fpath), 'utf8'), 0)
 			c.FilePatch(fid, lfile)
 	
