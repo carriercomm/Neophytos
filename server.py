@@ -5,6 +5,7 @@ import select
 import struct
 import shutil
 import hashlib
+from io import BytesIO
 
 from pkttypes import *
 from misc import *
@@ -34,7 +35,8 @@ class ServerClient:
 		self.wsz = None
 		self.wmsg = b''
 		
-		self.data = b''
+		#self.data = b''
+		self.data = BytesIO()
 		
 		self.info = None
 		
@@ -393,31 +395,45 @@ class ServerClient:
 		return len(self.wmsg)
 	
 	def ProcessData(self, data):
-		self.data = self.data + data
+		self.data.write(data)
+		#self.data = self.data + data
 		
-		if len(self.data) > 1024 * 1024 * 10:
+		#print('tell', self.data.tell())
+		
+		if self.data.tell() > 1024 * 1024 * 10:
 			print('client buffer too big - dropping client')
 			raise DataBufferOverflowException()
 		
 		#print('processing data', len(self.data))
 		# do we need to read a message header and can we?
-		if self.wsz is None and len(self.data) >= 8 + 4:
+		if self.wsz is None and self.data.tell() >= 8 + 4:
 			#print('reading sz and vector')
-			sz, vector = struct.unpack_from('>IQ', self.data)
+			self.data.seek(0)
+			sz, vector = struct.unpack_from('>IQ', self.data.read(4 + 8))
 			#print('sz:%s vector:%x' % (sz, vector))
 			self.wsz = sz
 			self.wvector = vector
-			self.data = self.data[8 + 4:]
+			# compensate for this
+			#self.data = self.data[8 + 4:]
+			self.data.seek(0, 2)
 		
 		#print('checking for enough data (%s of %s)' % (len(self.data), self.wsz))
 		# not enough data to read message portion
-		if len(self.data) < self.wsz:
+		#print('..tell', self.data.tell())
+		if self.data.tell() - (8 + 4) < self.wsz:
 			return (None, None)
-		
+		#print('reading message')
 		# get message and leave remaining data
 		# in the buffer for the next call
-		_ret = self.data[0:self.wsz]
-		self.data = self.data[self.wsz:]
+		#_ret = self.data[0:self.wsz]
+		#self.data = self.data[self.wsz:]
+		
+		# place remaining data into new buffer
+		self.data.seek(8 + 4)
+		_ret = self.data.read(self.wsz)
+		ndata = BytesIO()
+		ndata.write(self.data.read())
+		self.data = ndata
 		
 		# return the message and vector
 		self.wsz = None
@@ -449,7 +465,7 @@ class Server:
 				tsc = self.sc[scaddr]
 				input.append(tsc.GetSock())
 		
-			readable, writable, exc = select.select(input, input, input)
+			readable, writable, exc = select.select(input, [], input)
 			
 			# accept incoming connections
 			if self.sock in readable:

@@ -53,27 +53,27 @@ class Client:
 		# try to establish a connection
 		self.sock.connect((self.rhost, self.rport))
 		# get public key
-		print('requesting public key')
+		#print('requesting public key')
 		self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), False, True)
 		# wait for packet
 		s, v, pubkey = self.ReadMessage()
 		type, esz = struct.unpack_from('>BH', pubkey)
-		print('esz:%s' % (esz))
+		#print('esz:%s' % (esz))
 		e = pubkey[3:3 + esz]
 		p = pubkey[3 + esz:]
 		self.pubkey = (e, p)
-		print(self.pubkey)
+		#print(self.pubkey)
 		# setup encryption
 		key = IDGen.gen(10)
-		print('key:%s' % key)
+		#print('key:%s' % key)
 		self.crypter = SymCrypt(key)
 		self.WriteMessage(struct.pack('>B', ClientType.SetupCrypt) + key, False, True)
 		# wait for reply
-		print('waiting for setup crypt reply')
+		#print('waiting for setup crypt reply')
 		self.ReadMessage()
 		print('logging into the system')
 		data = struct.pack('>B', ClientType.Login) + self.aid
-		print('writing-message:[%s]' % data)
+		#print('writing-message:[%s]' % data)
 		self.WriteMessage(data, False, True)
 		result = self.ProcessMessage(0, 0, self.ReadMessage()[2])
 		if result:
@@ -123,7 +123,7 @@ class Client:
 		
 		# process message based on type
 		if type == ServerType.LoginResult:
-			print('login result data:[%s]' % data)
+			#print('login result data:[%s]' % data)
 			if data[0] == ord('y'):
 				return True
 			return False
@@ -278,22 +278,26 @@ class Client2(Client):
 			return
 		
 		# dont do larger than 1MB chunk
-		divide = sz / self.maxbuffer
+		divide = int(sz / self.maxbuffer)
 		# change it up if we have less than 20
-		if divide < 20:
-			divide = 20
+		#if divide < 20:
+		#	divide = 20
 			# if the size is less than 4096 then change that
 			# to a minimum of 4096
-			if sz / divide < 4096:
-				divide = math.ceil(sz / 4096)
+		#	if sz / divide < 4096:
+		#		divide = math.ceil(sz / 4096)
 		
 		print('divide:%s sz:%s' % (divide, sz))
 		
 		# calculate actual chunk size to hash and count
 		# with remainder either as a separate chunk or
 		# combined with last
-		pasz = sz / divide
-		pasz = math.floor(pasz)
+		
+		if divide == 0:
+			pasz = 0
+		else:
+			pasz = sz / divide
+			pasz = math.floor(pasz)
 		rem = sz - (pasz * divide)
 		
 		go = []

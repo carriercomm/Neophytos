@@ -6,7 +6,9 @@ import threading
 import os
 import hashlib
 import time
+import sys
 from ctypes import *
+import platform
 
 class SymCrypt:
 	def __init__(self, key):
@@ -15,9 +17,31 @@ class SymCrypt:
 		
 		# try to load native support for encryption/decryption
 		try:
-			self.so = cdll.LoadLibrary('./native/native.so')
-			self.so_crypt = CFUNCTYPE(c_int)(('crypt', self.so))
-			self.so_decrypt = CFUNCTYPE(c_int)(('decrypt', self.so))
+			bits, ostype = platform.architecture()
+			if ostype.lower().startswith('windowspe'):
+				if bits.startswidth('32'):
+					# 32-bit
+					print('using 32-bit PE DLL')
+					self.so = cdll.LoadLibrary('./native/native32.dll')
+					self.so_crypt = CFUNCTYPE(c_int)(('crypt', self.so))
+					self.so_decrypt = CFUNCTYPE(c_int)(('decrypt', self.so))
+				else:
+					# 64-bit
+					print('using 64-bit PE DLL')
+					self.so = cdll.LoadLibrary('./native/native64.dll')
+					self.so_crypt = CFUNCTYPE(c_int)(('crypt', self.so))
+					self.so_decrypt = CFUNCTYPE(c_int)(('decrypt', self.so))
+			if ostype.lower().startswith('elf'):
+				if bits.startswith('32'):
+					print('using 32-bit shared object')
+					self.so = cdll.LoadLibrary('./native/native32.so')
+					self.so_crypt = CFUNCTYPE(c_int)(('crypt', self.so))
+					self.so_decrypt = CFUNCTYPE(c_int)(('decrypt', self.so))
+				else:
+					print('using 64-bit shared object')
+					self.so = cdll.LoadLibrary('./native/native64.so')
+					self.so_crypt = CFUNCTYPE(c_int)(('crypt', self.so))
+					self.so_decrypt = CFUNCTYPE(c_int)(('decrypt', self.so))
 		except OSError:
 			# well.. we tried.. fallback to Python code (SLOW..)
 			self.so_crypt = None
