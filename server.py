@@ -149,6 +149,11 @@ class ServerClient:
 			objs = []
 			#print('	iterating nodes')
 			for node in nodes:
+				# add directories in a special way so that they
+				# can be interpreted as a directory and not a file
+				if os.path.isdir('%s/%s' % (cpath, node)):
+					objs.append((bytes(node, 'utf8'), 0xffffffff))
+					continue
 				# break node into appropriate parts
 				frev = int(node[0:node.find('.')])
 				fname = bytes(node[node.find('.') + 1:], 'utf8')
@@ -172,14 +177,36 @@ class ServerClient:
 			#print('	writing message')
 			self.WriteMessage(struct.pack('>B', ServerType.DirList) + out, vector)	
 			return
-
+		if type == ClientType.FileTime:
+			rev = struct.unpack_from('>H', msg)[0]
+			fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
+			
+			fbase, fname = self.GetPathParts(fname)	
+			
+			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			if os.path.exists(fpath) is False:
+				self.WriteMessage(struct.pack('>BQ', ServerType.FileTime, 0), vector)
+				return
+			
+			mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
+			
+			# just use which ever is greater to be safe
+			if ctime > mtime:
+				mtime = ctime
+			
+			self.WriteMessage(struct.pack('>BQ', ServerType.FileTime, mtime), vector)
+			return
+			
 		if type == ClientType.FileSize:
 			rev = struct.unpack_from('>H', msg)[0]
-			fname = msg[2:].decode('utf8', 'ignore')
+			fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
 			
 			fbase, fname = self.GetPathParts(fname)
 			
 			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			
+			print('SERVER open', fpath)
+			
 			if os.path.exists(fpath) is False:
 				self.WriteMessage(struct.pack('>BBQ', ServerType.FileSize, 0, 0), vector)
 				return
@@ -193,9 +220,8 @@ class ServerClient:
 			return
 			
 		if type == ClientType.FileTrun:
-			print('truncating file')
 			rev, newsize = struct.unpack_from('>HQ', msg)
-			fname = msg[2 + 8:].decode('utf8', 'ignore')
+			fname = self.SanitizePath(msg[2 + 8:]).decode('utf8', 'ignore')
 			
 			fbase, fname = self.GetPathParts(fname)
 			
@@ -226,7 +252,7 @@ class ServerClient:
 			
 		if type == ClientType.FileRead:
 			rev, offset, length = struct.unpack_from('>HQQ', msg)
-			fname = msg[2 + 8 + 8:].decode('utf8', 'ignore')
+			fname = self.SanitizePath(msg[2 + 8 + 8:]).decode('utf8', 'ignore')
 			
 			# maximum read length default is 1MB (anything bigger must be split into separate requests)
 			# OR.. we could spawn a special thread that would lock this client and perform the work
@@ -255,8 +281,8 @@ class ServerClient:
 			return
 		if type == ClientType.FileCopy or type == ClientType.FileMove:
 			srcrev, dstrev, srclen = struct.unpack_from('>HHH', msg)
-			fsrc = msg[2 * 3:2 * 3 + srclen].decode('utf8', 'ignore')
-			fdst = msg[2 * 3 + srclen:].decode('utf8', 'ignore')
+			fsrc = self.SanitizePath(msg[2 * 3: 2 * 3 + srclen:]).decode('utf8', 'ignore')
+			fdst = self.SanitizePath(msg[2 * 3 + srclen:]).decode('utf8', 'ignore')
 			
 			fsrcbase, fsrcname = self.GetPathParts(fsrc)
 			fdstbase, fdstname = self.GetPathParts(fdst)
@@ -283,7 +309,7 @@ class ServerClient:
 			
 		if type == ClientType.FileDel:
 			rev = struct.unpack_from('>H', msg)[0]
-			fname = msg[2:].decode('utf8', 'ignore')
+			fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
 			
 			fbase, fname = self.GetPathParts(fname)
 			
@@ -313,7 +339,7 @@ class ServerClient:
 			return
 		if type == ClientType.FileHash:
 			rev, offset, length = struct.unpack_from('>HQQ', msg)
-			fname = msg[2 + 8 * 2:].decode('utf8', 'ignore')
+			fname = self.SanitizePath(msg[2 + 8 * 2:]).decode('utf8', 'ignore')
 			
 			fbase, fname = self.GetPathParts(fname)
 			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)			
@@ -336,7 +362,7 @@ class ServerClient:
 			return
 		if type == ClientType.FileWrite:
 			rev, offset, fnamesz = struct.unpack_from('>HQH', msg)
-			fname = msg[2 + 8 + 2:2 + 8 + 2 + fnamesz].decode('utf8', 'ignore')
+			fname = self.SanitizePath(msg[2 + 8 + 2:2 + 8 + 2 + fnamesz]).decode('utf8', 'ignore')
 			data = msg[2 + 8 + 2 + fnamesz:]
 			length = len(data)
 			

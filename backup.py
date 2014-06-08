@@ -200,15 +200,83 @@ def cmd_delfilter(args):
 	print('could not find index [%s]' % index)
 	return
 	
-def dopull(name, rhost, rport, sac, cfg, rpath, lpath, filter, base = None, c = None)
-	pass
-	
-def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = None):
+def dopull(name, rhost, rport, sac, cfg, rpath, lpath, filter, base = None, c = None, erpath = None, dry = True):
 	if c is None:
 		print('CONNECTING TO REMOTE SERVER')
 		c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
 		c.Connect()
 		print('CONNECTION ESTABLISHED, SECURED, AND AUTHENTICATED')
+	
+	if rpath is None:
+		raise Exception('rpath can not be None')
+	
+	# make sure effective remote path is placed under /name/
+	if erpath is None:
+		erpath = '%s/%s' % (name, rpath)
+	
+	if dry is True:
+		print('NOPE')
+		exit()
+
+	
+	# i try to do all files in each directory
+	# before diving deeper into sub-directories
+	# so i push directories into this list then
+	# process them after all the files
+	dirstodo = []
+	
+	# list nodes in directory
+	nodes = c.DirList(bytes('%s' % erpath, 'utf8'))
+	for node in nodes:
+		# is this a directory?
+		if node[1] == 0xffffffff:
+			# yes, so push it to be transverse`d later
+			dirstodo.append(node[0].decode('utf8', 'ignore'))
+			print('appended directory %s' % node[0])
+			continue
+		
+		lfile = '%s/%s' % (lpath, node[0].decode('utf8', 'ignore'))
+		# build the remote path
+		rfile = bytes('%s/%s' % (erpath, node[0].decode('utf8', 'ignore')), 'utf8')
+		fid = (rfile, 0)
+		# pull the file to our local storage device
+		# if destination file exists then check if 
+		# source file is newer than destination
+		print('thinking about pulling %s' % lfile)
+		if os.path.exists(lfile):
+			# get remote file time
+			smtime = c.FileGetTime(fid)
+			# get local file time
+			mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(lfile)
+			if ctime > mtime:
+				mtime = ctime
+			if mtime >= smtime:
+				# local file is either same time or greater so
+				# do not worry about pulling the remote file
+				print('local file is same time or greater')
+				continue
+		print('    pulling %s from %s' % (lfile, fid))
+		if dry is False:
+			# make sure destination directory structure exists
+			base = lfile[0:lfile.rfind('/')]
+			if os.path.exists(base) is False:
+				os.makedirs(base)
+			c.FilePull(lfile, fid)
+	
+	# go through the directories that we saved
+	for dir in dirstodo:
+		print('  going into %s' % dir)
+		dopull(name, rhost, rport, sac, cfg, rpath, '%s/%s' % (lpath, dir), filter, base = base, c = c, erpath = '%s/%s' % (erpath, dir), dry = dry)
+	
+def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = None, dry = True):
+	if c is None:
+		print('CONNECTING TO REMOTE SERVER')
+		c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
+		c.Connect()
+		print('CONNECTION ESTABLISHED, SECURED, AND AUTHENTICATED')
+		
+	if rpath is None:
+		rpath = ''
 		
 	if base is None:
 		base = dpath
@@ -217,7 +285,7 @@ def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = 
 		fpath = '%s/%s' % (dpath, node)
 		# if directory..
 		if os.path.isdir(fpath):
-			dobackup(name, rhost, rport, sac, cfg, fpath, rpath, filter, base = base, c = c)
+			dopush(name, rhost, rport, sac, cfg, fpath, rpath, filter, base = base, c = c)
 			continue
 		# run filters
 		for f in filter:
@@ -240,9 +308,10 @@ def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = 
 			# fpath
 			lfile = fpath
 			fid = (bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8'), 0)
-			c.FilePush(fid, lfile)
+			if dry is False:
+				c.FilePush(fid, lfile)
 	
-def __cmd_pull_target(cfg, name, target, rpath = None, lpath = None):
+def __cmd_pull_target(cfg, name, target, rpath = None, lpath = None, dry = True):
 	print('pulling [%s]' % name)
 	
 	dpath = target['disk-path']
@@ -251,10 +320,10 @@ def __cmd_pull_target(cfg, name, target, rpath = None, lpath = None):
 	rhost = cfg['remote-host']
 	rport = cfg['remote-port']
 	sac = cfg['storage-auth-code']
+	#def dopull(name, rhost, rport, sac, cfg, rpath, lpath, filter, base = None, c = None, erpath = None, dry = True):
+	return dopull(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, rpath = rpath, lpath = lpath, filter = filter, dry = dry)
 	
-	return dopull(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, rpath = rpath, lpath = lpath)
-	
-def __cmd_push_target(cfg, name, target, rpath = None, lpath = None):
+def __cmd_push_target(cfg, name, target, rpath = None, lpath = None, dry = True):
 	print('pushing [%s]' % name)
 	
 	dpath = target['disk-path']
@@ -264,7 +333,7 @@ def __cmd_push_target(cfg, name, target, rpath = None, lpath = None):
 	rport = cfg['remote-port']
 	sac = cfg['storage-auth-code']
 	
-	return dopush(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, rpath = rpath, filter = filter)
+	return dopush(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, rpath = rpath, filter = filter, dry = dry)
 	
 def cmd_pull(args, dry = True):
 	cfg = LoadConfig()
@@ -279,7 +348,7 @@ def cmd_pull(args, dry = True):
 
 	# check for and remove any arguments
 	lpath = None
-	rpath = None
+	rpath = '/'
 	_args = args
 	args = []
 	for arg in _args:
@@ -291,17 +360,25 @@ def cmd_pull(args, dry = True):
 			continue
 		args.append(arg)
 	
+	if lpath is None:
+		print('please use --lpath=/path/to/download/to')
+		print('to specify the path to restore to; this')
+		print('is to prevent accidental overwrite of')
+		print('original data by mistake; you must specify')
+		print('the path to restore to!')
+		return
+	
 	if len(args) > 0:
 		# treat as list of targets to run (run them even if they are disabled)
 		for target in args:
 			if target not in cfg['paths']:
 				print('    target by name [%s] not found' % target)
 			else:
-				__cmd_pull_target(cfg, target, cfg['paths'][target], rpath = rpath, lpath = lpath)
+				__cmd_pull_target(cfg, target, cfg['paths'][target], rpath = rpath, lpath = '%s/%s' % (lpath, target), dry = dry)
 		return
 	# run all that are enabled
 	for k in cfg['paths']:
-		__cmd_pull_target(cfg, k, cfg['paths'][k], rpath = rpath, lpath = lpath)	
+		__cmd_pull_target(cfg, k, cfg['paths'][k], rpath = rpath, lpath = lpath, dry = dry)	
 	
 def cmd_push(args, dry = True):
 	cfg = LoadConfig()
@@ -330,11 +407,11 @@ def cmd_push(args, dry = True):
 			if target not in cfg['paths']:
 				print('    target by name [%s] not found' % target)
 			else:
-				__cmd_push_target(cfg, target, cfg['paths'][target], rpath = rpath)
+				__cmd_push_target(cfg, target, cfg['paths'][target], rpath = rpath, dry = dry)
 		return
 	# run all that are enabled
 	for k in cfg['paths']:
-		__cmd_push_target(cfg, k, cfg['paths'][k])
+		__cmd_push_target(cfg, k, cfg['paths'][k], dry = dry)
 	return
 	
 def __cmd_list_showfilter(filter):
@@ -370,26 +447,29 @@ def cmd_list(args):
 	return
 
 def showhelp():
-	print('config	- configures the remote server')
-	print('add		- add backup path')
-	print('del		- delete backup path')
-	print('disable		- disable backup path')
-	print('enable		- enable backup path')
-	print('add-filter	- add inclusive filter')
-	print('del-filter	- delete filter')
-	print('dry-run		- pretend to do backup')
-	print('run		- run all enabled or specified backup')
-	print('list		- list backup paths or filters for specified')
+	print('config      - configures the remote server')
+	print('add         - add backup path')
+	print('del         - delete backup path')
+	print('disable     - disable backup path')
+	print('enable      - enable backup path')
+	print('add-filter  - add inclusive filter')
+	print('del-filter  - delete filter')
+	print('dry-push	   - pretend to do push')
+	print('push        - push (backup) all enabled or specified backup')
+	print('dry-pull    - pretend to do pull')
+	print('pull        - pull (restore) all enabled or specified backup')
+	print('list        - list backup paths or filters for specified')
 	print('	Example:')
 	print('		<program> add <name> <path>')
 	print('		<program> del <name>')
 	print('		<program> disable <name>')
 	print('		<program> enable <name>')
-	print('		<program> add-inc-filter [displays help]')
-	print('		<program> add-exc-filter [displays help]')
+	print('		<program> add-filter [displays help]')
 	print('		<program> del-filter [displays help]')
-	print('		<program> dry-run <(optional)name> <(optional)name> ...')
-	print('		<program> run <(optional)name> <(optional)name> ...')
+	print('		<program> dry-push <(optional)name> <(optional)name> ...')
+	print('		<program> push <(optional)name> <(optional)name> ...')
+	print('		<program> dry-pull <(optional)name> <(optional)name> ...')
+	print('		<program> pull <(optional)name> <(optional)name> ...')
 	print('		<program> list <(optional)name>')
 	
 def main(args):
@@ -411,6 +491,10 @@ def main(args):
 		return cmd_push(args[1:], dry = True)
 	if args[0] == 'push':
 		return cmd_push(args[1:], dry = False)
+	if args[0] == 'dry-pull':
+		return cmd_pull(args[1:], dry = True)
+	if args[0] == 'pull':
+		return cmd_pull(args[1:], dry = False)
 	if args[0] == 'list':
 		return cmd_list(args[1:])
 	if args[0] == 'config':

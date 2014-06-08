@@ -142,6 +142,8 @@ class Client:
 				list.append((fname, frev))
 			# return list
 			return list
+		if type == ServerType.FileTime:
+			return struct.unpack_from('>Q', data)[0]
 		if type == ServerType.FileRead:
 			return (struct.unpack_from('>B', data)[0], data[1:])
 		if type == ServerType.FileWrite:
@@ -232,6 +234,8 @@ class Client:
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileStash, fid[1]) + fid[0])
 	def FileGetStashes(self, fid, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileGetStashes, fid[1]) + fid[0])
+	def FileGetTime(self, fid, block = True, discard = True):
+		return self.WriteMessage(struct.pack('>BH', ClientType.FileTime, fid[1]) + fid[0], block, discard)
 
 class Client2(Client):
 	def __init__(self, rhost, rport, aid):
@@ -338,20 +342,31 @@ class Client2(Client):
 		return
 	
 	def FilePull(self, lfile, fid):
-		pass
+		return self.__FileSync(fid, lfile, synclocal = True)
 	'''
 		@sdescription:		Will upload or update the remote file with this local
 							file by delta-copy or whole file upload.
 	'''
 	def FilePush(self, fid, lfile):
+		return self.__FileSync(fid, lfile, synclocal = False)
+		
+	def __FileSync(self, fid, lfile, synclocal = False):
 		try:
-			fd = open(lfile, 'rb')
+			if synclocal:
+				print('SYNCLOCAL', lfile)
+				# make sure the file is created
+				if os.path.exists(lfile) is False:
+					fd = open(lfile, 'wb')
+					fd.close()
+			fd = open(lfile, 'r+b')
 		except IOError as e:
 			# for some reason we are unable to access
 			# the file so just print an exception and
 			# skip this file
-			print(e)
-			return 
+			raise e
+		#	print(e)
+		#	exit()
+		#	return 
 		# get length of local file
 		fd.seek(0, 2)
 		lsz = fd.tell()
@@ -359,19 +374,35 @@ class Client2(Client):
 		print('patching remote file %s with local file %s' % (fid[0], lfile))
 		print('	setup')
 		# get length of remote file if it exists
+		print('fid', fid)
 		rsz = self.FileSize(fid)[1]
 		# either make remote smaller or bigger
 		print('rsz:%s lsz:%s' % (rsz, lsz))
-			
-		if rsz != lsz:
-			self.FileTrun(fid, lsz)
 
-		if rsz < lsz / 2:
-			# just upload it whole
-			self.UploadFile(fid, fd, lsz)
-			fd.close()
-			return
-			
+		# if syncing to remote truncate remote file
+		if rsz != lsz:
+			if synclocal is False:
+				# if syncing remote to local then truncate remote
+				self.FileTrun(fid, lsz)
+			else:
+				# if syncing local to remote then truncate local
+				fd.close()
+				fd = os.open(lfile, os.O_RDWR)
+				os.ftruncate(fd, rsz)
+				os.close(fd)
+				fd = open(lfile, 'r+b')
+
+		if synclocal is False:
+			if rsz < lsz / 2:
+				# just upload it whole
+				self.UploadFile(fid, fd, lsz)
+				fd.close()
+				return
+			if lsz < rsz / 2:
+				self.DownloadFile(fid, fs, rsz)
+				fd.close()
+				return
+				
 		#self.FileWrite(fid, 0, b'hello world')
 		#exit()
 			
@@ -383,10 +414,15 @@ class Client2(Client):
 		#print(self.FileRead(fid, 25, 25))
 		#exit()
 			
+		if synclocal is False:
+			tsz = lsz
+		else:
+			tsz = rsz
+			
 		# prepare structures
 		match = []
 		info = {
-			'total-size':		lsz
+			'total-size':		tsz
 		}
 		# build match list
 		print(' hash scanning')
@@ -395,12 +431,13 @@ class Client2(Client):
 		# in order to prevent oversized buffer
 		# on the server (done on server to prevent
 		# some DoS attacks)
+		
 		max = self.maxbuffer
-		pcnt = math.ceil(lsz / max)
+		pcnt = math.ceil(tsz / max)
 		x = 0
 		while x < pcnt:
-			if x * max + max > lsz:
-				_sz = lsz - (x * max)
+			if x * max + max > tsz:
+				_sz = tsz - (x * max)
 			else:
 				_sz = max
 			off = x * max
@@ -469,16 +506,25 @@ class Client2(Client):
 			while x < divide:
 				o = x * self.maxbuffer
 				fd.seek(bx + o)
-				data = fd.read(self.maxbuffer)
 				print('writing bad (%s:%s)' % (bx + o, self.maxbuffer))
-				self.FileWrite(fid, bx + o, data)
+				if synclocal is False:
+					data = fd.read(self.maxbuffer)
+					self.FileWrite(fid, bx + o, data)
+				else:
+					data = self.FileRead(self.maxbuffer)[1]
+					fd.write(data)
+					
 				x = x + 1
 			if rem > 0:
 				o = x * self.maxbuffer
 				fd.seek(bx + o)
-				data = fd.read(rem)
 				print('writing bad (%s:%s)' % (bx + o, rem))
-				self.FileWrite(fid, bx + o, data)
+				if synclocal is False:
+					data = fd.read(rem)
+					self.FileWrite(fid, bx + o, data)
+				else:
+					data = self.FileRead(fid, bx + o, rem)[1]
+					fd.write(data)
 
 		fd.close()
 		

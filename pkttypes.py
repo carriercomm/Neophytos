@@ -14,6 +14,7 @@ class ClientType:
 	SetupCrypt		= 12
 	Encrypted		= 13
 	Login			= 14
+	FileTime		= 15
 	
 class ServerType:
 	DirList 		= 0
@@ -33,3 +34,4 @@ class ServerType:
 	Login			= 14
 	LoginRequired	= 15
 	LoginResult		= 16
+	FileTime		= 17
