@@ -5,7 +5,13 @@
 							
 The intention of this license is to allow free modification and
 distribution, but to disallow monetary gain unless specific
-permission from the author is given. 
+permission from the author is given. If you wish to do something
+that is prohibited or disallowed by this license then write to the
+author to ask for permission
+
+		LEONARD KEVIN MCGUIRE JR
+		242 EAST SKIPPER ROAD
+		ECLECTIC, AL 36024
 
                          NEOPHYTOS LICENSE
    TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
@@ -117,13 +123,13 @@ access to copy the source code from the same place counts as
 distribution of the source code, even though third parties are not
 compelled to copy the source along with the object code.
 
-  4. You may not copy, modify, sublicense, sell, or distribute the Program
-except as expressly provided under this License.  Any attempt
-otherwise to copy, modify, sublicense, sell, or distribute the Program is
-void, and will automatically terminate your rights under this License.
-However, parties who have received copies, or rights, from you under
-this License will not have their licenses terminated so long as such
-parties remain in full compliance.
+  4. You may not copy, modify, sublicense, sell, profit from, or 
+distribute the Program except as expressly provided under this License.  
+Any attempt otherwise to copy, modify, sublicense, sell, profit from,
+or distribute the Program is void, and will automatically terminate 
+your rights under this License. However, parties who have received 
+copies, or rights, from you under this License will not have their 
+licenses terminated so long as such parties remain in full compliance.
 
   5. You are not required to accept this License, since you have not
 signed it.  However, nothing else grants you permission to modify or
@@ -155,16 +161,17 @@ all those who receive copies directly or indirectly through you, then
 the only way you could satisfy both it and this License would be to
 refrain entirely from distribution of the Program.
 
-  8. You may not sell the program, derivative works, or any portion of
-it. Any attempt otherwise to sell the Program, derivative works, or any
-portion of it is void, and will automatically terminate your rights 
-under this License. However, parties who have received copies, or rights, 
-from you under this License will not have their licenses terminated so 
-long as such parties remain in full compliance.
+  8. You may not sell the program or profit from, derivative works, 
+or any portion of it. Any attempt otherwise to sell the Program or 
+profit from, derivative works, or any portion of it is void, and will
+automatically terminate your rights under this License. However, parties 
+who have received copies, or rights, from you under this License will 
+not have their licenses terminated so long as such parties remain in
+full compliance.
 
   9. You must attribute the original author of the work with their name
-as Leonard Kevin McGuire Jr somewhere that is easily noticable and 
-conspicuous place during program startup.
+as "Leonard Kevin McGuire Jr" somewhere that is easily noticeable and 
+conspicuous place during program start up.
 
   10. You may not incorporate your program into proprietary programs.
 
@@ -192,11 +199,7 @@ the limitation as if written in the body of this License.
 
   13. If you wish to incorporate parts of the Program into other free
 programs whose distribution conditions are different, write to the author
-to ask for permission.  For software which is copyrighted by the Free
-Software Foundation, write to the Free Software Foundation; we sometimes
-make exceptions for this.  Our decision will be guided by the two goals
-of preserving the free status of all derivatives of our free software and
-of promoting the sharing and reuse of software generally.
+to ask for permission.
 
                             NO WARRANTY
 
