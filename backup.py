@@ -200,7 +200,10 @@ def cmd_delfilter(args):
 	print('could not find index [%s]' % index)
 	return
 	
-def dobackup(name, rhost, rport, sac, cfg, dpath, filter, base = None, c = None):
+def dopull(name, rhost, rport, sac, cfg, rpath, lpath, filter, base = None, c = None)
+	pass
+	
+def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = None):
 	if c is None:
 		print('CONNECTING TO REMOTE SERVER')
 		c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
@@ -214,7 +217,7 @@ def dobackup(name, rhost, rport, sac, cfg, dpath, filter, base = None, c = None)
 		fpath = '%s/%s' % (dpath, node)
 		# if directory..
 		if os.path.isdir(fpath):
-			dobackup(name, rhost, rport, sac, cfg, fpath, filter, base = base, c = c)
+			dobackup(name, rhost, rport, sac, cfg, fpath, rpath, filter, base = base, c = c)
 			continue
 		# run filters
 		for f in filter:
@@ -236,11 +239,11 @@ def dobackup(name, rhost, rport, sac, cfg, dpath, filter, base = None, c = None)
 			print('PROCESSING [%s]' % _fpath)
 			# fpath
 			lfile = fpath
-			fid = (bytes('%s/%s' % (name, _fpath), 'utf8'), 0)
-			c.FilePatch(fid, lfile)
+			fid = (bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8'), 0)
+			c.FilePush(fid, lfile)
 	
-def __cmd_run_target(cfg, name, target):
-	print('running [%s]' % name)
+def __cmd_pull_target(cfg, name, target, rpath = None, lpath = None):
+	print('pulling [%s]' % name)
 	
 	dpath = target['disk-path']
 	filter = target['filter']
@@ -248,10 +251,59 @@ def __cmd_run_target(cfg, name, target):
 	rhost = cfg['remote-host']
 	rport = cfg['remote-port']
 	sac = cfg['storage-auth-code']
-	dobackup(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, filter = filter)
-	return
 	
-def cmd_run(args, dry = True):
+	return dopull(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, rpath = rpath, lpath = lpath)
+	
+def __cmd_push_target(cfg, name, target, rpath = None, lpath = None):
+	print('pushing [%s]' % name)
+	
+	dpath = target['disk-path']
+	filter = target['filter']
+	
+	rhost = cfg['remote-host']
+	rport = cfg['remote-port']
+	sac = cfg['storage-auth-code']
+	
+	return dopush(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, rpath = rpath, filter = filter)
+	
+def cmd_pull(args, dry = True):
+	cfg = LoadConfig()
+	
+	if cfg['storage-auth-code'] is None:
+		print('   Opps.. you need to do <program> config <server-auth-code>')
+		print('')
+		print('   The server auth code serves as your username and password.')
+		print('')
+		print('   You can get one from: http://www.kmcg341.net/neophytos')
+		return
+
+	# check for and remove any arguments
+	lpath = None
+	rpath = None
+	_args = args
+	args = []
+	for arg in _args:
+		if arg.startswith('--rpath='):
+			rpath = arg[8:]
+			continue
+		if arg.startswith('--lpath='):
+			lpath = arg[8:]
+			continue
+		args.append(arg)
+	
+	if len(args) > 0:
+		# treat as list of targets to run (run them even if they are disabled)
+		for target in args:
+			if target not in cfg['paths']:
+				print('    target by name [%s] not found' % target)
+			else:
+				__cmd_pull_target(cfg, target, cfg['paths'][target], rpath = rpath, lpath = lpath)
+		return
+	# run all that are enabled
+	for k in cfg['paths']:
+		__cmd_pull_target(cfg, k, cfg['paths'][k], rpath = rpath, lpath = lpath)	
+	
+def cmd_push(args, dry = True):
 	cfg = LoadConfig()
 
 	if cfg['storage-auth-code'] is None:
@@ -262,17 +314,27 @@ def cmd_run(args, dry = True):
 		print('   You can get one from: http://www.kmcg341.net/neophytos')
 		return
 	
+	# check for --rpath=xxx and set rpath then
+	# remove the argument from the list of targets
+	rpath = ''
+	for arg in args:
+		if arg.startswith('--rpath='):
+			rpath = arg[8:]
+			args.remove(arg)
+			break
+			
+	
 	if len(args) > 0:
 		# treat as list of targets to run (run them even if they are disabled)
 		for target in args:
 			if target not in cfg['paths']:
 				print('    target by name [%s] not found' % target)
 			else:
-				__cmd_run_target(cfg, target, cfg['paths'][target])
+				__cmd_push_target(cfg, target, cfg['paths'][target], rpath = rpath)
 		return
 	# run all that are enabled
 	for k in cfg['paths']:
-		__cmd_run_target(cfg, k, cfg['paths'][k])
+		__cmd_push_target(cfg, k, cfg['paths'][k])
 	return
 	
 def __cmd_list_showfilter(filter):
@@ -345,10 +407,10 @@ def main(args):
 		return cmd_addfilter(args[1:])
 	if args[0] == 'del-filter':
 		return cmd_delfilter(args[1:])
-	if args[0] == 'dry-run':
-		return cmd_run(args[1:], dry = True)
-	if args[0] == 'run':
-		return cmd_run(args[1:], dry = False)
+	if args[0] == 'dry-push':
+		return cmd_push(args[1:], dry = True)
+	if args[0] == 'push':
+		return cmd_push(args[1:], dry = False)
 	if args[0] == 'list':
 		return cmd_list(args[1:])
 	if args[0] == 'config':

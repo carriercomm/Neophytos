@@ -336,11 +336,14 @@ class Client2(Client):
 				match.append((offset, sz))
 				print('found good area offset:%s sz:%s' % (c[0], c[1]))
 		return
+	
+	def FilePull(self, lfile, fid):
+		pass
 	'''
 		@sdescription:		Will upload or update the remote file with this local
-							file by trying to patch it instead of uploading it all.
+							file by delta-copy or whole file upload.
 	'''
-	def FilePatch(self, fid, lfile):
+	def FilePush(self, fid, lfile):
 		try:
 			fd = open(lfile, 'rb')
 		except IOError as e:
