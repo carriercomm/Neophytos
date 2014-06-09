@@ -277,15 +277,19 @@ def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = 
 		
 	if rpath is None:
 		rpath = ''
-		
+
 	if base is None:
 		base = dpath
-	nodes = os.listdir(dpath)
+	try:
+		nodes = os.listdir(dpath)
+	except OSError:
+		print('    skipping')
+		return
 	for node in nodes:
 		fpath = '%s/%s' % (dpath, node)
 		# if directory..
 		if os.path.isdir(fpath):
-			dopush(name, rhost, rport, sac, cfg, fpath, rpath, filter, base = base, c = c)
+			dopush(name, rhost, rport, sac, cfg, fpath, rpath, filter, base = base, c = c, dry = dry)
 			continue
 		# run filters
 		for f in filter:
@@ -310,6 +314,8 @@ def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = 
 			fid = (bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8'), 0)
 			if dry is False:
 				c.FilePush(fid, lfile)
+			else:
+				raise Exception()
 	
 def __cmd_pull_target(cfg, name, target, rpath = None, lpath = None, dry = True):
 	print('pulling [%s]' % name)
@@ -400,7 +406,6 @@ def cmd_push(args, dry = True):
 			args.remove(arg)
 			break
 			
-	
 	if len(args) > 0:
 		# treat as list of targets to run (run them even if they are disabled)
 		for target in args:

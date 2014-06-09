@@ -74,7 +74,7 @@ class Client:
 		# wait for reply
 		#print('waiting for setup crypt reply')
 		self.ReadMessage()
-		print('logging into the system')
+		#print('logging into the system')
 		data = struct.pack('>B', ClientType.Login) + self.aid
 		#print('writing-message:[%s]' % data)
 		self.WriteMessage(data, False, True)
@@ -132,7 +132,7 @@ class Client:
 			return False
 		if type == ServerType.DirList:
 			# i hate to chop strings but...later make more efficient
-			print('parsing DirList results')
+			#print('parsing DirList results')
 			list = []
 			while len(data) > 0:
 				# parse header
@@ -273,7 +273,7 @@ class Client2(Client):
 			else:
 				_sz = max
 			off = x * max
-			print('  uploading offset:%x/%x size:%x' % (off, lsz, _sz))
+			#print('  uploading offset:%x/%x size:%x' % (off, lsz, _sz))
 			self.FileWrite(fid, off, fd.read(_sz))
 			x = x + 1
 	
@@ -304,8 +304,6 @@ class Client2(Client):
 			# to a minimum of 4096
 		#	if sz / divide < 4096:
 		#		divide = math.ceil(sz / 4096)
-		
-		print('divide:%s sz:%s' % (divide, sz))
 		
 		# calculate actual chunk size to hash and count
 		# with remainder either as a separate chunk or
@@ -339,7 +337,7 @@ class Client2(Client):
 			info['net-traffic'] = info.get('net-traffic', 0) + 200
 			
 			# debug message
-			print('    unet:%x gbytes:%x hashing offset:%x length:%x' % (unet, gbytes, c[0], c[1]))
+			#print('    unet:%x gbytes:%x hashing offset:%x length:%x' % (unet, gbytes, c[0], c[1]))
 			
 			# should we go deeper
 			if c[1] < 4096:
@@ -352,7 +350,7 @@ class Client2(Client):
 				# record parts that do not need to be updated
 				info['good-bytes'] = info.get('good-bytes', 0) + sz
 				match.append((offset, sz))
-				print('found good area offset:%s sz:%s' % (c[0], c[1]))
+				#print('found good area offset:%s sz:%s' % (c[0], c[1]))
 		return
 	
 	def FilePull(self, lfile, fid):
@@ -367,17 +365,22 @@ class Client2(Client):
 	def __FileSync(self, fid, lfile, synclocal = False):
 		try:
 			if synclocal:
-				print('SYNCLOCAL', lfile)
+				#print('SYNCLOCAL', lfile)
 				# make sure the file is created
 				if os.path.exists(lfile) is False:
 					fd = open(lfile, 'wb')
 					fd.close()
-			fd = open(lfile, 'r+b')
+			if synclocal:
+				fd = open(lfile, 'r+b')
+			else:
+				fd = open(lfile, 'rb')
 		except IOError as e:
 			# for some reason we are unable to access
 			# the file so just print an exception and
 			# skip this file
 			raise e
+			print('    skipping %s' % lfile)
+			return
 		#	print(e)
 		#	exit()
 		#	return 
@@ -385,13 +388,13 @@ class Client2(Client):
 		fd.seek(0, 2)
 		lsz = fd.tell()
 		fd.seek(0)
-		print('patching remote file %s with local file %s' % (fid[0], lfile))
-		print('	setup')
+		#print('patching remote file %s with local file %s' % (fid[0], lfile))
+		#print('	setup')
 		# get length of remote file if it exists
-		print('fid', fid)
+		#print('fid', fid)
 		rsz = self.FileSize(fid)[1]
 		# either make remote smaller or bigger
-		print('rsz:%s lsz:%s' % (rsz, lsz))
+		#print('rsz:%s lsz:%s' % (rsz, lsz))
 
 		# if syncing to remote truncate remote file
 		if rsz != lsz:
@@ -439,7 +442,7 @@ class Client2(Client):
 			'total-size':		tsz
 		}
 		# build match list
-		print(' hash scanning')
+		#print(' hash scanning')
 		
 		# break it into maximum sized chunks
 		# in order to prevent oversized buffer
@@ -461,7 +464,7 @@ class Client2(Client):
 		# we need to invert the match list to
 		# determine what regions we need to write
 		# to bring the file up to date
-		print('	inverting')
+		#print('	inverting')
 		invert = []
 		invert.append((0, info['total-size']))
 		for good in match:
@@ -520,7 +523,7 @@ class Client2(Client):
 			while x < divide:
 				o = x * self.maxbuffer
 				fd.seek(bx + o)
-				print('writing bad (%s:%s)' % (bx + o, self.maxbuffer))
+				#print('writing bad (%s:%s)' % (bx + o, self.maxbuffer))
 				if synclocal is False:
 					data = fd.read(self.maxbuffer)
 					self.FileWrite(fid, bx + o, data)
@@ -532,7 +535,7 @@ class Client2(Client):
 			if rem > 0:
 				o = x * self.maxbuffer
 				fd.seek(bx + o)
-				print('writing bad (%s:%s)' % (bx + o, rem))
+				#print('writing bad (%s:%s)' % (bx + o, rem))
 				if synclocal is False:
 					data = fd.read(rem)
 					self.FileWrite(fid, bx + o, data)
@@ -544,9 +547,9 @@ class Client2(Client):
 		
 def main():
 	client = Client2('localhost', 4322, b'Kdje493FMncSxZs')
-	print('setup connection')
+	#print('setup connection')
 	client.Connect()
-	print('	setup connection done')
+	#print('	setup connection done')
 	
 	'''
 	print('requesting directory list')

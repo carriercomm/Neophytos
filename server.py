@@ -5,6 +5,7 @@ import select
 import struct
 import shutil
 import hashlib
+import pprint
 from io import BytesIO
 
 from pkttypes import *
@@ -122,6 +123,7 @@ class ServerClient:
 				return
 			print('loading account')
 			# load account information
+			self.aid = aid
 			fd = open('./accounts/%s' % aid, 'r')
 			self.info = eval(fd.read())
 			fd.close()
@@ -241,6 +243,14 @@ class ServerClient:
 				#print('created')
 				fd = os.open(fpath, os.O_CREAT)
 				os.close(fd)
+				# track disk space used per file
+				if self.info['disk-used'] + self.info['disk-used-perfile'] > self.info['disk-quota']:
+					# this prevent someone from creating too many small files as it accounts for
+					# roughly the amount of disk space used per file, but since it is configuration
+					# specific for account it can be changed if needed for some reason
+					self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 9), vector)
+					return
+				self.info['disk-used'] = self.info['disk-used'] + self.info['disk-used-perfile']
 				
 			# get current size (maybe zero if newly created)
 			fd = open(fpath, 'r+b')
@@ -264,6 +274,10 @@ class ServerClient:
 			os.close(fd)
 			# add new size back onto used quota
 			self.info['disk-used'] = self.info['disk-used'] + newsize
+			# save account information
+			fd = open('./accounts/%s' % self.aid, 'w')
+			pprint.pprint(self.info, fd)
+			fd.close()
 			self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 1), vector)
 			return
 			
