@@ -6,6 +6,7 @@ import struct
 import shutil
 import hashlib
 import pprint
+import bz2
 from io import BytesIO
 
 from pkttypes import *
@@ -397,6 +398,10 @@ class ServerClient:
 			data = msg[2 + 8 + 2 + fnamesz:]
 			length = len(data)
 			
+			# decompress data
+			bz = bz2.BZ2Decompressor()
+			data = bz.decompress(data)
+			
 			#print('len(data)', len(data))
 			
 			if length > self.info.get('max-write-length', self.maxbuffer):
@@ -536,7 +541,12 @@ class Server:
 			for sock in readable:
 				sc = self.socktosc[sock]
 				if sc.GetBufferSize() < self.maxclientbuffer:
-					data = sock.recv(self.maxclientbuffer - sc.GetBufferSize())
+					try:
+						data = sock.recv(self.maxclientbuffer - sc.GetBufferSize())
+					except Exception as e:
+						print(e)
+						data = None
+						
 					if not data:
 						# connection closed, drop it
 						print('dropped connection %s' % (sc.GetAddr(),))

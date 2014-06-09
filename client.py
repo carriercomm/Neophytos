@@ -4,6 +4,8 @@ import socket
 import struct
 import hashlib
 import math
+import threading
+import bz2
 
 import pubcrypt
 
@@ -51,6 +53,9 @@ class Client:
 		self.rhost = rhost
 		self.rport = rport
 		self.aid = aid
+		self.socklock = threading.Lock()
+		self.bytesout = 0
+		self.bytesoutst = time.time()
 	
 	def Connect(self):
 		# try to establish a connection
@@ -89,24 +94,39 @@ class Client:
 		
 	# processes any incoming messages and exits after specified time
 	def HandleMessages(self, timeout, lookfor = None):
-		if timeout is not None:
-			st = time.time()
-			et = st + timeout
-		while timeout is None or timeout < 0 or et - time.time() > 0:
+		# allow only one thread to enter here, if we are going
+		# to wait for a message and another thread is inside the
+		# locked area and it gets the message it should place it
+		# into the keepresult dictionary and we can grab it once
+		# we enter
+		with self.socklock:
+			# first check for it to be in any results
+			if len(self.keepresult) > 0:
+				if lookfor in self.keepresult:
+					# okay return it and release the lock
+					ret = self.keepresult[lookfor]
+					# remove it
+					del self.keepresult[lookfor]
+					return ret
+		
 			if timeout is not None:
-				to = et - time.time()
-				if to < 0:
-					to = 0
-			else:
-				to = None
-			sv, v, d = self.ReadMessage(to)
-			msg = self.ProcessMessage(sv, v, d)
-			#print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
-			if lookfor == v:
-				return msg
-			if v in self.keepresult:
-				self.keepresult[v] = msg
-			continue
+				st = time.time()
+				et = st + timeout
+			while timeout is None or timeout < 0 or et - time.time() > 0:
+				if timeout is not None:
+					to = et - time.time()
+					if to < 0:
+						to = 0
+				else:
+					to = None
+				sv, v, d = self.ReadMessage(to)
+				msg = self.ProcessMessage(sv, v, d)
+				#print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
+				if lookfor == v:
+					return msg
+				if v in self.keepresult:
+					self.keepresult[v] = msg
+				continue
 		return
 		
 	# processes any message and produces output in usable form
@@ -214,8 +234,13 @@ class Client:
 				#print('encrypting message:[%s]' % (data))
 				data = bytes([ClientType.Encrypted]) + self.crypter.crypt(data)
 		
-		self.sock.send(struct.pack('>IQ', len(data), vector))
-		self.sock.send(data)
+		# lock to ensure this entire message is placed
+		# into the stream, then unlock so any other
+		# thread can also place a message into the stream
+		with self.socklock:
+			self.sock.send(struct.pack('>IQ', len(data), vector))
+			self.sock.send(data)
+			
 		if block:
 			#print('blocking by handling messages')
 			res = self.HandleMessages(None, lookfor = vector)
@@ -231,6 +256,9 @@ class Client:
 	def FileRead(self, fid, offset, length, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BHQQ', ClientType.FileRead, fid[1], offset, length) + fid[0], block, discard)
 	def FileWrite(self, fid, offset, data, block = True, discard = True):
+		bz = bz2.BZ2Compressor(compresslevel=9)
+		bz.compress(data)
+		data = bz.flush()
 		return self.WriteMessage(struct.pack('>BHQH', ClientType.FileWrite, fid[1], offset, len(fid[0])) + fid[0] + data, block, discard)
 	def FileSize(self, fid, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileSize, fid[1]) + fid[0], block, discard)
@@ -255,6 +283,7 @@ class Client2(Client):
 	def __init__(self, rhost, rport, aid):
 		Client.__init__(self, rhost, rport, aid)
 		self.maxbuffer = 1024 * 1024 * 8
+		self.workers = []
 
 	def __HashLocalFile(self, fd, offset, length):
 		fd.seek(offset)
@@ -277,7 +306,7 @@ class Client2(Client):
 			self.FileWrite(fid, off, fd.read(_sz))
 			x = x + 1
 	
-	def __FilePatch(self, lfd, rfd, offset, sz, match, info):
+	def __FilePatch(self, lfd, rfd, offset, sz, match, info, depth = 0):
 		tfsz = info['total-size']
 		unet = info.get('net-traffic', 0)
 		gbytes = info.get('good-bytes', 0)
@@ -345,7 +374,7 @@ class Client2(Client):
 				
 			if rhash != lhash:
 				# go deeper
-				self.__FilePatch(lfd, rfd, c[0], c[1], match, info)
+				self.__FilePatch(lfd, rfd, c[0], c[1], match, info, depth = depth + 1)
 			else:
 				# record parts that do not need to be updated
 				info['good-bytes'] = info.get('good-bytes', 0) + sz
@@ -360,8 +389,28 @@ class Client2(Client):
 							file by delta-copy or whole file upload.
 	'''
 	def FilePush(self, fid, lfile):
-		return self.__FileSync(fid, lfile, synclocal = False)
+		# block until we have less than 4 workers
+		while len(self.workers) >= 1:
+			# remove any workers that are not alive
+			_workers = self.workers
+			workers = []
+			for worker in _workers:
+				if worker.isAlive():
+					workers.append(worker)
+			self.workers = workers
+			# let the CPU go for a moment
+			time.sleep(0.001)
+			# check how many workers are alive
+		# create thread that performs the file sync operation
+		thread = threading.Thread(target = Client2.__FileSync, args = (self, fid, lfile, False))
+		# store the worker in the list
+		self.workers.append(thread)
+		thread.start()
 		
+		print('bytes-out: %sKB' % ((self.bytesout / (time.time() - self.bytesoutst)) / 1024))
+		
+		#return self.__FileSync(fid, lfile, synclocal = False)
+
 	def __FileSync(self, fid, lfile, synclocal = False):
 		try:
 			if synclocal:
@@ -410,11 +459,13 @@ class Client2(Client):
 				fd = open(lfile, 'r+b')
 
 		if synclocal is False:
-			if rsz < lsz / 2:
+			if True or rsz < lsz / 2:
 				# just upload it whole
 				self.UploadFile(fid, fd, lsz)
 				fd.close()
+				self.bytesout = self.bytesout + lsz
 				return
+		else:
 			if lsz < rsz / 2:
 				self.DownloadFile(fid, fs, rsz)
 				fd.close()
@@ -527,6 +578,7 @@ class Client2(Client):
 				if synclocal is False:
 					data = fd.read(self.maxbuffer)
 					self.FileWrite(fid, bx + o, data)
+					self.bytesout = self.bytesout + len(data)
 				else:
 					data = self.FileRead(self.maxbuffer)[1]
 					fd.write(data)
@@ -539,6 +591,7 @@ class Client2(Client):
 				if synclocal is False:
 					data = fd.read(rem)
 					self.FileWrite(fid, bx + o, data)
+					self.bytesout = self.bytesout + len(data)
 				else:
 					data = self.FileRead(fid, bx + o, rem)[1]
 					fd.write(data)

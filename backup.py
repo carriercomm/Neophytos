@@ -27,7 +27,7 @@ def __LoadConfig():
 def LoadConfig():
 	cfg = __LoadConfig()
 	if cfg.get('remote-host', None) is None:
-		cfg['remote-host'] = 'localhost'
+		cfg['remote-host'] = 'kmcg3413.net'
 		cfg['remote-port'] = 4322
 		cfg['storage-auth-code'] = None
 	cfg['paths'] = cfg.get('paths', {})
@@ -277,7 +277,7 @@ def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = 
 		
 	if rpath is None:
 		rpath = ''
-
+		
 	if base is None:
 		base = dpath
 	try:
@@ -289,33 +289,18 @@ def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = 
 		fpath = '%s/%s' % (dpath, node)
 		# if directory..
 		if os.path.isdir(fpath):
-			dopush(name, rhost, rport, sac, cfg, fpath, rpath, filter, base = base, c = c, dry = dry)
+			dopush(name, rhost, rport, sac, cfg, fpath, '%s/%s' % (rpath, node), filter, base = base, c = c, dry = dry)
 			continue
 		# run filters
-		for f in filter:
-			notmatch = False
-			if f[0] == '!':
-				# match if does not match filter
-				notmatch = True
-				f = f[1:]
-			# do regular expression matching
-			_fpath = fpath[len(base):]
-			result = re.match(f, _fpath)
-			if notmatch:
-				if result is not None:
-					continue
-			else:
-				if result is None:
-					continue
+		if dofilters(filter, fpath):
 			# backup the file
+			base = fpath[0:fpath.rfind('/') + 1]
+			_fpath = fpath[len(base):]
 			print('PROCESSING [%s]' % _fpath)
-			# fpath
 			lfile = fpath
 			fid = (bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8'), 0)
 			if dry is False:
 				c.FilePush(fid, lfile)
-			else:
-				raise Exception()
 	
 def __cmd_pull_target(cfg, name, target, rpath = None, lpath = None, dry = True):
 	print('pulling [%s]' % name)
@@ -385,6 +370,80 @@ def cmd_pull(args, dry = True):
 	# run all that are enabled
 	for k in cfg['paths']:
 		__cmd_pull_target(cfg, k, cfg['paths'][k], rpath = rpath, lpath = lpath, dry = dry)	
+
+'''
+'''		
+def dofilters(filters, fpath):
+	mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
+	
+	# quick cheat
+	if size > 1024 * 1024 * 200:
+		return False
+	
+	for f in filters:
+		notmatch = False
+		if f[0] == '!':
+			# match if does not match filter
+			notmatch = True
+			f = f[1:]
+		# do regular expression matching
+		base = fpath[0:fpath.rfind('/') + 1]
+		_fpath = fpath[len(base):]
+		result = re.match(f, _fpath)
+		if notmatch:
+			if result is not None:
+				return False
+		else:
+			if result is None:
+				return False
+		return True
+	
+def __cmd_chksize_target(cfg, name, target):
+	dpath = target['disk-path']
+	
+	total = 0
+	doing = []
+	todo = []
+	
+	doing.append(dpath)
+	while len(doing) > 0:
+		for path in doing:
+			nodes = os.listdir(path)
+			sys.stdout.flush()
+			for node in nodes:
+				fpath = '%s/%s' % (path, node)
+				if os.path.isdir(fpath):
+					todo.append(fpath)
+					print('#', end='')
+					continue
+				print('.', end='')
+				# see if one of the filters marks it as valid
+				if dofilters(target['filter'], fpath):
+					# get file size
+					mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
+					total = total + size
+			
+		# swap
+		doing = todo
+		todo = []
+	print('target:[%s] %sMB %sGB' % (name, total / 1024 / 1024, total / 1024 / 1024 / 1024))
+	return
+	
+def cmd_chksize(args):
+	cfg = LoadConfig()
+
+	if len(args) > 0:
+		# treat as list of targets to run (run them even if they are disabled)
+		for target in args:
+			if target not in cfg['paths']:
+				print('    target by name [%s] not found' % target)
+			else:
+				__cmd_chksize_target(cfg, target, cfg['paths'][target])
+		return
+		
+	# run all that are enabled
+	for k in cfg['paths']:
+		__cmd_chksize_target(cfg, k, cfg['paths'][k])
 	
 def cmd_push(args, dry = True):
 	cfg = LoadConfig()
@@ -464,6 +523,7 @@ def showhelp():
 	print('dry-pull    - pretend to do pull')
 	print('pull        - pull (restore) all enabled or specified backup')
 	print('list        - list backup paths or filters for specified')
+	print('chksize     - will process all local files and display the total size')
 	print('	Example:')
 	print('		<program> add <name> <path>')
 	print('		<program> del <name>')
@@ -494,6 +554,8 @@ def main(args):
 		return cmd_delfilter(args[1:])
 	if args[0] == 'dry-push':
 		return cmd_push(args[1:], dry = True)
+	if args[0] == 'chksize':
+		return cmd_chksize(args[1:])
 	if args[0] == 'push':
 		return cmd_push(args[1:], dry = False)
 	if args[0] == 'dry-pull':
