@@ -241,12 +241,29 @@ class ServerClient:
 				#print('created')
 				fd = os.open(fpath, os.O_CREAT)
 				os.close(fd)
+				
+			# get current size (maybe zero if newly created)
+			fd = open(fpath, 'r+b')
+			fd.seek(0, 2)
+			csz = fd.tell()
+			fd.close()
+			
+			# subtract current size (will add new size later)
+			self.info['disk-used'] = self.info['disk-used'] - csz
+			
+			if self.info['disk-used'] + newsize > self.info['disk-quota']:
+				# they will go over their quota
+				self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 9), vector)
+				return
+			
 			# open existing
 			#print('open existing')
 			fd = os.open(fpath, os.O_RDWR)
 			#print('fd:%s newsize:%s' % (fd, newsize))
 			os.ftruncate(fd, newsize)
 			os.close(fd)
+			# add new size back onto used quota
+			self.info['disk-used'] = self.info['disk-used'] + newsize
 			self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 1), vector)
 			return
 			

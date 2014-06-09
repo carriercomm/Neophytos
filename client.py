@@ -39,6 +39,9 @@ from misc import *
 
 class UnknownMessageTypeException(Exception):
 	pass
+
+class QuotaLimitReachedException(Exception):
+	pass
 	
 class Client:
 	def __init__(self, rhost, rport, aid):
@@ -151,7 +154,18 @@ class Client:
 		if type == ServerType.FileSize:
 			return struct.unpack_from('>BQ', data)
 		if type == ServerType.FileTrun:
-			return struct.unpack_from('>B', data)[0]
+			code = struct.unpack_from('>B', data)[0]
+			# this is a special situation where they have reached their quota
+			if code == 9:
+				# i want to force this to be handled which is unhandled
+				# should terminate the client ending the push to the server
+				# which will get the users attention; do not want this to
+				# end up silently happening and the users not noticing or
+				# the developer who modified the client accidentally ignoring
+				# it since it is an issue that needs to be addressed
+				print('WARNING: QUOTA LIMIT REACHED THROWING EXCEPTION')
+				raise QuotaLimitReachedException()
+			return code
 		if type == ServerType.FileDel:
 			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileCopy:
