@@ -66,16 +66,22 @@ class ServerClient:
 		
 	def HandleData(self, data):
 		# process data for a message
-		msg, vector = self.ProcessData(data)
-		
-		# exit if no message
-		if msg is None:
-			return
+		while True:
+			# the second and so forth time this is called
+			# we pass in None for data and just check for
+			# additional messages in the buffer
+			msg, vector = self.ProcessData(data)
+			# on next call dont pass in any data
+			data = None
 			
-		#print('type-vector', type(vector))
-			
-		# process the message
-		self.ProcessMessage(msg, vector)
+			# exit if no message
+			if msg is None:
+				return
+				
+			#print('type-vector', type(vector))
+				
+			# process the message
+			self.ProcessMessage(msg, vector)
 		
 	def SanitizePath(self, path):
 		while path.find(b'..') > -1:
@@ -111,6 +117,7 @@ class ServerClient:
 		# anything else must be encrypted
 		if type != ClientType.Encrypted:
 			print('NOT ENCRYPTED MESSAGE')
+			raise Exception('message not encrypted but has type:%s' % type)
 			return
 		
 		#print('processing encrypted message')
@@ -448,6 +455,8 @@ class ServerClient:
 			pass
 		if type == ClientType.FileGetStashes:
 			pass
+		raise Exception('unknown message type:%s' % type)
+		
 		
 	def WriteMessage(self, data, vector):		
 		# get type
@@ -465,15 +474,16 @@ class ServerClient:
 				data = bytes((ServerType.Encrypted,)) + data
 		# at the moment i do not use server-vector
 		# so it is hard coded as zero
-		self.sock.send(struct.pack('>IQQ', len(data), 0, vector))
-		self.sock.send(data)
+		self.sock.sendall(struct.pack('>IQQ', len(data), 0, vector))
+		self.sock.sendall(data)
 		return
 	
 	def GetBufferSize(self):
 		return len(self.wmsg)
 	
 	def ProcessData(self, data):
-		self.data.write(data)
+		if data is not None:
+			self.data.write(data)
 		#self.data = self.data + data
 		
 		#print('tell', self.data.tell())
@@ -493,12 +503,13 @@ class ServerClient:
 			self.wvector = vector
 			# compensate for this
 			#self.data = self.data[8 + 4:]
+			print('reading for vector:%s' % vector)
 			self.data.seek(0, 2)
 		
 		#print('checking for enough data (%s of %s)' % (len(self.data), self.wsz))
 		# not enough data to read message portion
 		#print('..tell', self.data.tell())
-		if self.data.tell() - (8 + 4) < self.wsz:
+		if self.wsz is None or self.data.tell() - (8 + 4) < self.wsz:
 			return (None, None)
 		#print('reading message')
 		# get message and leave remaining data
@@ -506,6 +517,7 @@ class ServerClient:
 		#_ret = self.data[0:self.wsz]
 		#self.data = self.data[self.wsz:]
 		
+		print('got vector:%s' % self.wvector)
 		# place remaining data into new buffer
 		self.data.seek(8 + 4)
 		_ret = self.data.read(self.wsz)
@@ -548,6 +560,7 @@ class Server:
 			for scaddr in self.sc:
 				tsc = self.sc[scaddr]
 				input.append(tsc.GetSock())
+				print('appending client:%s sock' % (scaddr,))
 		
 			readable, writable, exc = select.select(input, [], input)
 			

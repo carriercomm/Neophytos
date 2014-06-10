@@ -62,15 +62,15 @@ class Client:
 			self.crypter = SymCrypt(key)
 			self.WriteMessage(struct.pack('>B', ClientType.SetupCrypt) + key, False, True)
 			# wait for reply
-			print('waiting for setup crypt reply')
+			#print('waiting for setup crypt reply')
 			self.ReadMessage()
-			print('logging into the system')
+			#print('logging into the system')
 
 		# do this even with SSL
 		data = struct.pack('>B', ClientType.Login) + self.aid
 		#print('writing-message:[%s]' % data)
 		self.WriteMessage(data, False, True)
-		print('waiting for login reply')
+		#print('waiting for login reply')
 		result = self.ProcessMessage(0, 0, self.ReadMessage()[2])
 		if result:
 			print('login good')
@@ -86,23 +86,23 @@ class Client:
 		# locked area and it gets the message it should place it
 		# into the keepresult dictionary and we can grab it once
 		# we enter
-		if lookfor in self.keepresult:
+		if lookfor in self.keepresult and self.keepresult[lookfor] is not None:
 			# okay return it and release the lock
 			ret = self.keepresult[lookfor]
 			# remove it
 			del self.keepresult[lookfor]
-			print('GOTGOT')
+			#print('GOTGOT')
 			return ret
 		print('waiting at read lock')
 		with self.socklockread:
 			print('thread:%s INSIDE WAIT' % threading.currentThread())
 			# first check for it to be in any results
-			if lookfor in self.keepresult:
+			if lookfor in self.keepresult and self.keepresult[lookfor] is not None:
 				# okay return it and release the lock
 				ret = self.keepresult[lookfor]
 				# remove it
 				del self.keepresult[lookfor]
-				print('     SAVED MSG')
+				#print('     SAVED MSG')
 				return ret
 		
 			if timeout is not None:
@@ -115,22 +115,24 @@ class Client:
 						to = 0
 				else:
 					to = None
-				print('reading for message')
+				print('reading for message vector:%s' % lookfor)
 				sv, v, d = self.ReadMessage(to)
 				msg = self.ProcessMessage(sv, v, d)
+				print('got msg vector:%s' % v)
 				#print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
 				if lookfor == v:
-					print('thread:%s FOUND MSG' % threading.currentThread())
+					#print('thread:%s FOUND MSG' % threading.currentThread())
 					if v in self.keepresult:
 						del self.keepresult[v]
 					return msg
 				if v in self.keepresult:
-					print('STORED MSG')
-					exit()
+					print('    STORED MSG')
+					#exit()
 					self.keepresult[v] = msg
 				else:
-					print('THREW MSG AWAY')
-					exit()
+					print('    THREW MSG AWAY', v)
+					#exit()
+					pass
 				continue
 		return
 		
@@ -142,15 +144,15 @@ class Client:
 		
 		# only process encrypted messages
 		if type != ServerType.Encrypted:
-			print('NOT ENCRYPTED')
+			#print('NOT ENCRYPTED')
 			return None
 			
 		# decrypt message (drop off encrypted type field)
 		if not self.ssl:
-			print('DECRYPTING')
+			#print('DECRYPTING')
 			data = self.crypter.decrypt(data[1:])
 		else:
-			print('NOT DECRYPTING')
+			#print('NOT DECRYPTING')
 			data = data[1:]
 			
 		type = data[0]
@@ -220,18 +222,24 @@ class Client:
 	def ReadMessage(self, timeout = None):
 		#print('reading message')
 		self.sock.settimeout(timeout)
-		print('waiting!!!')
 		sz, svector, vector = struct.unpack('>IQQ', self.sock.recv(4 + 8 + 8))
-		print('got hdr!')
 		#print('read header')
 		data = self.sock.recv(sz)
-		print('got it!')
 		#print('read data', data)
 		return svector, vector, data
 		
 	def WriteMessage(self, data, block, discard):
-		vector = self.vector
-		
+		with self.socklockwrite:
+			vector = self.vector
+			self.vector = self.vector + 1
+			
+		# little sanity here.. if were blocking for
+		# a reply for a vector then we dont want to
+		# have it discarded by another thread if we
+		# are using multiple threads... SO..
+		if block:
+			discard = False
+			
 		# get type
 		type = data[0]
 		
@@ -256,23 +264,38 @@ class Client:
 		# lock to ensure this entire message is placed
 		# into the stream, then unlock so any other
 		# thread can also place a message into the stream
-		print('waiting at write lock')
+		#print('waiting at write lock')
 		with self.socklockwrite:
-			print('inside write lock')
-			self.vector = self.vector + 1
-			self.sock.send(struct.pack('>IQ', len(data), vector))
-			self.sock.send(data)
+			#print('inside write lock')
+			# setup to save message so it is not thrown away
+			if discard is False:
+				self.keepresult[vector] = None
+				print('    keeping result for vector:%s' % vector)
+			else:
+				print('    NOT keeping result for vector:%s' % vector)
+			self.send(struct.pack('>IQ', len(data), vector))
+			self.send(data)
+			print('sent data for vector:%s' % vector)
 			
 		if block:
 			#print('blocking by handling messages')
+			print('blocking for vector:%s' % vector)
 			res = self.HandleMessages(None, lookfor = vector)
 			#print('	returned with res:%s' % (res,))
 			return res
 		if discard:
 			return vector
-		self.keepresult[vector] = None
 		return None
-		
+	
+	def send(self, data):
+		#self.sock.sendall(data)
+		totalsent = 0
+		while totalsent < len(data):
+			sent = self.sock.send(data[totalsent:])
+			if sent == 0:
+				raise RuntimeError("socket connection broken")
+			totalsent = totalsent + sent
+	
 	def DirList(self, dir, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>B', ClientType.DirList) + dir, block, discard)
 	def FileRead(self, fid, offset, length, block = True, discard = True):
@@ -327,7 +350,7 @@ class Client2(Client):
 				_sz = max
 			off = x * max
 			#print('  uploading offset:%x/%x size:%x' % (off, lsz, _sz))
-			self.FileWrite(fid, off, fd.read(_sz))
+			self.FileWrite(fid, off, fd.read(_sz), block = False, discard = True)
 			x = x + 1
 			print('$')
 	
@@ -425,7 +448,7 @@ class Client2(Client):
 			self.workers = workers
 			# let the CPU go for a moment
 			time.sleep(0.1)
-		print('LEN', len(self.workers))
+		#print('LEN', len(self.workers))
 			# check how many workers are alive
 		# create thread that performs the file sync operation
 		thread = threading.Thread(target = Client2.___FileSync, args = (self, fid, lfile, False))
@@ -437,9 +460,9 @@ class Client2(Client):
 		
 		#return self.__FileSync(fid, lfile, synclocal = False)
 	def ___FileSync(self, fid, lfile, synclocal):
-		print('ENTER <%s>' % lfile)
+		#print('ENTER <%s>' % lfile)
 		self.__FileSync(fid, lfile, synclocal)
-		print('EXIT <%s>' % lfile)
+		#print('EXIT <%s>' % lfile)
 		
 	def __FileSync(self, fid, lfile, synclocal = False):
 		try:
@@ -491,6 +514,7 @@ class Client2(Client):
 		if synclocal is False:
 			if True or rsz < lsz / 2:
 				# just upload it whole
+				print('UPLOAD[%s]' % lfile)
 				self.UploadFile(fid, fd, lsz)
 				fd.close()
 				self.bytesout = self.bytesout + lsz
@@ -530,11 +554,13 @@ class Client2(Client):
 		# on the server (done on server to prevent
 		# some DoS attacks)
 		
+		print('PATCHING[%s]' % lfile)
+		
 		max = self.maxbuffer
 		pcnt = math.ceil(tsz / max)
 		x = 0
 		while x < pcnt:
-			print('?')
+			#print('?')
 			if x * max + max > tsz:
 				_sz = tsz - (x * max)
 			else:
@@ -550,7 +576,7 @@ class Client2(Client):
 		invert = []
 		invert.append((0, info['total-size']))
 		for good in match:
-			print('@')
+			#print('@')
 			gx = good[0]
 			gw = good[1]
 			for bad in invert:
@@ -604,29 +630,29 @@ class Client2(Client):
 			
 			x = 0
 			while x < divide:
-				print('.')
+				#print('.')
 				o = x * self.maxbuffer
 				fd.seek(bx + o)
-				print('writing bad (%s:%s)' % (bx + o, self.maxbuffer))
+				#print('writing bad (%s:%s)' % (bx + o, self.maxbuffer))
 				if synclocal is False:
 					data = fd.read(self.maxbuffer)
-					self.FileWrite(fid, bx + o, data, discard = True)
+					self.FileWrite(fid, bx + o, data, block = False, discard = True)
 					self.bytesout = self.bytesout + len(data)
 				else:
-					data = self.FileRead(self.maxbuffer, discard = True)[1]
+					data = self.FileRead(self.maxbuffer)[1]
 					fd.write(data)			
 				x = x + 1
 				
 			if rem > 0:
 				o = x * self.maxbuffer
 				fd.seek(bx + o)
-				print('writing bad (%s:%s)' % (bx + o, rem))
+				#print('writing bad (%s:%s)' % (bx + o, rem))
 				if synclocal is False:
 					data = fd.read(rem)
-					self.FileWrite(fid, bx + o, data, discard = True)
+					self.FileWrite(fid, bx + o, data, block = False, discard = True)
 					self.bytesout = self.bytesout + len(data)
 				else:
-					data = self.FileRead(fid, bx + o, rem, discard = True)[1]
+					data = self.FileRead(fid, bx + o, rem)[1]
 					fd.write(data)
 
 		fd.close()
