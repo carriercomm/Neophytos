@@ -116,7 +116,7 @@ class ServerClient:
 			
 		# anything else must be encrypted
 		if type != ClientType.Encrypted:
-			print('NOT ENCRYPTED MESSAGE')
+			#print('NOT ENCRYPTED MESSAGE')
 			raise Exception('message not encrypted but has type:%s' % type)
 			return
 		
@@ -124,13 +124,13 @@ class ServerClient:
 		
 		# decrypt message if NOT SSL
 		if not self.ssl:
-			print('NON-SSL MESSAGE')
+			#print('NON-SSL MESSAGE')
 			msg = self.crypter.decrypt(msg)
 			
 		type = msg[0]
 		msg = msg[1:]
 		
-		print('	type:%s' % type)
+		#print('	type:%s' % type)
 		#print('	msg:%s' % msg)
 		
 		# will associate client with an account
@@ -503,7 +503,7 @@ class ServerClient:
 			self.wvector = vector
 			# compensate for this
 			#self.data = self.data[8 + 4:]
-			print('reading for vector:%s' % vector)
+			#print('reading for vector:%s' % vector)
 			self.data.seek(0, 2)
 		
 		#print('checking for enough data (%s of %s)' % (len(self.data), self.wsz))
@@ -517,7 +517,7 @@ class ServerClient:
 		#_ret = self.data[0:self.wsz]
 		#self.data = self.data[self.wsz:]
 		
-		print('got vector:%s' % self.wvector)
+		#print('got vector:%s' % self.wvector)
 		# place remaining data into new buffer
 		self.data.seek(8 + 4)
 		_ret = self.data.read(self.wsz)
@@ -560,7 +560,7 @@ class Server:
 			for scaddr in self.sc:
 				tsc = self.sc[scaddr]
 				input.append(tsc.GetSock())
-				print('appending client:%s sock' % (scaddr,))
+				#print('appending client:%s sock' % (scaddr,))
 		
 			readable, writable, exc = select.select(input, [], input)
 			

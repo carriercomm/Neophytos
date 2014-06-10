@@ -93,9 +93,9 @@ class Client:
 			del self.keepresult[lookfor]
 			#print('GOTGOT')
 			return ret
-		print('waiting at read lock')
+		#print('waiting at read lock')
 		with self.socklockread:
-			print('thread:%s INSIDE WAIT' % threading.currentThread())
+			#print('thread:%s INSIDE WAIT' % threading.currentThread())
 			# first check for it to be in any results
 			if lookfor in self.keepresult and self.keepresult[lookfor] is not None:
 				# okay return it and release the lock
@@ -115,10 +115,10 @@ class Client:
 						to = 0
 				else:
 					to = None
-				print('reading for message vector:%s' % lookfor)
+				#print('reading for message vector:%s' % lookfor)
 				sv, v, d = self.ReadMessage(to)
 				msg = self.ProcessMessage(sv, v, d)
-				print('got msg vector:%s' % v)
+				#print('got msg vector:%s' % v)
 				#print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
 				if lookfor == v:
 					#print('thread:%s FOUND MSG' % threading.currentThread())
@@ -126,11 +126,11 @@ class Client:
 						del self.keepresult[v]
 					return msg
 				if v in self.keepresult:
-					print('    STORED MSG')
+					#print('    STORED MSG')
 					#exit()
 					self.keepresult[v] = msg
 				else:
-					print('    THREW MSG AWAY', v)
+					#print('    THREW MSG AWAY', v)
 					#exit()
 					pass
 				continue
@@ -270,16 +270,14 @@ class Client:
 			# setup to save message so it is not thrown away
 			if discard is False:
 				self.keepresult[vector] = None
-				print('    keeping result for vector:%s' % vector)
-			else:
-				print('    NOT keeping result for vector:%s' % vector)
+				#print('    keeping result for vector:%s' % vector)
 			self.send(struct.pack('>IQ', len(data), vector))
 			self.send(data)
-			print('sent data for vector:%s' % vector)
+			#print('sent data for vector:%s' % vector)
 			
 		if block:
 			#print('blocking by handling messages')
-			print('blocking for vector:%s' % vector)
+			#print('blocking for vector:%s' % vector)
 			res = self.HandleMessages(None, lookfor = vector)
 			#print('	returned with res:%s' % (res,))
 			return res
@@ -352,7 +350,7 @@ class Client2(Client):
 			#print('  uploading offset:%x/%x size:%x' % (off, lsz, _sz))
 			self.FileWrite(fid, off, fd.read(_sz), block = False, discard = True)
 			x = x + 1
-			print('$')
+			#print('$')
 	
 	def __FilePatch(self, lfd, rfd, offset, sz, match, info, depth = 0):
 		tfsz = info['total-size']
