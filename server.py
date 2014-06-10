@@ -593,7 +593,6 @@ class Server:
 						continue
 					except Exception as e:
 						#print(e)
-						raise e
 						data = None
 						
 					if not data:

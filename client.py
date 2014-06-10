@@ -436,7 +436,7 @@ class Client2(Client):
 	'''
 	def FilePush(self, fid, lfile):
 		# block until we have less than 4 workers
-		while len(self.workers) > 8:
+		while len(self.workers) > 16:
 			# remove any workers that are not alive
 			_workers = self.workers
 			workers = []
@@ -510,7 +510,7 @@ class Client2(Client):
 				fd = open(lfile, 'r+b')
 
 		if synclocal is False:
-			if True or rsz < lsz / 2:
+			if rsz < lsz / 2:
 				# just upload it whole
 				print('UPLOAD[%s]' % lfile)
 				self.UploadFile(fid, fd, lsz)
