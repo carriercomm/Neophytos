@@ -8,6 +8,7 @@ import hashlib
 import pprint
 import bz2
 from io import BytesIO
+import ssl
 
 from pkttypes import *
 from misc import *
@@ -24,10 +25,17 @@ class DataBufferOverflowException(Exception):
 	pass
 	
 class ServerClient:
-	def __init__(self, sock, addr, kpub, kpri, server):
+	def __init__(self, sock, addr, kpub, kpri, server, essl = False):
 		self.sock = sock
 		self.addr = addr
 		self.hdr = b''
+		
+		self.ssl = essl
+		
+		print('HERE')
+		if essl:
+			print('    wrapping socket with SSL')
+			self.sock = ssl.wrap_socket(self.sock, server_side = True, certfile = 'cert.pem', ssl_version = ssl.PROTOCOL_TLSv1)
 		
 		self.server = server
 		
@@ -99,18 +107,23 @@ class ServerClient:
 			self.crypter = SymCrypt(key)
 			self.WriteMessage(struct.pack('>B', ServerType.SetupCrypt), vector)
 			return
+			
 		# anything else must be encrypted
 		if type != ClientType.Encrypted:
+			print('NOT ENCRYPTED MESSAGE')
 			return
 		
 		#print('processing encrypted message')
 		
-		# decrypt message
-		msg = self.crypter.decrypt(msg)
+		# decrypt message if NOT SSL
+		if not self.ssl:
+			print('NON-SSL MESSAGE')
+			msg = self.crypter.decrypt(msg)
+			
 		type = msg[0]
 		msg = msg[1:]
 		
-		#print('	type:%s' % type)
+		print('	type:%s' % type)
 		#print('	msg:%s' % msg)
 		
 		# will associate client with an account
@@ -444,10 +457,12 @@ class ServerClient:
 		if type == ServerType.PublicKey:
 			pass
 		else:
-			#print('encrypting type:%s' % type)
-			# normal encrypt	
-			data = bytes((ServerType.Encrypted,)) + self.crypter.crypt(data)
-		
+			# if not SSL then do our own encryption
+			if not self.ssl:
+				data = bytes((ServerType.Encrypted,)) + self.crypter.crypt(data)
+			else:
+				# pretend its encrypted
+				data = bytes((ServerType.Encrypted,)) + data
 		# at the moment i do not use server-vector
 		# so it is hard coded as zero
 		self.sock.send(struct.pack('>IQQ', len(data), 0, vector))
@@ -508,6 +523,12 @@ class Server:
 		self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		self.sock.bind(('0.0.0.0', 4322))
 		self.sock.listen(20)
+		
+		self.sslsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.sslsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		self.sslsock.bind(('0.0.0.0', 4323))
+		self.sslsock.listen(20)
+		
 		self.sc = {}
 		self.socktosc = {}
 		self.maxclientbuffer = 4096
@@ -523,20 +544,30 @@ class Server:
 	def HandleMessages(self):
 		# client, addr = sock.accept()
 		while True:
-			input = [self.sock]
+			input = [self.sock, self.sslsock]
 			for scaddr in self.sc:
 				tsc = self.sc[scaddr]
 				input.append(tsc.GetSock())
 		
 			readable, writable, exc = select.select(input, [], input)
 			
-			# accept incoming connections
+			# accept incoming connections (weak encryption connections)
 			if self.sock in readable:
 				nsock, caddr = self.sock.accept()
 				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self)
 				self.sc[caddr] = nsc
 				self.socktosc[nsock] = nsc
 				readable.remove(self.sock)
+			# accept incoming connections (SSL encryption connections)
+			if self.sslsock in readable:
+				print('ACCEPTING SSL CONNECTION')
+				nsock, caddr = self.sslsock.accept()
+				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self, essl = True)
+				# the SSL will change the sock
+				nsock = nsc.GetSock()
+				self.sc[caddr] = nsc
+				self.socktosc[nsock] = nsc
+				readable.remove(self.sslsock)
 			
 			# read any pending data (and process it)
 			for sock in readable:
@@ -544,8 +575,12 @@ class Server:
 				if sc.GetBufferSize() < self.maxclientbuffer:
 					try:
 						data = sock.recv(self.maxclientbuffer - sc.GetBufferSize())
+					except ssl.SSLError as e:
+						# just ignore it
+						continue
 					except Exception as e:
-						print(e)
+						#print(e)
+						raise e
 						data = None
 						
 					if not data:

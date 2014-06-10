@@ -6,38 +6,12 @@ import hashlib
 import math
 import threading
 import bz2
+import ssl
 
 import pubcrypt
 
 from pkttypes import *
 from misc import *
-
-'''
-	0 - whole file (fixed size)
-	1 - sparse file (non-fixed size)
-	2 - change file (linked to another file and stores differences)
-	
-	file are identified with two parts
-		1. name
-		2. revision
-		
-	revision 0 always means current
-	revision 1 is oldest revision
-	revision 2 is newer revision
-	revision X is newer than X - 1 and older than X + 1 but older than 0
-	
-	files are stored in the following format
-	<type>.<stash>.<encoded-name>
-	whole.0.c%43rk%%.txt			- whole
-	sparse.0.c%43rk%%.txt			- sparse
-	meta.c%43rk%%.txt				- meta file (listing of revisions) + dependancies for change files
-	
-	encoded-name suppots the usage of any character
-	
-	directory names use encoded-name so it can use any character
-	
-	the slash is a special character and if used represents a directory
-'''
 
 class UnknownMessageTypeException(Exception):
 	pass
@@ -58,32 +32,45 @@ class Client:
 		self.bytesout = 0
 		self.bytesoutst = time.time()
 	
-	def Connect(self):
+	def Connect(self, essl = False):
 		# try to establish a connection
-		self.sock.connect((self.rhost, self.rport))
-		# get public key
-		#print('requesting public key')
-		self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), False, True)
-		# wait for packet
-		s, v, pubkey = self.ReadMessage()
-		type, esz = struct.unpack_from('>BH', pubkey)
-		#print('esz:%s' % (esz))
-		e = pubkey[3:3 + esz]
-		p = pubkey[3 + esz:]
-		self.pubkey = (e, p)
-		#print(self.pubkey)
-		# setup encryption
-		key = IDGen.gen(10)
-		#print('key:%s' % key)
-		self.crypter = SymCrypt(key)
-		self.WriteMessage(struct.pack('>B', ClientType.SetupCrypt) + key, False, True)
-		# wait for reply
-		#print('waiting for setup crypt reply')
-		self.ReadMessage()
-		#print('logging into the system')
+		if essl:
+			self.sock = ssl.wrap_socket(self.sock)
+		
+		if essl:
+			self.sock.connect((self.rhost, self.rport + 1))
+		else:
+			self.sock.connect((self.rhost, self.rport))
+		
+		self.ssl = essl
+		
+		if not self.ssl:
+			# get public key
+			#print('requesting public key')
+			self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), False, True)
+			# wait for packet
+			s, v, pubkey = self.ReadMessage()
+			type, esz = struct.unpack_from('>BH', pubkey)
+			#print('esz:%s' % (esz))
+			e = pubkey[3:3 + esz]
+			p = pubkey[3 + esz:]
+			self.pubkey = (e, p)
+			#print(self.pubkey)
+			# setup encryption
+			key = IDGen.gen(10)
+			#print('key:%s' % key)
+			self.crypter = SymCrypt(key)
+			self.WriteMessage(struct.pack('>B', ClientType.SetupCrypt) + key, False, True)
+			# wait for reply
+			print('waiting for setup crypt reply')
+			self.ReadMessage()
+			print('logging into the system')
+
+		# do this even with SSL
 		data = struct.pack('>B', ClientType.Login) + self.aid
 		#print('writing-message:[%s]' % data)
 		self.WriteMessage(data, False, True)
+		print('waiting for login reply')
 		result = self.ProcessMessage(0, 0, self.ReadMessage()[2])
 		if result:
 			print('login good')
@@ -92,7 +79,6 @@ class Client:
 			print('login bad')
 			exit() 
 			return False
-		
 	# processes any incoming messages and exits after specified time
 	def HandleMessages(self, timeout, lookfor = None):
 		# allow only one thread to enter here, if we are going
@@ -156,10 +142,17 @@ class Client:
 		
 		# only process encrypted messages
 		if type != ServerType.Encrypted:
+			print('NOT ENCRYPTED')
 			return None
 			
 		# decrypt message (drop off encrypted type field)
-		data = self.crypter.decrypt(data[1:])
+		if not self.ssl:
+			print('DECRYPTING')
+			data = self.crypter.decrypt(data[1:])
+		else:
+			print('NOT DECRYPTING')
+			data = data[1:]
+			
 		type = data[0]
 		data = data[1:]
 		
@@ -227,9 +220,12 @@ class Client:
 	def ReadMessage(self, timeout = None):
 		#print('reading message')
 		self.sock.settimeout(timeout)
+		print('waiting!!!')
 		sz, svector, vector = struct.unpack('>IQQ', self.sock.recv(4 + 8 + 8))
+		print('got hdr!')
 		#print('read header')
 		data = self.sock.recv(sz)
+		print('got it!')
 		#print('read data', data)
 		return svector, vector, data
 		
@@ -248,9 +244,14 @@ class Client:
 				# public key crypt
 				data = data[0:1] + pubcrypt.crypt(data[1:], self.pubkey)
 			else:
-				# normal encrypt (keep type field unencrypted)
-				#print('encrypting message:[%s]' % (data))
-				data = bytes([ClientType.Encrypted]) + self.crypter.crypt(data)
+				# if not SSL then use our built-in encryption
+				if not self.ssl:
+					data = bytes([ClientType.Encrypted]) + self.crypter.crypt(data)
+				else:
+					# we just pretend its encrypted when really its not, however
+					# since we are using SSL the individual messages are not encrypted
+					# but the entire socket stream is.. so just prepend this header
+					data = bytes([ClientType.Encrypted]) + data
 		
 		# lock to ensure this entire message is placed
 		# into the stream, then unlock so any other

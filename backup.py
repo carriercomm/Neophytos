@@ -31,6 +31,9 @@ def LoadConfig():
 		cfg['remote-port'] = 4322
 		cfg['storage-auth-code'] = None
 	cfg['paths'] = cfg.get('paths', {})
+	
+	if 'ssl' not in cfg:
+		cfg['ssl'] = True
 	return cfg
 
 def cmd_config(args):
@@ -204,7 +207,8 @@ def dopull(name, rhost, rport, sac, cfg, rpath, lpath, filter, base = None, c = 
 	if c is None:
 		print('CONNECTING TO REMOTE SERVER')
 		c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
-		c.Connect()
+		cfg = LoadConfig()
+		c.Connect(essl = cfg['ssl'])
 		print('CONNECTION ESTABLISHED, SECURED, AND AUTHENTICATED')
 	
 	if rpath is None:
@@ -272,7 +276,8 @@ def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = 
 	if c is None:
 		print('CONNECTING TO REMOTE SERVER')
 		c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
-		c.Connect()
+		cfg = LoadConfig()
+		c.Connect(essl = cfg['ssl'])
 		print('CONNECTION ESTABLISHED, SECURED, AND AUTHENTICATED')
 		
 	if rpath is None:
@@ -325,6 +330,28 @@ def __cmd_push_target(cfg, name, target, rpath = None, lpath = None, dry = True)
 	sac = cfg['storage-auth-code']
 	
 	return dopush(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, rpath = rpath, filter = filter, dry = dry)
+	
+'''	
+	@sdescription:		Used to disable or enable SSL.
+'''
+def cmd_ssl(args):
+	if len(args) < 1:
+		print('    You must provide a case-insensitive Yes, No, True, or False.')
+		return
+	
+	arg = args[0].lower()
+	
+	cfg = LoadConfig()
+	
+	if arg in ('yes', 'y', 'true', 't', 'enable', 'activate'):
+		cfg['ssl'] = True
+		SaveConfig(cfg)
+		print('    SSL has been enabled!')
+		return
+	cfg['ssl'] = False
+	SaveConfig(cfg)
+	print('    SLL has been DISabled')
+	return
 	
 def cmd_pull(args, dry = True):
 	cfg = LoadConfig()
@@ -566,6 +593,8 @@ def main(args):
 		return cmd_list(args[1:])
 	if args[0] == 'config':
 		return cmd_config(args[1:])
+	if args[0] == 'ssl':
+		return cmd_ssl(args[1:])
 	print('unknown command')
 		
 main(sys.argv[1:])
