@@ -396,11 +396,12 @@ class ServerClient:
 			rev, offset, fnamesz = struct.unpack_from('>HQH', msg)
 			fname = self.SanitizePath(msg[2 + 8 + 2:2 + 8 + 2 + fnamesz]).decode('utf8', 'ignore')
 			data = msg[2 + 8 + 2 + fnamesz:]
-			length = len(data)
 			
 			# decompress data
 			bz = bz2.BZ2Decompressor()
 			data = bz.decompress(data)
+			
+			length = len(data)
 			
 			#print('len(data)', len(data))
 			

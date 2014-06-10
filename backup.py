@@ -296,7 +296,7 @@ def dopush(name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = 
 			# backup the file
 			base = fpath[0:fpath.rfind('/') + 1]
 			_fpath = fpath[len(base):]
-			print('PROCESSING [%s]' % _fpath)
+			#print('PROCESSING [%s]' % _fpath)
 			lfile = fpath
 			fid = (bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8'), 0)
 			if dry is False:

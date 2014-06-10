@@ -53,7 +53,8 @@ class Client:
 		self.rhost = rhost
 		self.rport = rport
 		self.aid = aid
-		self.socklock = threading.Lock()
+		self.socklockread = threading.Lock()
+		self.socklockwrite = threading.Lock()
 		self.bytesout = 0
 		self.bytesoutst = time.time()
 	
@@ -99,7 +100,17 @@ class Client:
 		# locked area and it gets the message it should place it
 		# into the keepresult dictionary and we can grab it once
 		# we enter
-		with self.socklock:
+		if len(self.keepresult) > 0:
+			if lookfor in self.keepresult:
+				# okay return it and release the lock
+				ret = self.keepresult[lookfor]
+				# remove it
+				del self.keepresult[lookfor]
+				print('GOTGOT')
+				return ret
+		print('waiting at read lock')
+		with self.socklockread:
+			print('thread:%s INSIDE WAIT' % threading.currentThread())
 			# first check for it to be in any results
 			if len(self.keepresult) > 0:
 				if lookfor in self.keepresult:
@@ -107,6 +118,7 @@ class Client:
 					ret = self.keepresult[lookfor]
 					# remove it
 					del self.keepresult[lookfor]
+					print('     SAVED MSG')
 					return ret
 		
 			if timeout is not None:
@@ -119,13 +131,22 @@ class Client:
 						to = 0
 				else:
 					to = None
+				print('reading for message')
 				sv, v, d = self.ReadMessage(to)
 				msg = self.ProcessMessage(sv, v, d)
 				#print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
 				if lookfor == v:
+					print('thread:%s FOUND MSG' % threading.currentThread())
+					if v in self.keepresult:
+						del self.keepresult[v]
 					return msg
 				if v in self.keepresult:
+					print('STORED MSG')
+					exit()
 					self.keepresult[v] = msg
+				else:
+					print('THREW MSG AWAY')
+					exit()
 				continue
 		return
 		
@@ -216,7 +237,6 @@ class Client:
 		
 	def WriteMessage(self, data, block, discard):
 		vector = self.vector
-		self.vector = self.vector + 1
 		
 		# get type
 		type = data[0]
@@ -237,7 +257,10 @@ class Client:
 		# lock to ensure this entire message is placed
 		# into the stream, then unlock so any other
 		# thread can also place a message into the stream
-		with self.socklock:
+		print('waiting at write lock')
+		with self.socklockwrite:
+			print('inside write lock')
+			self.vector = self.vector + 1
 			self.sock.send(struct.pack('>IQ', len(data), vector))
 			self.sock.send(data)
 			
@@ -257,8 +280,10 @@ class Client:
 		return self.WriteMessage(struct.pack('>BHQQ', ClientType.FileRead, fid[1], offset, length) + fid[0], block, discard)
 	def FileWrite(self, fid, offset, data, block = True, discard = True):
 		bz = bz2.BZ2Compressor(compresslevel=9)
-		bz.compress(data)
-		data = bz.flush()
+		out = []
+		out.append(bz.compress(data))
+		out.append(bz.flush())
+		data = b''.join(out)
 		return self.WriteMessage(struct.pack('>BHQH', ClientType.FileWrite, fid[1], offset, len(fid[0])) + fid[0] + data, block, discard)
 	def FileSize(self, fid, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileSize, fid[1]) + fid[0], block, discard)
@@ -305,6 +330,7 @@ class Client2(Client):
 			#print('  uploading offset:%x/%x size:%x' % (off, lsz, _sz))
 			self.FileWrite(fid, off, fd.read(_sz))
 			x = x + 1
+			print('$')
 	
 	def __FilePatch(self, lfd, rfd, offset, sz, match, info, depth = 0):
 		tfsz = info['total-size']
@@ -361,7 +387,7 @@ class Client2(Client):
 		
 		# iterate through checks
 		for c in go:
-			rhash = self.FileHash(rfd, c[0], c[1])[1]
+			rhash = self.FileHash(rfd, c[0], c[1], discard = False)[1]
 			lhash = self.__HashLocalFile(lfd, c[0], c[1])
 			info['net-traffic'] = info.get('net-traffic', 0) + 200
 			
@@ -390,7 +416,7 @@ class Client2(Client):
 	'''
 	def FilePush(self, fid, lfile):
 		# block until we have less than 4 workers
-		while len(self.workers) >= 1:
+		while len(self.workers) > 8:
 			# remove any workers that are not alive
 			_workers = self.workers
 			workers = []
@@ -399,10 +425,11 @@ class Client2(Client):
 					workers.append(worker)
 			self.workers = workers
 			# let the CPU go for a moment
-			time.sleep(0.001)
+			time.sleep(0.1)
+		print('LEN', len(self.workers))
 			# check how many workers are alive
 		# create thread that performs the file sync operation
-		thread = threading.Thread(target = Client2.__FileSync, args = (self, fid, lfile, False))
+		thread = threading.Thread(target = Client2.___FileSync, args = (self, fid, lfile, False))
 		# store the worker in the list
 		self.workers.append(thread)
 		thread.start()
@@ -410,7 +437,11 @@ class Client2(Client):
 		print('bytes-out: %sKB' % ((self.bytesout / (time.time() - self.bytesoutst)) / 1024))
 		
 		#return self.__FileSync(fid, lfile, synclocal = False)
-
+	def ___FileSync(self, fid, lfile, synclocal):
+		print('ENTER <%s>' % lfile)
+		self.__FileSync(fid, lfile, synclocal)
+		print('EXIT <%s>' % lfile)
+		
 	def __FileSync(self, fid, lfile, synclocal = False):
 		try:
 			if synclocal:
@@ -504,6 +535,7 @@ class Client2(Client):
 		pcnt = math.ceil(tsz / max)
 		x = 0
 		while x < pcnt:
+			print('?')
 			if x * max + max > tsz:
 				_sz = tsz - (x * max)
 			else:
@@ -519,6 +551,7 @@ class Client2(Client):
 		invert = []
 		invert.append((0, info['total-size']))
 		for good in match:
+			print('@')
 			gx = good[0]
 			gw = good[1]
 			for bad in invert:
@@ -572,28 +605,29 @@ class Client2(Client):
 			
 			x = 0
 			while x < divide:
+				print('.')
 				o = x * self.maxbuffer
 				fd.seek(bx + o)
-				#print('writing bad (%s:%s)' % (bx + o, self.maxbuffer))
+				print('writing bad (%s:%s)' % (bx + o, self.maxbuffer))
 				if synclocal is False:
 					data = fd.read(self.maxbuffer)
-					self.FileWrite(fid, bx + o, data)
+					self.FileWrite(fid, bx + o, data, discard = True)
 					self.bytesout = self.bytesout + len(data)
 				else:
-					data = self.FileRead(self.maxbuffer)[1]
-					fd.write(data)
-					
+					data = self.FileRead(self.maxbuffer, discard = True)[1]
+					fd.write(data)			
 				x = x + 1
+				
 			if rem > 0:
 				o = x * self.maxbuffer
 				fd.seek(bx + o)
-				#print('writing bad (%s:%s)' % (bx + o, rem))
+				print('writing bad (%s:%s)' % (bx + o, rem))
 				if synclocal is False:
 					data = fd.read(rem)
-					self.FileWrite(fid, bx + o, data)
+					self.FileWrite(fid, bx + o, data, discard = True)
 					self.bytesout = self.bytesout + len(data)
 				else:
-					data = self.FileRead(fid, bx + o, rem)[1]
+					data = self.FileRead(fid, bx + o, rem, discard = True)[1]
 					fd.write(data)
 
 		fd.close()
