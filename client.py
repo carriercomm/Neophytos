@@ -100,26 +100,24 @@ class Client:
 		# locked area and it gets the message it should place it
 		# into the keepresult dictionary and we can grab it once
 		# we enter
-		if len(self.keepresult) > 0:
+		if lookfor in self.keepresult:
+			# okay return it and release the lock
+			ret = self.keepresult[lookfor]
+			# remove it
+			del self.keepresult[lookfor]
+			print('GOTGOT')
+			return ret
+		print('waiting at read lock')
+		with self.socklockread:
+			print('thread:%s INSIDE WAIT' % threading.currentThread())
+			# first check for it to be in any results
 			if lookfor in self.keepresult:
 				# okay return it and release the lock
 				ret = self.keepresult[lookfor]
 				# remove it
 				del self.keepresult[lookfor]
-				print('GOTGOT')
+				print('     SAVED MSG')
 				return ret
-		print('waiting at read lock')
-		with self.socklockread:
-			print('thread:%s INSIDE WAIT' % threading.currentThread())
-			# first check for it to be in any results
-			if len(self.keepresult) > 0:
-				if lookfor in self.keepresult:
-					# okay return it and release the lock
-					ret = self.keepresult[lookfor]
-					# remove it
-					del self.keepresult[lookfor]
-					print('     SAVED MSG')
-					return ret
 		
 			if timeout is not None:
 				st = time.time()
