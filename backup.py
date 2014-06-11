@@ -326,6 +326,8 @@ class ConsoleApplication:
 		except OSError:
 			print('    skipping')
 			return
+		
+		# push any locals files to the server
 		for node in nodes:
 			fpath = '%s/%s' % (dpath, node)
 			# if directory..
@@ -344,6 +346,8 @@ class ConsoleApplication:
 				fid = (bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8'), 0)
 				if dry is False:
 					c.FilePush(fid, lfile)
+		# iterate through remote files
+			# delete/stash any remote that no longer exists locally
 		
 	def __cmd_pull_target(self, cfg, name, target, rpath = None, lpath = None, dry = True):
 		print('pulling [%s]' % name)
