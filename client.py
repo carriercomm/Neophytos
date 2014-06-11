@@ -321,7 +321,7 @@ class Client:
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileStash, fid[1]) + fid[0])
 	def FileGetStashes(self, fid, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileGetStashes, fid[1]) + fid[0])
-	def FileGetTime(self, fid, block = True, discard = True):
+	def FileTime(self, fid, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileTime, fid[1]) + fid[0], block, discard)
 
 class Client2(Client):
@@ -436,7 +436,7 @@ class Client2(Client):
 	'''
 	def FilePush(self, fid, lfile):
 		# block until we have less than 4 workers
-		while len(self.workers) > 16:
+		while len(self.workers) > 24:
 			# remove any workers that are not alive
 			_workers = self.workers
 			workers = []
@@ -494,8 +494,22 @@ class Client2(Client):
 		#print('fid', fid)
 		rsz = self.FileSize(fid)[1]
 		# either make remote smaller or bigger
-		#print('rsz:%s lsz:%s' % (rsz, lsz))
-
+		#print('rsz:%s lsz:%s' % (rsz, lsz)
+		
+		mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(lfile)
+		
+		rmtime = self.FileTime(fid)
+		
+		if lsz == rsz and mtime <= rmtime:
+			# remote file is same size and is same time or newer so dont overwrite or push to it
+			# or even worry about checking the hash
+			if mtime < rmtime:
+				print('NEWER[%s]' % lfile)
+				return
+			if mtime == rmtime:
+				print('SAME[%s]' % lfile)
+			return
+		
 		# if syncing to remote truncate remote file
 		if rsz != lsz:
 			if synclocal is False:
