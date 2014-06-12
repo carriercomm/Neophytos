@@ -164,7 +164,7 @@ class ConsoleApplication:
 		print('enabled name [%s] with path [%s]' % (name, path))
 		return
 		
-	def cmd_addfilter(args):
+	def cmd_addfilter(self, args):
 		if len(args) < 2:
 			print('not enough arguments: <name> <pattern>')
 			return

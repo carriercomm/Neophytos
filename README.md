@@ -44,8 +44,45 @@ The software is currently in development. It is not officially released as stabl
 
 Client Tutorial
 =====
-_Will be added later._
+To run the client use:
 
+    python3 backup.py
+	
+This should display a help screen. You will first need to create an account configuration. This does _NOT_ create an account on the server
+but rather creates the configuration for the account.
+
+    python3 backup.py add default localhost
+
+Now, we need to add an authorization code (username/password combination). We will use the code created in the server tutorial (next section).
+
+    python3 backup.py default config hdk392Ej  
+
+That code is your username and password. It should be a lot longer! But, we are using a short one for an example.
+
+Now, we need to add a path to backup:
+
+    python3 backup.py default add home /home/kmcguire
+	
+I created a target called _home_ under the account called _default_ using the path _/home/kmcguire_.
+
+To push files to the server use:
+
+    python3 backup.py default push
+	
+This will push (backup) the files specified in the path under each target in the default account. For example:
+
+    python3 backup.py default add projects /home/projects
+	
+This would add another target. So when you did push it would push both targets. To push individual targets you can use:
+
+    python3 backup.py default push projects <... another ...>
+
+To set rules with regular expressions on what files to push you can do:
+
+    python3 backup.py default add-filter home !^.
+	
+This should cause all hidden files (under Linux) or any file which starts with a period to be omitted from the backup.
+	
 Server Tutorial
 =====
 
