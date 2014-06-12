@@ -31,6 +31,7 @@ class Client:
 		self.socklockwrite = threading.Lock()
 		self.bytesout = 0
 		self.bytesoutst = time.time()
+		self.bz2compression = 9
 	
 	def Connect(self, essl = False):
 		# try to establish a connection
@@ -148,7 +149,7 @@ class Client:
 			return None
 			
 		# decrypt message (drop off encrypted type field)
-		if not self.ssl:
+		if False and not self.ssl:
 			#print('DECRYPTING')
 			data = self.crypter.decrypt(data[1:])
 		else:
@@ -158,6 +159,12 @@ class Client:
 		type = data[0]
 		data = data[1:]
 		
+		# set compression level (can be sent by server at any time
+		# and client does not *have* to respect it, but the server
+		# could kick the client off if it did not)
+		if type == ServerType.SetCompressionLevel:
+			self.bz2compression = data[0]
+			return
 		# process message based on type
 		if type == ServerType.LoginResult:
 			#print('login result data:[%s]' % data)
@@ -253,7 +260,7 @@ class Client:
 				data = data[0:1] + pubcrypt.crypt(data[1:], self.pubkey)
 			else:
 				# if not SSL then use our built-in encryption
-				if not self.ssl:
+				if False and not self.ssl:
 					data = bytes([ClientType.Encrypted]) + self.crypter.crypt(data)
 				else:
 					# we just pretend its encrypted when really its not, however
@@ -299,12 +306,15 @@ class Client:
 	def FileRead(self, fid, offset, length, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BHQQ', ClientType.FileRead, fid[1], offset, length) + fid[0], block, discard)
 	def FileWrite(self, fid, offset, data, block = True, discard = True):
-		bz = bz2.BZ2Compressor(compresslevel=9)
-		out = []
-		out.append(bz.compress(data))
-		out.append(bz.flush())
-		data = b''.join(out)
-		return self.WriteMessage(struct.pack('>BHQH', ClientType.FileWrite, fid[1], offset, len(fid[0])) + fid[0] + data, block, discard)
+		#print('compresslevel:%s' % self.bz2compression)
+		if self.bz2compression > 0:
+			data = bz2.compress(data, compresslevel=self.bz2compression)
+		#bz = bz2.BZ2Compressor(compresslevel=self.bz2compression)
+		#out = []
+		#out.append(bz.compress(data))
+		#out.append(bz.flush())
+		#data = b''.join(out)
+		return self.WriteMessage(struct.pack('>BHQHB', ClientType.FileWrite, fid[1], offset, len(fid[0]), self.bz2compression) + fid[0] + data, block, discard)
 	def FileSize(self, fid, block = True, discard = True):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileSize, fid[1]) + fid[0], block, discard)
 	def FileTrun(self, fid, newsize, block = True, discard = True):
@@ -509,6 +519,8 @@ class Client2(Client):
 			if mtime == rmtime:
 				print('SAME[%s]' % lfile)
 			return
+		
+		print('rmtime:%s mtime:%s' % (rmtime, mtime))
 		
 		# if syncing to remote truncate remote file
 		if rsz != lsz:

@@ -318,7 +318,8 @@ class ConsoleApplication:
 		if base is None:
 			base = dpath
 			print('SCANNING TARGET DIRECTORY')
-			totalcount, tmp = self.enumfilecount(dpath)
+			#totalcount, tmp = self.enumfilecount(dpath)
+			totalcount = 1
 			self.curcount = 0
 			
 		try:
@@ -347,7 +348,11 @@ class ConsoleApplication:
 				if dry is False:
 					c.FilePush(fid, lfile)
 		# iterate through remote files
+		#self.__handle_missingremfiles(
 			# delete/stash any remote that no longer exists locally
+		
+	def __handle_missingremfiles(self):
+		pass
 		
 	def __cmd_pull_target(self, cfg, name, target, rpath = None, lpath = None, dry = True):
 		print('pulling [%s]' % name)

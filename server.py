@@ -57,6 +57,60 @@ class ServerClient:
 		# query this value and adjust locally also
 		# TODO: implement the above
 		self.maxbuffer = 1024 * 1024 * 8
+		
+		# used to aid in diagnosing server slow downs
+		# by recording the last few packet handling
+		# times which can be used to produce statistical
+		# information or compare one client to others to
+		# determine if they are the problem; basically to
+		# help diagnose DoS attacks at the application layer
+		# when the server is unable to prevent the
+		self.times_buffer = []
+		self.times_request = []
+	
+		self.fdcache = {}
+		self.__fdcache = []
+	
+	def Cleanup(self):
+		# opted to write it all on cleanup (even though server
+		# failure could give clients more disk space we can
+		# always go in and correct this)
+		fd = open('./accounts/%s' % self.aid, 'w')
+		pprint.pprint(self.info, fd)
+		fd.close()
+		# close all open file descriptors
+		for fpath in self.fdcache:
+			c = self.fdcache[fpath]
+			c[1].close()
+		# just for safety
+		self.fdcache = None
+		self.__fdcache = None
+	
+	def GetFileDescriptor(self, fpath, mode):
+		if len(self.fdcache) > 100:
+			# we need to close one.. we will close the oldest
+			_fpath = self.__fdcache.pop(0)
+			self.fdcache[_fpath][1].close()
+			del self.fdcache[_fpath]
+	
+		if fpath in self.fdcache:
+			ci = self.fdcache[fpath]
+			if ci[0] == mode:
+				#print('cached fd:%s' % ci[1])
+				return ci[1]
+			else:
+				#print('closing fd:%s' % ci[1])
+				# close it because we are about to reopen it in a different mode
+				ci[1].close()
+				# remove it from the dict
+				del self.fdcache[fpath]
+				self.__fdcache.remove(fpath)
+		
+		fd = open(fpath, mode)
+		#print('opened fd:%s' % fd)
+		self.fdcache[fpath] = (mode, fd)
+		self.__fdcache.append(fpath)
+		return fd
 	
 	def GetAddr(self):
 		return self.addr
@@ -65,8 +119,10 @@ class ServerClient:
 		return self.sock
 		
 	def HandleData(self, data):
+		bst = time.time()
 		# process data for a message
 		while True:
+			rst = time.time()
 			# the second and so forth time this is called
 			# we pass in None for data and just check for
 			# additional messages in the buffer
@@ -76,12 +132,30 @@ class ServerClient:
 			
 			# exit if no message
 			if msg is None:
-				return
+				break
 				
 			#print('type-vector', type(vector))
 				
 			# process the message
 			self.ProcessMessage(msg, vector)
+			
+			# track the times on the past requests, this might
+			# show were a single client is using a lot of CPU
+			# time which could be effecting other clients
+			ret = time.time()
+			rdt = ret - rst
+			if len(self.times_request) > 40:
+				self.times_request.pop(0)
+			self.times_request.append(rdt)
+			
+		bet = time.time()
+		bdt = bet - bst
+		
+		# implement a queue (not a stack)
+		if len(self.times_buffer) > 40:
+			# keep 40 previous times (essentially 40 previous network packets)
+			self.times_buffer.pop(0)
+		self.times_buffer.append(bdt)
 		
 	def SanitizePath(self, path):
 		while path.find(b'..') > -1:
@@ -123,7 +197,7 @@ class ServerClient:
 		#print('processing encrypted message')
 		
 		# decrypt message if NOT SSL
-		if not self.ssl:
+		if False and not self.ssl:
 			#print('NON-SSL MESSAGE')
 			msg = self.crypter.decrypt(msg)
 			
@@ -154,6 +228,9 @@ class ServerClient:
 				os.makedirs(diskpath)
 			print('login good')
 			self.WriteMessage(struct.pack('>B', ServerType.LoginResult) + b'y', vector)
+			
+			# debugging compression level
+			self.WriteMessage(struct.pack('>BB', ServerType.SetCompressionLevel, 0), 0)
 			return
 			
 		# anything past this point needs to
@@ -201,107 +278,11 @@ class ServerClient:
 			self.WriteMessage(struct.pack('>B', ServerType.DirList) + out, vector)	
 			return
 		if type == ClientType.FileTime:
-			rev = struct.unpack_from('>H', msg)[0]
-			fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
-			
-			fbase, fname = self.GetPathParts(fname)	
-			
-			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
-			if os.path.exists(fpath) is False:
-				self.WriteMessage(struct.pack('>BQ', ServerType.FileTime, 0), vector)
-				return
-			
-			mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
-			
-			# just use which ever is greater to be safe
-			if ctime > mtime:
-				mtime = ctime
-			
-			self.WriteMessage(struct.pack('>BQ', ServerType.FileTime, mtime), vector)
-			return
-			
+			return self.FileTime(msg, vector)
 		if type == ClientType.FileSize:
-			rev = struct.unpack_from('>H', msg)[0]
-			fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
-			
-			fbase, fname = self.GetPathParts(fname)
-			
-			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
-			
-			print('SERVER open', fpath)
-			
-			if os.path.exists(fpath) is False:
-				self.WriteMessage(struct.pack('>BBQ', ServerType.FileSize, 0, 0), vector)
-				return
-			
-			fd = open(fpath, 'rb')
-			fd.seek(0, 2)
-			sz = fd.tell()
-			fd.close()
-			
-			self.WriteMessage(struct.pack('>BBQ', ServerType.FileSize, 1, sz), vector)
-			return
-			
+			return self.FileSize(msg, vector)
 		if type == ClientType.FileTrun:
-			rev, newsize = struct.unpack_from('>HQ', msg)
-			fname = self.SanitizePath(msg[2 + 8:]).decode('utf8', 'ignore')
-			
-			fbase, fname = self.GetPathParts(fname)
-			
-			# this will either create the file OR change the size of it
-			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
-			#fd = open(fpath, 'wb')
-			#fd.truncate(newsize)
-			#fd.close()
-			#print('newsize:%s' % newsize)
-			# make directories
-			dirpath = fpath[0:fpath.rfind('/')]
-			if os.path.exists(dirpath) is False:
-				os.makedirs(dirpath)
-			# make file if needed
-			if os.path.exists(fpath) is False:
-				# make file
-				#print('created')
-				fd = os.open(fpath, os.O_CREAT)
-				os.close(fd)
-				# track disk space used per file
-				if self.info['disk-used'] + self.info['disk-used-perfile'] > self.info['disk-quota']:
-					# this prevent someone from creating too many small files as it accounts for
-					# roughly the amount of disk space used per file, but since it is configuration
-					# specific for account it can be changed if needed for some reason
-					self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 9), vector)
-					return
-				self.info['disk-used'] = self.info['disk-used'] + self.info['disk-used-perfile']
-				
-			# get current size (maybe zero if newly created)
-			fd = open(fpath, 'r+b')
-			fd.seek(0, 2)
-			csz = fd.tell()
-			fd.close()
-			
-			# subtract current size (will add new size later)
-			self.info['disk-used'] = self.info['disk-used'] - csz
-			
-			if self.info['disk-used'] + newsize > self.info['disk-quota']:
-				# they will go over their quota
-				self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 9), vector)
-				return
-			
-			# open existing
-			#print('open existing')
-			fd = os.open(fpath, os.O_RDWR)
-			#print('fd:%s newsize:%s' % (fd, newsize))
-			os.ftruncate(fd, newsize)
-			os.close(fd)
-			# add new size back onto used quota
-			self.info['disk-used'] = self.info['disk-used'] + newsize
-			# save account information
-			fd = open('./accounts/%s' % self.aid, 'w')
-			pprint.pprint(self.info, fd)
-			fd.close()
-			self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 1), vector)
-			return
-			
+			return self.FileTrun(msg, vector)
 		if type == ClientType.FileRead:
 			rev, offset, length = struct.unpack_from('>HQQ', msg)
 			fname = self.SanitizePath(msg[2 + 8 + 8:]).decode('utf8', 'ignore')
@@ -324,10 +305,10 @@ class ServerClient:
 				return
 			# okay open the file and read from it
 			# later.. i might want to cache file descriptors to increase performance (or even mmap files actually)
-			fd = open(fpath, 'rb')
+			fd = self.GetFileDescriptor(fpath, 'rb')
 			fd.seek(offset)
 			data = fd.read(length)
-			fd.close()
+			#fd.close()
 			
 			self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 1) + data, vector)
 			return
@@ -400,10 +381,10 @@ class ServerClient:
 				self.WriteMessage(struct.pack('>BB', ServerType.FileHash, 0), vector)
 				return
 			
-			fd = open(fpath, 'r+b')
+			fd = self.GetFileDescriptor(fpath, 'r+b')
 			fd.seek(offset)
 			data = fd.read(length)
-			fd.close()
+			#fd.close()
 			
 			#print('rdata', data)
 			
@@ -413,50 +394,150 @@ class ServerClient:
 			self.WriteMessage(struct.pack('>BB', ServerType.FileHash, 1) + data, vector)
 			return
 		if type == ClientType.FileWrite:
-			rev, offset, fnamesz = struct.unpack_from('>HQH', msg)
-			fname = self.SanitizePath(msg[2 + 8 + 2:2 + 8 + 2 + fnamesz]).decode('utf8', 'ignore')
-			data = msg[2 + 8 + 2 + fnamesz:]
-			
-			# decompress data
-			bz = bz2.BZ2Decompressor()
-			data = bz.decompress(data)
-			
-			length = len(data)
-			
-			#print('len(data)', len(data))
-			
-			if length > self.info.get('max-write-length', self.maxbuffer):
-				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
-				return
-			
-			fbase, fname = self.GetPathParts(fname)
-			
-			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
-			#print('fpath', fpath)
-			if os.path.exists(fpath) is False:
-				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 0), vector)
-				return
-			
-			fd = open(fpath, 'r+b')
-			fd.seek(0, 2)
-			max = fd.tell()
-			#print('max:%s' % max)
-			if offset + len(data) > max:
-				# you can not write past end of the file (use truncate command)
-				self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
-				return
-			#print('WRITING-data', data)
-			fd.seek(offset)
-			fd.write(data)
-			fd.close()
-			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 1), vector)
-			return			
+			return self.FileWrite(msg, vector)
 		if type == ClientType.FileStash:
 			pass
 		if type == ClientType.FileGetStashes:
 			pass
 		raise Exception('unknown message type:%s' % type)
+
+	def FileSize(self, msg, vector):
+		rev = struct.unpack_from('>H', msg)[0]
+		fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
 		
+		fbase, fname = self.GetPathParts(fname)
+		
+		fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+		
+		if os.path.exists(fpath) is False:
+			self.WriteMessage(struct.pack('>BBQ', ServerType.FileSize, 0, 0), vector)
+			return
+		
+		fd = self.GetFileDescriptor(fpath, 'rb')
+		fd.seek(0, 2)
+		sz = fd.tell()
+		#fd.close()
+		
+		self.WriteMessage(struct.pack('>BBQ', ServerType.FileSize, 1, sz), vector)
+		return
+		
+	def FileTime(self, msg, vector):
+		rev = struct.unpack_from('>H', msg)[0]
+		fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
+		
+		fbase, fname = self.GetPathParts(fname)	
+		
+		fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+		if os.path.exists(fpath) is False:
+			self.WriteMessage(struct.pack('>BQ', ServerType.FileTime, 0), vector)
+			return
+		
+		mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
+		
+		# just use which ever is greater to be safe
+		if ctime > mtime:
+			mtime = ctime
+		
+		self.WriteMessage(struct.pack('>BQ', ServerType.FileTime, mtime), vector)
+		return
+
+		
+	def FileTrun(self, msg, vector):
+		rev, newsize = struct.unpack_from('>HQ', msg)
+		fname = self.SanitizePath(msg[2 + 8:]).decode('utf8', 'ignore')
+		
+		fbase, fname = self.GetPathParts(fname)
+		
+		# this will either create the file OR change the size of it
+		fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+		#fd = self.GetFileDescriptor(fpath, 'wb')
+		#fd.truncate(newsize)
+		#fd.close()
+		#print('newsize:%s' % newsize)
+		# make directories
+		dirpath = fpath[0:fpath.rfind('/')]
+		if os.path.exists(dirpath) is False:
+			os.makedirs(dirpath)
+		# make file if needed
+		if os.path.exists(fpath) is False:
+			# make file
+			#print('created')
+			fd = os.open(fpath, os.O_CREAT)
+			os.close(fd)
+			# track disk space used per file
+			if self.info['disk-used'] + self.info['disk-used-perfile'] > self.info['disk-quota']:
+				# this prevent someone from creating too many small files as it accounts for
+				# roughly the amount of disk space used per file, but since it is configuration
+				# specific for account it can be changed if needed for some reason
+				self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 9), vector)
+				return
+			self.info['disk-used'] = self.info['disk-used'] + self.info['disk-used-perfile']
+			
+		# get current size (maybe zero if newly created)
+		fd = self.GetFileDescriptor(fpath, 'r+b')
+		fd.seek(0, 2)
+		csz = fd.tell()
+		#fd.close()
+		#fd.close()
+		
+		# subtract current size (will add new size later)
+		self.info['disk-used'] = self.info['disk-used'] - csz
+		
+		if self.info['disk-used'] + newsize > self.info['disk-quota']:
+			# they will go over their quota
+			self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 9), vector)
+			return
+		
+		# open existing
+		#print('open existing')
+		fd = os.open(fpath, os.O_RDWR)
+		#print('fd:%s newsize:%s' % (fd, newsize))
+		os.ftruncate(fd, newsize)
+		os.close(fd)
+		# add new size back onto used quota
+		self.info['disk-used'] = self.info['disk-used'] + newsize
+		# save account information
+		self.WriteMessage(struct.pack('>BB', ServerType.FileTrun, 1), vector)
+		return
+
+	def FileWrite(self, msg, vector):
+		rev, offset, fnamesz, compression = struct.unpack_from('>HQHB', msg)
+		fname = self.SanitizePath(msg[2 + 8 + 2 + 1:2 + 8 + 2 + 1 + fnamesz]).decode('utf8', 'ignore')
+		data = msg[2 + 8 + 2 + 1 + fnamesz:]
+		
+		# only decompression if it was compressed
+		if compression > 0:
+			data = bz2.decompress(data)
+		
+		length = len(data)
+		
+		if length > self.info.get('max-write-length', self.maxbuffer):
+			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
+			return
+		
+		fbase, fname = self.GetPathParts(fname)
+		
+		fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+		#print('fpath', fpath)
+		if os.path.exists(fpath) is False:
+			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 0), vector)
+			return
+		
+		fd = self.GetFileDescriptor(fpath, 'r+b')
+		fd.seek(0, 2)
+		max = fd.tell()
+		#print('max:%s' % max)
+		if offset + len(data) > max:
+			# you can not write past end of the file (use truncate command)
+			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
+			return
+		#print('WRITING-data', data)
+		fd.seek(offset)
+		fd.write(data)
+		#fd.close()
+		self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 1), vector)
+		return			
+
 		
 	def WriteMessage(self, data, vector):		
 		# get type
@@ -467,7 +548,7 @@ class ServerClient:
 			pass
 		else:
 			# if not SSL then do our own encryption
-			if not self.ssl:
+			if False and not self.ssl:
 				data = bytes((ServerType.Encrypted,)) + self.crypter.crypt(data)
 			else:
 				# pretend its encrypted
@@ -551,6 +632,9 @@ class Server:
 	
 	def HandleMessages(self):
 		# client, addr = sock.accept()
+		
+		ddst = time.time()
+		
 		while True:
 			input = [self.sock, self.sslsock]
 			for scaddr in self.sc:
@@ -559,6 +643,39 @@ class Server:
 				#print('appending client:%s sock' % (scaddr,))
 		
 			readable, writable, exc = select.select(input, [], input)
+			
+			# every minute dump client statistics, this was mainly intended
+			# to give the server administrator a way to diagnose misbehaving
+			# clients by seeing how much CPU they are eating up compared to
+			# other clients
+			ddet = time.time()
+			if ddet - ddst > 60:
+				fd = open('clientdiag', 'w')
+				ddst = ddet
+				for scaddr in self.sc:
+					sc = self.sc[scaddr]
+					fd.write('client-object:%s address:%s\n' % (sc, scaddr))
+					# this are the times spent on individual messages and
+					# can help narrow down the problem represented by the
+					# chunk times output
+					fd.write('  REQUEST-TIMES\n')
+					x = 0
+					while x < len(sc.times_request):
+						t = sc.times_request[x]
+						fd.write('    [%02i]: %s\n' % (x, t))
+						x = x + 1
+					# the chunk times represent the time spent per buffer
+					# processing which includes the process of all individual
+					# messages; this better represents the amount of continuous
+					# time spent per client before processing the next client
+					# which if is long can represent effectively a DoS
+					fd.write('  CHUNK-TIMES\n')
+					x = 0
+					while x < len(sc.times_buffer):
+						t = sc.times_buffer[x]
+						fd.write('    [%02i]: %s\n' % (x, t))
+						x = x + 1
+				fd.close()
 			
 			# accept incoming connections (weak encryption connections)
 			if self.sock in readable:
@@ -589,11 +706,13 @@ class Server:
 						continue
 					except Exception as e:
 						#print(e)
+						raise e
 						data = None
 						
 					if not data:
 						# connection closed, drop it
 						print('dropped connection %s' % (sc.GetAddr(),))
+						sc.Cleanup()
 						del self.sc[sc.GetAddr()]
 						del self.socktosc[sock]
 					else:
@@ -602,19 +721,20 @@ class Server:
 						# death due to one client problem, for now
 						# i am leaving it commented so i can easily
 						# find problems by crashing the server
-						#try:
-						sc.HandleData(data)
-						'''
-						except Exception:
+						try:
+							sc.HandleData(data)
+						except Exception as e:
+							raise e
 							# to keep from killing the server and
 							# any other clients just kill the client
 							# and keep going
+							sc.Cleanup()
 							del self.sc[sc.GetAddr()]
 							del self.socktosc[sc.GetSock()]
 							sc.GetSock().close()
-						'''
 			# handle any exceptions
 			for sock in exc:
+				sc.Cleanup()
 				sc = self.socktosc[sock]
 				del self.sc[sc.GetAddr()]
 				del self.socktosc[sock]
