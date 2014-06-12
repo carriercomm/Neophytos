@@ -91,7 +91,7 @@ class ConsoleApplication:
 		cfg['paths'][name] = {}
 		cfg['paths'][name]['disk-path'] = path
 		cfg['paths'][name]['enabled'] = True
-		cfg['paths'][name]['filter'] = ['.*']
+		cfg['paths'][name]['filter'] = [(False, 'repattern', '.*')]
 		
 		self.SaveConfig(cfg)
 		
@@ -164,57 +164,203 @@ class ConsoleApplication:
 		print('enabled name [%s] with path [%s]' % (name, path))
 		return
 		
-	def cmd_addfilter(self, args):
+	def cmd_filter(self, args):
 		if len(args) < 2:
-			print('not enough arguments: <name> <pattern>')
+			print('<target-name> <command>')
+			print('commands: add, del, move, clear')
+			print('* to list targets use the command list instead of filter')
 			return
 		
 		name = args[0]
-		pattern = args[1]
+		cmd = args[1].lower()
 		
+		if cmd == 'add':
+			return self.cmd_addfilter(name, args[2:])
+		if cmd == 'del':
+			return self.cmd_delfilter(name, args[2:])
+		if cmd == 'move':
+			return self.cmd_movfilter(name, args[2:])
+		if cmd == 'list':
+			return self.cmd_listfilter(name, args[2:])
+		if cmd == 'clear':
+			return self.cmd_clearfilter(name, args[2:])
+		
+		print('the command [%s] is not a valid command' % cmd)
+		print('use: add, del, move')
+		return
+	
+	def cmd_clearfilter(self, name, args):
 		cfg = self.LoadConfig()
 		
 		if name not in cfg['paths']:
 			print('name [%s] does not exist' % name)
 			return
+
+		cfg['paths'][name]['filter'] = []
 		
-		cfg['paths'][name]['filter'].append(pattern)
+		print('the filter has been cleared for target [%s]' % name)
 		
 		self.SaveConfig(cfg)
-		print('added to name [%s] pattern [%s]' % (name, pattern))
-		return
-		
-	def cmd_delfilter(args):
-		if len(args) < 1:
-			print('not enough arguments:')
-			print('		<name>				- will list pattern with index')
-			print('		<name> <index>		- will delete pattern at index')
-			return
-			
+	
+	def cmd_listfilter(self, name, args):
 		cfg = self.LoadConfig()
-			
-		name = args[0]
+		
+		if name not in cfg['paths']:
+			print('name [%s] does not exist' % name)
+			return
+
+		filter = cfg['paths'][name]['filter']
+
+		print('==== FILTER LIST FOR [%s] ====' % name)
+		return self.__cmd_list_showfilter(filter)
+		
+	def cmd_movfilter(self, name, args):
+		#filter move <index> down
+		#filter move <index> up
+		#filter move <index> +1
+		#filter move <index> -1
+		#filter move <index> <absolute-index>
+		#filter move <index> swap <absolute-index>
+		if len(args) < 2:
+			print('the following commands are valid:')
+			print('  move <index> down              - same as -1')
+			print('  move <index> up                - same as +1')
+			print('  move <index> +1                - can be any number')
+			print('  move <index> -1                - can by any number')
+			print('  move <index> <absolute-index>  - removes and inserts')
+			print('  move <index> swap ...          - swaps')
+			return
+		
+		index = args[0]
+		
+		try:
+			index = int(index)
+		except:
+			print('...the value [%s] is not an number' % index)
+			return
+		
+		op = args[1].lower()
+		
+		if op == 'swap':
+			swap = True
+			op = args[2]
+		else:
+			swap = False
+		
+		if op == 'down':
+			op = '-1'
+		if op == 'up':
+			op = '+2'
+		
+		if op[0] == '+':
+			op = index + 1
+		elif op[0] == '-':
+			op = index - 1
+		else:
+			# check for numeric
+			try:
+				op = int(op)
+			except:
+				print('...expected number for [%s] if not + or - or swap' % op)
+				return
+		
+		cfg = self.LoadConfig()
 		
 		if name not in cfg['paths']:
 			print('name [%s] does not exist' % name)
 			return
 		
-		if len(args) < 2:
-			print('== LISTING PATTERNS ==')
-			# list patterns
-			ndx = 0
-			for p in cfg['paths'][name]['filter']:
-				print('		%02i: [%s]' % (ndx, p))
-				ndx = ndx + 1
+		filter = cfg['paths'][name]['filter']
+		
+		if index >= len(filter) or index < 0:
+			print('..the index %s does not exist' % index)
+			return
+		if op >= len(filter) or op < 0:
+			print('..the index %s does not exist' % index)
 			return
 		
-		index = int(args[1])
+		# basically, just move from 'index' to 'op'
+		if swap:
+			a = filter[index]
+			b = filter[op]
+			filter[index] = b
+			filter[op] = b
+		else:
+			f = filter.pop(index)
+			filter.insert(op, f)
+		
+		self.SaveConfig(cfg)
+		return
+		
+	def cmd_addfilter(self, name, args):
+		validtypes = ('repattern', 'sizegreater', 'sizelesser', 'mode')
+		inttypes = ('sizegreater', 'sizelesser', 'mode')
+		yestxt = ('true', 'yes', 't', 'y', 'ok')
+		
+		if len(args) < 3:
+			print('not enough arguments: <invert> <type> <pattern>')
+			print('possible values for <invert> are: %s' % ', '.join(yestxt))
+			print('possible values for <type> are: %s' % ', '.join(validtypes))
+			print('<pattern> must be numeric for: %s' % ', '.join(inttypes))
+			return
+		
+		invert = args[0].lower()
+		type = args[1].lower()
+		pattern = args[2]
+		
+		if type in inttypes:
+			try:
+				pattern = int(pattern)
+			except:
+				print('value [%s] must be integer/number for type [%s]' % (pattern, type))
+				return
+		
+		if invert in yestxt:
+			invert = True
+		else:
+			invert = False
+		
+		if type not in validtypes:
+			print('type [%s] is not valid' % type)
+			print('the following are valid:')
+			print('  %s' % ', '.join(validtypes))
+			return
+		
+		cfg = self.LoadConfig()
+		
+		if name not in cfg['paths']:
+			print('name [%s] does not exist' % name)
+			return
+		
+		cfg['paths'][name]['filter'].append((invert, type, pattern))
+		
+		self.SaveConfig(cfg)
+		print('added to name [%s] invert:[%s] type:[%s] pattern [%s]' % (name, invert, type, pattern))
+		return
+		
+	def cmd_delfilter(self, name, args):
+		if len(args) < 1:
+			print('not enough arguments:')
+			print('		<index>		- will delete pattern at index')
+			return
+			
+		cfg = self.LoadConfig()
+		
+		if name not in cfg['paths']:
+			print('name [%s] does not exist' % name)
+			return
+		
+		try:
+			index = int(args[0])
+		except:
+			print('..index must be a number but was [%s]' % index)
+			return
 		
 		removed = False
 		ndx = 0
 		for p in cfg['paths'][name]['filter']:
 			if ndx == index:
-				cfg['paths'][name]['ipatterns'].remove(p)
+				cfg['paths'][name]['filter'].remove(p)
 				print('removed from name [%s] pattern [%s] at index [%s]' % (name, p, index))
 				self.SaveConfig(cfg)
 				return
@@ -306,11 +452,13 @@ class ConsoleApplication:
 	
 	def dopush(self, name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = None, dry = True, totalcount = None):
 		if c is None:
-			print('CONNECTING TO REMOTE SERVER')
-			c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
-			cfg = self.LoadConfig()
-			c.Connect(essl = cfg['ssl'])
-			print('CONNECTION ESTABLISHED, SECURED, AND AUTHENTICATED')
+			# only connect if not dry run
+			if not dry:
+				print('CONNECTING TO REMOTE SERVER')
+				c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
+				cfg = self.LoadConfig()
+				c.Connect(essl = cfg['ssl'])
+				print('CONNECTION ESTABLISHED, SECURED, AND AUTHENTICATED')
 			
 		if rpath is None:
 			rpath = ''
@@ -333,7 +481,13 @@ class ConsoleApplication:
 			fpath = '%s/%s' % (dpath, node)
 			# if directory..
 			if os.path.isdir(fpath):
-				self.dopush(name, rhost, rport, sac, cfg, fpath, '%s/%s' % (rpath, node), filter, base = base, c = c, dry = dry, totalcount = totalcount)
+				if self.dofilters(filter, fpath):
+					if dry:
+						print('[DIR-OK] %s' % fpath)
+					self.dopush(name, rhost, rport, sac, cfg, fpath, '%s/%s' % (rpath, node), filter, base = base, c = c, dry = dry, totalcount = totalcount)
+				else:
+					if dry:
+						print('[DIR-IGNORE] %s' % fpath)
 				continue
 			self.curcount = self.curcount + 1
 			print('PERCENTAGE:%.2f' % (self.curcount / totalcount))
@@ -343,10 +497,14 @@ class ConsoleApplication:
 				base = fpath[0:fpath.rfind('/') + 1]
 				_fpath = fpath[len(base):]
 				#print('PROCESSING [%s]' % _fpath)
-				lfile = fpath
 				fid = (bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8'), 0)
 				if dry is False:
-					c.FilePush(fid, lfile)
+					c.FilePush(fid, fpath)
+				if dry is True:
+					print('[OK] %s' % fpath)
+			else:
+				if dry is True:
+					print('[IGNORED] %s' % fpath)
 		# iterate through remote files
 		#self.__handle_missingremfiles(
 			# delete/stash any remote that no longer exists locally
@@ -450,27 +608,48 @@ class ConsoleApplication:
 	def dofilters(self, filters, fpath):
 		mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
 		
-		# quick cheat
-		if size > 1024 * 1024 * 200:
-			return False
-		
 		for f in filters:
 			notmatch = False
-			if f[0] == '!':
-				# match if does not match filter
-				notmatch = True
-				f = f[1:]
+			
+			finvert = f[0]
+			ftype = f[1]
+			farg = f[2]
+			
 			# do regular expression matching
-			base = fpath[0:fpath.rfind('/') + 1]
-			_fpath = fpath[len(base):]
-			result = re.match(f, _fpath)
-			if notmatch:
+			if ftype == 'repattern':
+				base = fpath[0:fpath.rfind('/') + 1]
+				_fpath = fpath[len(base):]
+				result = re.match(farg, _fpath)
 				if result is not None:
+					result = True
+				else:
+					result = False
+				
+			if ftype == 'sizegreater':
+				result = False
+				if size > farg:
+					result = True
+			
+			if ftype == 'sizelesser':
+				result = False
+				if size < farg:
+					result = True
+			
+			if ftype == 'mode':
+				result = False
+				if mode == farg:
+					result = True
+			
+			if finvert:
+				# if match exclude file
+				if result:
 					return False
 			else:
-				if result is None:
-					return False
-			return True
+				# if match include file
+				if result:
+					return True
+		# if no match on anything then exclude file by default
+		return False
 		
 	def __cmd_chksize_target(self, cfg, name, target):
 		dpath = target['disk-path']
@@ -488,9 +667,7 @@ class ConsoleApplication:
 					fpath = '%s/%s' % (path, node)
 					if os.path.isdir(fpath):
 						todo.append(fpath)
-						print('#', end='')
 						continue
-					print('.', end='')
 					# see if one of the filters marks it as valid
 					if dofilters(target['filter'], fpath):
 						# get file size
@@ -597,9 +774,8 @@ class ConsoleApplication:
 		print('<account> del         - delete backup path')
 		print('<account> disable     - disable backup path')
 		print('<account> enable      - enable backup path')
-		print('<account> add-filter  - add inclusive filter')
-		print('<account> del-filter  - delete filter')
-		print('<account> dry-push	   - pretend to do push')
+		print('<account> filter      - lists filter commands')
+		print('<account> dry-push	 - pretend to do push')
 		print('<account> push        - push (backup) all enabled or specified backup')
 		print('<account> dry-pull    - pretend to do pull')
 		print('<account> pull        - pull (restore) all enabled or specified backup')
@@ -610,8 +786,7 @@ class ConsoleApplication:
 		print('    <program> <account> del <name>')
 		print('    <program> <account> disable <name>')
 		print('    <program> <account> enable <name>')
-		print('    <program> <account> add-filter [displays help]')
-		print('    <program> <account> del-filter [displays help]')
+		print('    <program> <account> filter [displays help]')
 		print('    <program> <account> dry-push <(optional)name> <(optional)name> ...')
 		print('    <program> <account> push <(optional)name> <(optional)name> ...')
 		print('    <program> <account> dry-pull <(optional)name> <(optional)name> ...')
@@ -666,6 +841,11 @@ class ConsoleApplication:
 		# set global class member variable
 		self.accountname = args[0]
 		
+		# make sure account name exists
+		if os.path.exists(self.GetConfigPath()) is False:
+			print('The account name [%s] does not exist. Try the list command.' % self.accountname)
+			return
+		
 		# process remaining arguments
 		args = args[1:]
 		
@@ -681,10 +861,8 @@ class ConsoleApplication:
 			return self.cmd_disable(args[1:])
 		if args[0] == 'enable':
 			return self.cmd_enable(args[1:])
-		if args[0] == 'add-filter':
-			return self.cmd_addfilter(args[1:])
-		if args[0] == 'del-filter':
-			return self.cmd_delfilter(args[1:])
+		if args[0] == 'filter':
+			return self.cmd_filter(args[1:])
 		if args[0] == 'dry-push':
 			return self.cmd_push(args[1:], dry = True)
 		if args[0] == 'chksize':

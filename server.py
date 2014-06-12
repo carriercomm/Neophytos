@@ -510,27 +510,26 @@ class ServerClient:
 			data = bz2.decompress(data)
 		
 		length = len(data)
-		
 		if length > self.info.get('max-write-length', self.maxbuffer):
 			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
 			return
 		
 		fbase, fname = self.GetPathParts(fname)
-		
 		fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
-		#print('fpath', fpath)
+		
 		if os.path.exists(fpath) is False:
 			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 0), vector)
 			return
 		
 		fd = self.GetFileDescriptor(fpath, 'r+b')
+		
 		fd.seek(0, 2)
 		max = fd.tell()
-		#print('max:%s' % max)
 		if offset + len(data) > max:
 			# you can not write past end of the file (use truncate command)
 			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 2), vector)
 			return
+		
 		#print('WRITING-data', data)
 		fd.seek(offset)
 		fd.write(data)
