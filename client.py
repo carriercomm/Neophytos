@@ -8,6 +8,7 @@ import threading
 import bz2
 import ssl
 import status
+import traceback
 
 import pubcrypt
 
@@ -36,6 +37,8 @@ class Client:
 		self.bz2compression = 9
 		self.allbytesout = 0				# includes control bytes and data
 		self.workerfailure = False
+		self.workeralivecount = 0
+		self.lasttitleupdated = 0
 	
 	def Connect(self, essl = False):
 		# try to establish a connection
@@ -442,23 +445,19 @@ class Client2(Client):
 		if self.workerfailure:
 			# oops.. we got a problem.. lets shut everything down
 			raise Exception('Worker Thread Crashed')
-		self.__UpdateTitle()
-		while len(self.workers) > 16:
-			# remove any workers that are not alive
-			_workers = self.workers
-			workers = []
-			for worker in _workers:
-				if worker.isAlive():
-					workers.append(worker)
-			self.workers = workers
-			# let the CPU go for a moment
-			time.sleep(0.1)
+		
+		# keep title updated
+		if time.time() - self.lasttitleupdated > 2:
+			self.lasttitleupdated = time.time()
 			self.__UpdateTitle()
-			status.Update()
-		#print('LEN', len(self.workers))
-			# check how many workers are alive
+		
+		# just wait until some workers die off
+		while self.workeralivecount > 128:
+			time.sleep(0.1)
+
 		# create thread that performs the file sync operation
 		thread = threading.Thread(target = Client2.WorkerThreadEntry, args = (self, fid, lfile, False))
+		self.workeralivecount = self.workeralivecount + 1
 		# store the worker in the list
 		self.workers.append(thread)
 		thread.start()
@@ -470,7 +469,12 @@ class Client2(Client):
 		outkb = outkb.rjust(20)
 		totoutkb = totoutkb.rjust(20)
 		
-		status.SetTitle('%s %s' % (outkb[0:20], totoutkb[0:20]))
+		c = 0
+		for worker in self.workers:
+			if worker.isAlive():
+				c = c + 1
+				
+		status.SetTitle('%s %s tc:%s' % (outkb[0:20], totoutkb[0:20], c))
 		
 	def WorkerThreadEntry(self, fid, lfile, synclocal):
 		try:
@@ -480,6 +484,7 @@ class Client2(Client):
 			# flag to the main thread that we have run
 			# into some trouble and require help
 			self.workerfailure = True
+		self.workeralivecount = self.workeralivecount - 1
 		
 	def __FileSync(self, fid, lfile, synclocal = False):
 		status.AddWorkingItem(lfile)
