@@ -7,6 +7,7 @@ import math
 import threading
 import bz2
 import ssl
+import status
 
 import pubcrypt
 
@@ -27,11 +28,14 @@ class Client:
 		self.rhost = rhost
 		self.rport = rport
 		self.aid = aid
+		self.sockreadgate = threading.Condition()
 		self.socklockread = threading.Lock()
 		self.socklockwrite = threading.Lock()
-		self.bytesout = 0
+		self.bytesout = 0					# includes just actual data bytes
 		self.bytesoutst = time.time()
 		self.bz2compression = 9
+		self.allbytesout = 0				# includes control bytes and data
+		self.workerfailure = False
 	
 	def Connect(self, essl = False):
 		# try to establish a connection
@@ -82,59 +86,45 @@ class Client:
 			return False
 	# processes any incoming messages and exits after specified time
 	def HandleMessages(self, timeout, lookfor = None):
-		# allow only one thread to enter here, if we are going
-		# to wait for a message and another thread is inside the
-		# locked area and it gets the message it should place it
-		# into the keepresult dictionary and we can grab it once
-		# we enter
-		if lookfor in self.keepresult and self.keepresult[lookfor] is not None:
-			# okay return it and release the lock
-			ret = self.keepresult[lookfor]
-			# remove it
-			del self.keepresult[lookfor]
-			#print('GOTGOT')
-			return ret
-		#print('waiting at read lock')
-		with self.socklockread:
-			#print('thread:%s INSIDE WAIT' % threading.currentThread())
-			# first check for it to be in any results
+		# while we wait for the lock keep an eye out for
+		# out response to arrive
+		while not self.socklockread.acquire(False):
+			# check if vector has arrived
 			if lookfor in self.keepresult and self.keepresult[lookfor] is not None:
 				# okay return it and release the lock
 				ret = self.keepresult[lookfor]
 				# remove it
 				del self.keepresult[lookfor]
-				#print('     SAVED MSG')
+				#print('GOTGOT')
 				return ret
-		
+			time.sleep(0.001)
+	
+		if timeout is not None:
+			st = time.time()
+			et = st + timeout
+		while timeout is None or timeout < 0 or et - time.time() > 0:
 			if timeout is not None:
-				st = time.time()
-				et = st + timeout
-			while timeout is None or timeout < 0 or et - time.time() > 0:
-				if timeout is not None:
-					to = et - time.time()
-					if to < 0:
-						to = 0
-				else:
-					to = None
-				#print('reading for message vector:%s' % lookfor)
-				sv, v, d = self.ReadMessage(to)
-				msg = self.ProcessMessage(sv, v, d)
-				#print('got msg vector:%s' % v)
-				#print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
-				if lookfor == v:
-					#print('thread:%s FOUND MSG' % threading.currentThread())
-					if v in self.keepresult:
-						del self.keepresult[v]
-					return msg
+				to = et - time.time()
+				if to < 0:
+					to = 0
+			else:
+				to = None
+			#print('reading for message vector:%s' % lookfor)
+			sv, v, d = self.ReadMessage(to)
+			msg = self.ProcessMessage(sv, v, d)
+			#print('got msg vector:%s' % v)
+			#print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
+			if lookfor == v:
+				#print('thread:%s FOUND MSG' % threading.currentThread())
 				if v in self.keepresult:
-					#print('    STORED MSG')
-					#exit()
-					self.keepresult[v] = msg
-				else:
-					#print('    THREW MSG AWAY', v)
-					#exit()
-					pass
-				continue
+					del self.keepresult[v]
+				self.socklockread.release()
+				return msg
+			# either store it or throw it away
+			if v in self.keepresult:
+				self.keepresult[v] = msg
+			continue
+		self.socklockread.release()
 		return
 		
 	# processes any message and produces output in usable form
@@ -280,6 +270,8 @@ class Client:
 				#print('    keeping result for vector:%s' % vector)
 			self.send(struct.pack('>IQ', len(data), vector))
 			self.send(data)
+			# track the total bytes out
+			self.allbytesout = self.allbytesout + 4 + 8 + len(data)
 			#print('sent data for vector:%s' % vector)
 			
 		if block:
@@ -288,9 +280,7 @@ class Client:
 			res = self.HandleMessages(None, lookfor = vector)
 			#print('	returned with res:%s' % (res,))
 			return res
-		if discard:
-			return vector
-		return None
+		return vector
 	
 	def send(self, data):
 		#self.sock.sendall(data)
@@ -346,7 +336,7 @@ class Client2(Client):
 		
 		return hashlib.sha512(data).digest()
 
-	def UploadFile(self, fid, fd, lsz):
+	def UploadFile(self, fid, fd, lsz, name):
 		max = self.maxbuffer
 		x = 0
 		c = math.ceil(lsz / max)
@@ -359,9 +349,11 @@ class Client2(Client):
 			off = x * max
 			#print('  uploading offset:%x/%x size:%x' % (off, lsz, _sz))
 			self.FileWrite(fid, off, fd.read(_sz), block = False, discard = True)
+			status.SetCurrentProgress(name, x / c)
 			x = x + 1
 			#print('$')
-	
+		status.SetCurrentProgress(name, x / c)
+		
 	def __FilePatch(self, lfd, rfd, offset, sz, match, info, depth = 0):
 		tfsz = info['total-size']
 		unet = info.get('net-traffic', 0)
@@ -436,6 +428,7 @@ class Client2(Client):
 				info['good-bytes'] = info.get('good-bytes', 0) + sz
 				match.append((offset, sz))
 				#print('found good area offset:%s sz:%s' % (c[0], c[1]))
+			x = x + 1
 		return
 	
 	def FilePull(self, lfile, fid):
@@ -446,7 +439,11 @@ class Client2(Client):
 	'''
 	def FilePush(self, fid, lfile):
 		# block until we have less than 4 workers
-		while len(self.workers) > 24:
+		if self.workerfailure:
+			# oops.. we got a problem.. lets shut everything down
+			raise Exception('Worker Thread Crashed')
+		self.__UpdateTitle()
+		while len(self.workers) > 16:
 			# remove any workers that are not alive
 			_workers = self.workers
 			workers = []
@@ -456,23 +453,36 @@ class Client2(Client):
 			self.workers = workers
 			# let the CPU go for a moment
 			time.sleep(0.1)
+			self.__UpdateTitle()
+			status.Update()
 		#print('LEN', len(self.workers))
 			# check how many workers are alive
 		# create thread that performs the file sync operation
-		thread = threading.Thread(target = Client2.___FileSync, args = (self, fid, lfile, False))
+		thread = threading.Thread(target = Client2.WorkerThreadEntry, args = (self, fid, lfile, False))
 		# store the worker in the list
 		self.workers.append(thread)
 		thread.start()
 		
-		print('bytes-out: %sKB' % ((self.bytesout / (time.time() - self.bytesoutst)) / 1024))
+	def __UpdateTitle(self):
+		outkb = 'OUT-KB: %.2f' % (self.bytesout  / 1024 / 1024)
+		totoutkb = 'ALLOUT-KB: %.2f' % (self.allbytesout / 1024 / 1024)
 		
-		#return self.__FileSync(fid, lfile, synclocal = False)
-	def ___FileSync(self, fid, lfile, synclocal):
-		#print('ENTER <%s>' % lfile)
-		self.__FileSync(fid, lfile, synclocal)
-		#print('EXIT <%s>' % lfile)
+		outkb = outkb.rjust(20)
+		totoutkb = totoutkb.rjust(20)
+		
+		status.SetTitle('%s %s' % (outkb[0:20], totoutkb[0:20]))
+		
+	def WorkerThreadEntry(self, fid, lfile, synclocal):
+		try:
+			self.__FileSync(fid, lfile, synclocal)
+		except:
+			traceback.print_exc(file = sys.stdout)
+			# flag to the main thread that we have run
+			# into some trouble and require help
+			self.workerfailure = True
 		
 	def __FileSync(self, fid, lfile, synclocal = False):
+		status.AddWorkingItem(lfile)
 		try:
 			if synclocal:
 				#print('SYNCLOCAL', lfile)
@@ -490,6 +500,7 @@ class Client2(Client):
 			# skip this file
 			raise e
 			print('    skipping %s' % lfile)
+			status.RemWorkingItem(lfile)
 			return
 		#	print(e)
 		#	exit()
@@ -502,22 +513,28 @@ class Client2(Client):
 		#print('	setup')
 		# get length of remote file if it exists
 		#print('fid', fid)
+		status.SetCurrentStatus(lfile, 'QUERY FILE SIZE')
 		rsz = self.FileSize(fid)[1]
 		# either make remote smaller or bigger
 		#print('rsz:%s lsz:%s' % (rsz, lsz)
 		
 		mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(lfile)
 		
+		status.SetCurrentStatus(lfile, 'QUERY FILE TIME')
 		rmtime = self.FileTime(fid)
 		
 		if lsz == rsz and mtime <= rmtime:
 			# remote file is same size and is same time or newer so dont overwrite or push to it
 			# or even worry about checking the hash
+			status.SetCurrentStatus(lfile, 'NOT MODIFIED')
 			if mtime < rmtime:
 				print('NEWER[%s]' % lfile)
+				status.RemWorkingItem(lfile)
 				return
 			if mtime == rmtime:
 				print('SAME[%s]' % lfile)
+				status.RemWorkingItem(lfile)
+				return
 			return
 		
 		print('rmtime:%s mtime:%s' % (rmtime, mtime))
@@ -539,14 +556,20 @@ class Client2(Client):
 			if rsz < lsz / 2:
 				# just upload it whole
 				print('UPLOAD[%s]' % lfile)
-				self.UploadFile(fid, fd, lsz)
+				status.SetCurrentStatus(lfile, 'UPLOAD')
+				self.UploadFile(fid, fd, lsz, lfile)
+				status.SetCurrentStatus(lfile, 'UPLOADED')
 				fd.close()
 				self.bytesout = self.bytesout + lsz
+				status.RemWorkingItem(lfile)
 				return
 		else:
 			if lsz < rsz / 2:
-				self.DownloadFile(fid, fs, rsz)
+				status.SetCurrentStatus(lfile, 'DOWNLOAD')
+				self.DownloadFile(fid, fs, rsz, lfile)
 				fd.close()
+				status.SetCurrentStatus(lfile, 'DOWNLOADED')
+				status.RemWorkingItem(lfile)
 				return
 				
 		#self.FileWrite(fid, 0, b'hello world')
@@ -579,6 +602,7 @@ class Client2(Client):
 		# some DoS attacks)
 		
 		print('PATCHING[%s]' % lfile)
+		status.SetCurrentStatus(lfile, 'PATCHING')
 		
 		max = self.maxbuffer
 		pcnt = math.ceil(tsz / max)
@@ -644,10 +668,10 @@ class Client2(Client):
 		# match iteration
 	
 		# now only upload the bad parts
+		cx = 0
 		for bad in invert:
 			bx = bad[0]
 			bw = bad[1]
-			
 			# cut it into max sized pieces
 			divide = math.floor(bw / self.maxbuffer)
 			rem = int(bw - (divide * self.maxbuffer))
@@ -678,8 +702,12 @@ class Client2(Client):
 				else:
 					data = self.FileRead(fid, bx + o, rem)[1]
 					fd.write(data)
-
+			status.SetCurrentStatus(lfile, 'PATCHING (%x/%s)' % (bx, bw))
+			status.SetCurrentProgress(lfile, cx / len(invert))
+			cx = cx + 1
 		fd.close()
+		status.SetCurrentStatus(lfile, 'PATCHED')
+		status.RemWorkingItem(lfile)
 		
 def main():
 	client = Client2('localhost', 4322, b'Kdje493FMncSxZs')

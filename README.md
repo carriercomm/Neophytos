@@ -11,6 +11,7 @@ The Neophytos system has the following features:
 * cross-platform (Linux, Windows, ARM, or anywhere Python 3.x will run)
 * files can be encrypted client side (in memory) before being sent (sensitive data protected on server)
 * service provided for customers (currently in development)
+* filter per target using regular expression, file size checks, and mode checks (exclusion and inclusion rule support)
 
 The communication from the client to server by default uses SSL which is same technology
 used over HTTPS. There is also a built in much less secure encryption that can maximize your bandwidth when uploading or downloading data. Even though the client and server is open source you will still need access to a server in order to incorporate your own encryption. You can however implement your own encryption for the actual file data that is stored on the server thus encrypting your file data over the internet.
@@ -41,6 +42,7 @@ The software is currently in development. It is not officially released as stabl
 * encrypted communication between client and server over the internet (SSL and XORMIX) (100% complete)
 * delta uploading/downloading (100% complete; client side needs more testing and tweaking)
 * graphical front-end (0% complete; will provide a graphical front end for X11 and Windows)
+* filter system (100% complete; might need reworking to be easier to use..)
 
 Client Tutorial
 =====

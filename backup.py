@@ -4,6 +4,7 @@ import os.path
 import sys
 import pprint
 import re
+import status
 
 class ConsoleApplication:
 	def GetConfigPath(self):
@@ -490,7 +491,6 @@ class ConsoleApplication:
 						print('[DIR-IGNORE] %s' % fpath)
 				continue
 			self.curcount = self.curcount + 1
-			print('PERCENTAGE:%.2f' % (self.curcount / totalcount))
 			# run filters
 			if self.dofilters(filter, fpath):
 				# backup the file
@@ -813,6 +813,8 @@ class ConsoleApplication:
 			cfg['remote-host'] = args[1]
 			if len(args) > 2:
 				cfg['remote-port'] = int(args[2])
+			self.SaveConfig(cfg)
+			return
 			
 		if args[0] == 'del':
 			args = args[1:]
@@ -881,5 +883,7 @@ class ConsoleApplication:
 			return self.cmd_ssl(args[1:])
 		print('unknown command')
 	
-ca = ConsoleApplication()	
+ca = ConsoleApplication()
+if status.IsSupported():
+	status.Init()
 ca.main(sys.argv[1:])

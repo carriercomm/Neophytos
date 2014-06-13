@@ -9,6 +9,13 @@ import pprint
 import bz2
 from io import BytesIO
 import ssl
+import status
+
+if status.IsSupported():
+	print('STATUS MODULE SUPPORTED ENABLING CURSES')
+	status.Init(stdout = 'stdout.server', stderr = 'stderr.server')
+else:
+	print('STATUS MODULE NOT SUPPORTED')
 
 from pkttypes import *
 from misc import *
@@ -25,6 +32,9 @@ class DataBufferOverflowException(Exception):
 	pass
 	
 class ServerClient:
+	def GetName(self):
+		return '%s:%s' % (self.addr[0], self.addr[1])
+		
 	def __init__(self, sock, addr, kpub, kpri, server, essl = False):
 		self.sock = sock
 		self.addr = addr
@@ -70,6 +80,12 @@ class ServerClient:
 	
 		self.fdcache = {}
 		self.__fdcache = []
+		
+		self.bytes_in_start = time.time()
+		self.bytes_in_total = 0
+		
+		self.bytes_out_start = time.time()
+		self.bytes_out_total = 0
 	
 	def Cleanup(self):
 		# opted to write it all on cleanup (even though server
@@ -230,7 +246,7 @@ class ServerClient:
 			self.WriteMessage(struct.pack('>B', ServerType.LoginResult) + b'y', vector)
 			
 			# debugging compression level
-			self.WriteMessage(struct.pack('>BB', ServerType.SetCompressionLevel, 0), 0)
+			self.WriteMessage(struct.pack('>BB', ServerType.SetCompressionLevel, 9), 0)
 			return
 			
 		# anything past this point needs to
@@ -537,6 +553,21 @@ class ServerClient:
 		self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 1), vector)
 		return			
 
+	def UpdateStatus(self):
+		ct = time.time()
+		in_bps = self.bytes_in_total / (ct - self.bytes_in_start)
+		out_bps = self.bytes_out_total / (ct - self.bytes_out_start)
+
+		ae = 0
+		ac = 0
+		for e in self.times_buffer:
+			ae = ae + e
+			ac = ac + 1
+		load = ae / ac
+	
+		text = '%.02f/%.02f/%.02f' %  (in_bps / 1024 / 1024, out_bps / 1024 / 1024, load)
+	
+		status.SetCurrentStatus(self, text)
 		
 	def WriteMessage(self, data, vector):		
 		# get type
@@ -556,6 +587,8 @@ class ServerClient:
 		# so it is hard coded as zero
 		self.sock.sendall(struct.pack('>IQQ', len(data), 0, vector))
 		self.sock.sendall(data)
+		self.bytes_out_total = self.bytes_out_total + 4 + 8 * 2 + len(data)
+		self.UpdateStatus()
 		return
 	
 	def GetBufferSize(self):
@@ -604,6 +637,9 @@ class ServerClient:
 		ndata = BytesIO()
 		ndata.write(self.data.read())
 		self.data = ndata
+		
+		self.bytes_in_total = self.bytes_in_total + 8 + 4 + len(_ret)
+		self.UpdateStatus()
 		
 		# return the message and vector
 		self.wsz = None
@@ -683,6 +719,8 @@ class Server:
 				self.sc[caddr] = nsc
 				self.socktosc[nsock] = nsc
 				readable.remove(self.sock)
+				status.AddWorkingItem(nsc)
+				
 			# accept incoming connections (SSL encryption connections)
 			if self.sslsock in readable:
 				print('ACCEPTING SSL CONNECTION')
@@ -693,6 +731,7 @@ class Server:
 				self.sc[caddr] = nsc
 				self.socktosc[nsock] = nsc
 				readable.remove(self.sslsock)
+				status.AddWorkingItem(nsc)
 			
 			# read any pending data (and process it)
 			for sock in readable:
@@ -705,7 +744,7 @@ class Server:
 						continue
 					except Exception as e:
 						#print(e)
-						raise e
+						#raise e
 						data = None
 						
 					if not data:
@@ -714,6 +753,7 @@ class Server:
 						sc.Cleanup()
 						del self.sc[sc.GetAddr()]
 						del self.socktosc[sock]
+						status.RemWorkingItem(sc)
 					else:
 						# for production this should be enabled to
 						# keep the server from die-ing a horrible
@@ -723,7 +763,7 @@ class Server:
 						try:
 							sc.HandleData(data)
 						except Exception as e:
-							raise e
+							#raise e
 							# to keep from killing the server and
 							# any other clients just kill the client
 							# and keep going
@@ -731,12 +771,15 @@ class Server:
 							del self.sc[sc.GetAddr()]
 							del self.socktosc[sc.GetSock()]
 							sc.GetSock().close()
+							status.RemWorkingItem(sc)
+
 			# handle any exceptions
 			for sock in exc:
 				sc.Cleanup()
 				sc = self.socktosc[sock]
 				del self.sc[sc.GetAddr()]
 				del self.socktosc[sock]
+				status.RemWorkingItem(sc)
 				
 			# continue main loop
 			continue
