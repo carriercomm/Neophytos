@@ -40,6 +40,8 @@ class ServerClient:
 		self.addr = addr
 		self.hdr = b''
 		
+		self.aid = None
+		
 		self.ssl = essl
 		
 		print('HERE')
@@ -88,12 +90,13 @@ class ServerClient:
 		self.bytes_out_total = 0
 	
 	def Cleanup(self):
-		# opted to write it all on cleanup (even though server
-		# failure could give clients more disk space we can
-		# always go in and correct this)
-		fd = open('./accounts/%s' % self.aid, 'w')
-		pprint.pprint(self.info, fd)
-		fd.close()
+		if self.aid is not None:
+			# opted to write it all on cleanup (even though server
+			# failure could give clients more disk space we can
+			# always go in and correct this)
+			fd = open('./accounts/%s' % self.aid, 'w')
+			pprint.pprint(self.info, fd)
+			fd.close()
 		# close all open file descriptors
 		for fpath in self.fdcache:
 			c = self.fdcache[fpath]

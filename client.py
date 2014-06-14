@@ -9,6 +9,7 @@ import bz2
 import ssl
 import status
 import traceback
+from io import BytesIO
 
 import pubcrypt
 
@@ -39,6 +40,12 @@ class Client:
 		self.workerfailure = False
 		self.workeralivecount = 0
 		self.lasttitleupdated = 0
+		self.workerpool = None
+		self.workpool = None
+		
+		self.dbgl = time.time()
+		self.dbgv = 0
+		self.dbgc = 0
 	
 	def Connect(self, essl = False):
 		# try to establish a connection
@@ -218,13 +225,25 @@ class Client:
 			return out
 		raise UnknownMessageTypeException('%s' % type)
 	
+	def recv(self, sz):
+		_sz = sz
+		data = BytesIO()
+		while sz > 0:
+			_data = self.sock.recv(sz)
+			sz = sz - len(_data)
+			data.write(_data)
+		data.seek(0)
+		data = data.read()
+		assert(len(data) == _sz)
+		return data
+	
 	# read a single message from the stream and exits after specified time
 	def ReadMessage(self, timeout = None):
 		#print('reading message')
 		self.sock.settimeout(timeout)
-		sz, svector, vector = struct.unpack('>IQQ', self.sock.recv(4 + 8 + 8))
+		sz, svector, vector = struct.unpack('>IQQ', self.recv(4 + 8 + 8))
 		#print('read header')
-		data = self.sock.recv(sz)
+		data = self.recv(sz)
 		#print('read data', data)
 		return svector, vector, data
 		
@@ -294,11 +313,11 @@ class Client:
 				raise RuntimeError("socket connection broken")
 			totalsent = totalsent + sent
 	
-	def DirList(self, dir, block = True, discard = True):
+	def DirList(self, dir, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>B', ClientType.DirList) + dir, block, discard)
-	def FileRead(self, fid, offset, length, block = True, discard = True):
+	def FileRead(self, fid, offset, length, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BHQQ', ClientType.FileRead, fid[1], offset, length) + fid[0], block, discard)
-	def FileWrite(self, fid, offset, data, block = True, discard = True):
+	def FileWrite(self, fid, offset, data, block = True, discard = False):
 		#print('compresslevel:%s' % self.bz2compression)
 		if self.bz2compression > 0:
 			data = bz2.compress(data, compresslevel=self.bz2compression)
@@ -308,23 +327,23 @@ class Client:
 		#out.append(bz.flush())
 		#data = b''.join(out)
 		return self.WriteMessage(struct.pack('>BHQHB', ClientType.FileWrite, fid[1], offset, len(fid[0]), self.bz2compression) + fid[0] + data, block, discard)
-	def FileSize(self, fid, block = True, discard = True):
+	def FileSize(self, fid, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileSize, fid[1]) + fid[0], block, discard)
-	def FileTrun(self, fid, newsize, block = True, discard = True):
+	def FileTrun(self, fid, newsize, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BHQ', ClientType.FileTrun, fid[1], newsize) + fid[0], block, discard)
-	def FileDel(self, fid, block = True, discard = True):
+	def FileDel(self, fid, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileDel, fid[1]) + fid[0], block, discard)
-	def FileCopy(self, srcfid, dstfid, block = True, discard = True):
+	def FileCopy(self, srcfid, dstfid, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BHHH', ClientType.FileCopy, srcfid[1], dstfid[1], len(srcfid[0])) + srcfid[0] + dstfid[0], block, discard)
-	def FileMove(self, fid, newfile, block = True, discard = True):
+	def FileMove(self, fid, newfile, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BHHH', ClientType.FileMove, srcfid[1], dstfid[1], len(srcfid[0])) + srcfid[0] + dstfid[0], block, discard)
-	def FileHash(self, fid, offset, length, block = True, discard = True):
+	def FileHash(self, fid, offset, length, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BHQQ', ClientType.FileHash, fid[1], offset, length) + fid[0], block, discard)
-	def FileStash(self, fid, block = True, discard = True):
+	def FileStash(self, fid, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileStash, fid[1]) + fid[0])
-	def FileGetStashes(self, fid, block = True, discard = True):
+	def FileGetStashes(self, fid, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileGetStashes, fid[1]) + fid[0])
-	def FileTime(self, fid, block = True, discard = True):
+	def FileTime(self, fid, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BH', ClientType.FileTime, fid[1]) + fid[0], block, discard)
 
 class Client2(Client):
@@ -412,7 +431,7 @@ class Client2(Client):
 		
 		# iterate through checks
 		for c in go:
-			rhash = self.FileHash(rfd, c[0], c[1], discard = False)[1]
+			rhash = self.FileHash(rfd, c[0], c[1])[1]
 			lhash = self.__HashLocalFile(lfd, c[0], c[1])
 			info['net-traffic'] = info.get('net-traffic', 0) + 200
 			
@@ -436,21 +455,22 @@ class Client2(Client):
 	
 	def FilePull(self, lfile, fid):
 		return self.__FileSync(fid, lfile, synclocal = True)
+	
 	'''
 		@sdescription:		Will upload or update the remote file with this local
 							file by delta-copy or whole file upload.
 	'''
 	def FilePush(self, fid, lfile):
-		# block until we have less than 4 workers
+		# if failure of worker thread
 		if self.workerfailure:
 			# oops.. we got a problem.. lets shut everything down
 			raise Exception('Worker Thread Crashed')
-		
+			
 		# keep title updated
 		if time.time() - self.lasttitleupdated > 2:
 			self.lasttitleupdated = time.time()
 			self.__UpdateTitle()
-		
+		'''
 		# just wait until some workers die off
 		while self.workeralivecount > 128:
 			time.sleep(0.1)
@@ -461,6 +481,80 @@ class Client2(Client):
 		# store the worker in the list
 		self.workers.append(thread)
 		thread.start()
+		'''
+		
+		if self.workpool is None:
+			self.workpool = []
+			self.workhere = threading.Condition()
+			self.workpoolguard = threading.Lock()
+			self.workersdie = False
+		
+		if self.workerpool is None:
+			# fill worker pool with workers
+			self.workerpool = []
+			for x in range(0, 64):
+				thread = threading.Thread(target = Client2.WorkerPoolEntry, args = (self, x))
+				thread.start()
+				self.workerpool.append(thread)
+						
+		self.dbgc = self.dbgc + 1
+		# add work item
+		self.workpool.append((fid, lfile, False))
+		
+		# @TODO:THREADED IFFY
+		# i think it is fairly safe to check the length
+		# even *if* another thread is modifying it..
+		if len(self.workpool) > 128:
+			# apparently things are not getting done so
+			# lets wait around and keep signalling the
+			# condition in hopes a thread finally releases
+			# and services the job queue
+			while len(self.workpool) > 128:
+				time.sleep(0.1)
+		# this should release a thread only if
+		# one was waiting, so if none were waiting
+		# then hopefully the worker's time out on
+		# its wait method will kick in and allow it
+		# to service jobs after it is done
+		self.workhere.acquire()
+		self.workhere.notify()
+		self.workhere.release()		
+		
+	def WaitUntilWorkersFinish(self):
+		print('[master] waiting on workers to complete')
+		self.workersdie = True
+		while len(self.workpool) > 0:
+			time.sleep(0.1)
+			self.__UpdateTitle()
+			status.Update()
+		
+	def WorkerPoolEntry(self, myid):
+		while True:
+			if self.workersdie:
+				return
+			# wait on lock
+			self.workhere.acquire()
+			#
+			print('[worker:%x] waiting' % myid)
+			self.workhere.wait(1)
+			print('[worker:%x] looking' % myid)
+			# there could have been more than one
+			# thread release when the lock was signalled
+			# or when the time out occurs.. the docs
+			# state an optimized implementation of
+			# the Condition object could allow more than
+			# one to release on notify occasionally
+			with self.workpoolguard:
+				if len(self.workpool) < 1:
+					print('[worker:%x] no work' % myid)
+					self.workhere.release()
+					continue
+				print('[worker:%x] getting work' % myid)
+				workitem = self.workpool.pop(0)
+			self.workhere.release()
+			# work on the job
+			print('[worker:%x] working' % myid)
+			self.WorkerThreadEntry(workitem[0], workitem[1], workitem[2])
 		
 	def __UpdateTitle(self):
 		outkb = 'OUT-KB: %.2f' % (self.bytesout  / 1024 / 1024)
@@ -474,7 +568,17 @@ class Client2(Client):
 			if worker.isAlive():
 				c = c + 1
 				
-		status.SetTitle('%s %s tc:%s' % (outkb[0:20], totoutkb[0:20], c))
+		d = time.time() - self.dbgl
+		d = self.dbgc / d
+		self.dbgc = 0
+		self.dbgl = time.time()
+				
+		if self.workpool is not None:
+			wpc = len(self.workpool)
+		else:
+			wpc = 'None'
+				
+		status.SetTitle('%s %s tc:%s wpool:%s areqs:%s tpw:%s' % (outkb[0:20], totoutkb[0:20], wpc, c, len(self.keepresult), d))
 		
 	def WorkerThreadEntry(self, fid, lfile, synclocal):
 		try:

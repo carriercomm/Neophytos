@@ -463,6 +463,9 @@ class ConsoleApplication:
 			
 		if rpath is None:
 			rpath = ''
+			child = False
+		else:
+			child = True
 			
 		if base is None:
 			base = dpath
@@ -508,6 +511,9 @@ class ConsoleApplication:
 		# iterate through remote files
 		#self.__handle_missingremfiles(
 			# delete/stash any remote that no longer exists locally
+		if not child:
+			# allow all workers to finish
+			c.WaitUntilWorkersFinish()
 		
 	def __handle_missingremfiles(self):
 		pass
@@ -534,7 +540,9 @@ class ConsoleApplication:
 		rport = cfg['remote-port']
 		sac = cfg['storage-auth-code']
 		
-		return self.dopush(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, rpath = rpath, filter = filter, dry = dry)
+		ret = self.dopush(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, rpath = rpath, filter = filter, dry = dry)
+		print('DONE')
+		return ret
 		
 	'''	
 		@sdescription:		Used to disable or enable SSL.
