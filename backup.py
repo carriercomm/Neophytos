@@ -890,8 +890,11 @@ class ConsoleApplication:
 		if args[0] == 'ssl':
 			return self.cmd_ssl(args[1:])
 		print('unknown command')
-	
-ca = ConsoleApplication()
-if status.IsSupported():
-	status.Init()
-ca.main(sys.argv[1:])
+
+# only execute this if we are the primary
+# script file being executed by Python
+if __name__ == '__main__':
+	ca = ConsoleApplication()
+	if status.IsSupported():
+		status.Init()
+	ca.main(sys.argv[1:])

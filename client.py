@@ -494,6 +494,7 @@ class Client2(Client):
 			self.workerpool = []
 			for x in range(0, 64):
 				thread = threading.Thread(target = Client2.WorkerPoolEntry, args = (self, x))
+				thread.daemon = True
 				thread.start()
 				self.workerpool.append(thread)
 						
