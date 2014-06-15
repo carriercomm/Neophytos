@@ -1,6 +1,16 @@
 ![neophytos-logo](http://kmcg3413.net/logo.png)
 =====
 
+Current Work
+=====
+I am currently finishing up the client. There are some features missing like syncing deleted files, and really
+testing restore functionality well. Also, I am working on the graphical front end using Qt which will be able
+to run on both Windows and any system (including Linux) that supports Python and the Python bindings for Qt4. _I
+expect another week or two before anything usable is ready._
+
+Overview
+=====
+
 The Neophytos system has the following features:
 * secure communication from client to server
 * multiple backup targets per account
