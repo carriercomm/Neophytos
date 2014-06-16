@@ -7,6 +7,8 @@ import backup
 from PyQt4 import QtGui
 from PyQt4 import QtCore
 import io
+import os.path
+import pprint
 
 class ClientInterface:
 	'''
@@ -40,6 +42,8 @@ class ClientInterface:
 				if line.find('disk-path:') == 0:
 					diskpath = line[line.find(' ') + 1:]
 					target['disk-path'] = diskpath
+				elif line.find('enabled:') == 0:
+					target['enabled'] = line[line.find(':') + 1:].strip()
 				else:
 					filterndx = int(line[0:line.find(':')])
 					filter = eval(line[line.find('[') + 1:line.find(']')])
@@ -64,6 +68,36 @@ class ClientInterface:
 		sys.stdout = oldstdout
 		buf.seek(0)
 		return buf.read()
+		
+	def GetConfigPath(self):
+		# build base path (without file)
+		base = self.GetConfigBase()
+		# add on file
+		path = '%s/%s.py' % (base, self.accountname)
+		return path
+		
+	def GetConfigBase():
+		base = '%s/.neophytos/accounts' % os.path.expanduser('~')
+		if os.path.exists(base) is False:
+			os.makedirs(base)
+		return base
+
+	def GetServiceConfig(account):
+		base = ClientInterface.GetConfigBase()
+		fpath = '%s/%s.service.py' % (base, account)
+		if os.path.exists(fpath) is False:
+			return None
+		fd = open(fpath, 'r')
+		py = fd.read()
+		fd.close()
+		return eval(py)
+		
+	def SaveServiceConfig(account, cfg):
+		base = ClientInterface.GetConfigBase()
+		fpath = '%s/%s.service.py' % (base, account)
+		fd = open(fpath, 'w')
+		pprint.pprint(fd, cfg)
+		fd.close()
 
 class QCompactLayout():
 	def __init__(self, parent, horizontal = True):
@@ -90,8 +124,8 @@ class QCompactLayout():
 			if hasattr(w, 'xlayout'):
 				w.xlayout.Do()
 			
-			f_family = w.font().family()
-			f_size = w.font().pointSize()
+			#f_family = w.font().family()
+			#f_size = w.font().pointSize()
 			#if isinstance(w, QtGui.QLabel):
 			#	w_w = QCompactLayout.__GetTextWidth(w.text(), font = f_family, size = f_size)
 			#	w.resize(w_w, w.height())
@@ -168,10 +202,42 @@ class QBackupEntryStatus(QtGui.QFrame):
 	def Update(self):
 		pass
 		
+def DumpObjectTree(obj, space = ''):
+	print('%s%s [%s]' % (space, obj, obj.objectName()))
+	for child in obj.children():
+		if isinstance(obj, QtGui.QWidget):
+			DumpObjectTree(child, space = '%s ' % space)
+		
 class QAccountsAndTargetSystem(QtGui.QFrame):
 	def __init__(self, parent):
 		QtGui.QFrame.__init__(self, parent)
 		self.Create()
+	
+	def GetTableRow(self, row):
+		out = []
+		colcnt = self.table.columnCount()
+		for x in range(0, colcnt):
+			item = self.table.item(row, x)
+			out.append(item)
+		return out
+		
+	def SetTableRow(self, row, items):
+		for x in range(0, len(items)):
+			# just skip this column (dont update it)
+			if items[x] is None:
+				continue
+			item = self.table.item(row, x)
+			# this should be an QTableWidgetItem
+			if type(items[x]) is not str:
+				print('not str')
+				# treat it is QTableWidgetItem
+				self.table.setItem(row, x, items[x])
+				continue
+			if item is None:
+				item = QtGui.QTableWidgetItem()
+				self.table.setItem(row, x, item)
+			# should be a string type
+			item.setText(items[x])
 	
 	def Create(self):
 		accounts = ClientInterface.GetAccounts()
@@ -179,24 +245,66 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 		self.panels = {}
 		
 		self.xlayout = QCompactLayout(self, horizontal = False)
+	
+		table = QtGui.QTableWidget(self)
+		self.table = table
+		
+		table.setObjectName('StatusTable')
+		
+		#DumpObjectTree(self)
+		
+		# enabled, account, target, path, bytesout, bytesin, status, progress
+		table.setColumnCount(9)
+		table.setHorizontalHeaderLabels(['Enabled', 'Account', 'Target', 'Path', 'Out/KB/Second', 'In/KB/Second', 'Status', 'Progress', 'Next Run'])
 		
 		for account in accounts:
 			targets = ClientInterface.GetTargets(account)
 			for target in targets:
-				acctarname = '%s.%s' % (account, target)				
-				panel = QBackupEntryStatus(self, account, target)
-				self.panels[acctarname] = panel
-				self.xlayout.AddWidget(panel)
-				panel.setStyleSheet('QBackupEntryStatus { border-style: inset; border-width: 1px; }')
-				#panel.setFrameStyle(QtGui.QFrame.Raised)
+				cfg = targets[target]
+				acctarname = '%s.%s' % (account, target)
+				
+				scfg = ClientInterface.GetServiceConfig(account)
+				if scfg is not None and target in scfg:
+					nrt = '8hrs 5min'
+				else:
+					nrt = 'Manual Only'
+				
+				table.insertRow(0)
+				self.SetTableRow(0, (
+					cfg['enabled'],
+					account, target,
+					cfg['disk-path'],
+					'0',
+					'0',
+					'',
+					'',
+					nrt
+				))
+				
+				pb = QtGui.QProgressBar()
+				pb.setObjectName('StatusCellProgressBar')
+				pb.setValue(50)
+				table.setCellWidget(0, 7, pb)
 		
-		#self.setLayout(vlo)
+		table.setVerticalHeaderLabels(['', ''])
+		table.resizeColumnsToContents()
+				
 		self.show()
+		
+	def resizeEvent(self, event):
+		table = self.table
+			
+		rect = table.visualItemRect(table.item(0, table.columnCount() - 1))
+		
+		w = rect.x() + rect.width() + 20
+
+		table.resize(self.width(), self.height())
 	
 	def resize(self, w, h):
 		super().resize(w, h)
 		
-		self.xlayout.Do()
+	def show(self):
+		super().show()
 				
 				
 class QStatusWindow(QtGui.QMainWindow):
@@ -213,7 +321,6 @@ class QStatusWindow(QtGui.QMainWindow):
 		cssdata = fd.read()
 		fd.close()
 		self.setStyleSheet(cssdata)
-		print('@', cssdata)
 		
 		icon = QtGui.QIcon('./media/book.ico')
 		self.setWindowIcon(icon)
@@ -221,7 +328,7 @@ class QStatusWindow(QtGui.QMainWindow):
 		self.fAccountsAndTargets = QAccountsAndTargetSystem(self)
 		self.fAccountsAndTargets.resize(self.width(), self.height())
 
-		self.resize(400, 340)
+		self.resize(700, 340)
 		self.move(400, 20)
 		self.setWindowTitle('Neophytos Backup Status')
 		self.show()

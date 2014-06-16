@@ -7,14 +7,13 @@ import math
 import threading
 import bz2
 import ssl
-import status
 import traceback
 from io import BytesIO
 
-import pubcrypt
-
-from pkttypes import *
-from misc import *
+from lib import output
+from lib import pubcrypt
+from lib.pkttypes import *
+from lib.misc import *
 
 class UnknownMessageTypeException(Exception):
 	pass
@@ -371,10 +370,10 @@ class Client2(Client):
 			off = x * max
 			#print('  uploading offset:%x/%x size:%x' % (off, lsz, _sz))
 			self.FileWrite(fid, off, fd.read(_sz), block = False, discard = True)
-			status.SetCurrentProgress(name, x / c)
+			output.SetCurrentProgress(name, x / c)
 			x = x + 1
 			#print('$')
-		status.SetCurrentProgress(name, x / c)
+		output.SetCurrentProgress(name, x / c)
 		
 	def __FilePatch(self, lfd, rfd, offset, sz, match, info, depth = 0):
 		tfsz = info['total-size']
@@ -527,7 +526,7 @@ class Client2(Client):
 		while len(self.workpool) > 0:
 			time.sleep(0.1)
 			self.__UpdateTitle()
-			status.Update()
+			output.Update()
 		
 	def WorkerPoolEntry(self, myid):
 		while True:
@@ -579,7 +578,7 @@ class Client2(Client):
 		else:
 			wpc = 'None'
 				
-		status.SetTitle('%s %s tc:%s wpool:%s areqs:%s tpw:%s' % (outkb[0:20], totoutkb[0:20], wpc, c, len(self.keepresult), d))
+		output.SetTitle('%s %s tc:%s wpool:%s areqs:%s tpw:%s' % (outkb[0:20], totoutkb[0:20], wpc, c, len(self.keepresult), d))
 		
 	def WorkerThreadEntry(self, fid, lfile, synclocal):
 		try:
@@ -592,7 +591,7 @@ class Client2(Client):
 		self.workeralivecount = self.workeralivecount - 1
 		
 	def __FileSync(self, fid, lfile, synclocal = False):
-		status.AddWorkingItem(lfile)
+		output.AddWorkingItem(lfile)
 		try:
 			if synclocal:
 				#print('SYNCLOCAL', lfile)
@@ -610,7 +609,7 @@ class Client2(Client):
 			# skip this file
 			raise e
 			print('    skipping %s' % lfile)
-			status.RemWorkingItem(lfile)
+			output.RemWorkingItem(lfile)
 			return
 		#	print(e)
 		#	exit()
@@ -623,27 +622,27 @@ class Client2(Client):
 		#print('	setup')
 		# get length of remote file if it exists
 		#print('fid', fid)
-		status.SetCurrentStatus(lfile, 'QUERY FILE SIZE')
+		output.SetCurrentStatus(lfile, 'QUERY FILE SIZE')
 		rsz = self.FileSize(fid)[1]
 		# either make remote smaller or bigger
 		#print('rsz:%s lsz:%s' % (rsz, lsz)
 		
 		mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(lfile)
 		
-		status.SetCurrentStatus(lfile, 'QUERY FILE TIME')
+		output.SetCurrentStatus(lfile, 'QUERY FILE TIME')
 		rmtime = self.FileTime(fid)
 		
 		if lsz == rsz and mtime <= rmtime:
 			# remote file is same size and is same time or newer so dont overwrite or push to it
 			# or even worry about checking the hash
-			status.SetCurrentStatus(lfile, 'NOT MODIFIED')
+			output.SetCurrentStatus(lfile, 'NOT MODIFIED')
 			if mtime < rmtime:
 				print('NEWER[%s]' % lfile)
-				status.RemWorkingItem(lfile)
+				output.RemWorkingItem(lfile)
 				return
 			if mtime == rmtime:
 				print('SAME[%s]' % lfile)
-				status.RemWorkingItem(lfile)
+				output.RemWorkingItem(lfile)
 				return
 			return
 		
@@ -666,20 +665,20 @@ class Client2(Client):
 			if rsz < lsz / 2:
 				# just upload it whole
 				print('UPLOAD[%s]' % lfile)
-				status.SetCurrentStatus(lfile, 'UPLOAD')
+				output.SetCurrentStatus(lfile, 'UPLOAD')
 				self.UploadFile(fid, fd, lsz, lfile)
-				status.SetCurrentStatus(lfile, 'UPLOADED')
+				output.SetCurrentStatus(lfile, 'UPLOADED')
 				fd.close()
 				self.bytesout = self.bytesout + lsz
-				status.RemWorkingItem(lfile)
+				output.RemWorkingItem(lfile)
 				return
 		else:
 			if lsz < rsz / 2:
-				status.SetCurrentStatus(lfile, 'DOWNLOAD')
+				output.SetCurrentStatus(lfile, 'DOWNLOAD')
 				self.DownloadFile(fid, fs, rsz, lfile)
 				fd.close()
-				status.SetCurrentStatus(lfile, 'DOWNLOADED')
-				status.RemWorkingItem(lfile)
+				output.SetCurrentStatus(lfile, 'DOWNLOADED')
+				output.RemWorkingItem(lfile)
 				return
 				
 		#self.FileWrite(fid, 0, b'hello world')
@@ -712,7 +711,7 @@ class Client2(Client):
 		# some DoS attacks)
 		
 		print('PATCHING[%s]' % lfile)
-		status.SetCurrentStatus(lfile, 'PATCHING')
+		output.SetCurrentStatus(lfile, 'PATCHING')
 		
 		max = self.maxbuffer
 		pcnt = math.ceil(tsz / max)
@@ -812,12 +811,12 @@ class Client2(Client):
 				else:
 					data = self.FileRead(fid, bx + o, rem)[1]
 					fd.write(data)
-			status.SetCurrentStatus(lfile, 'PATCHING (%x/%s)' % (bx, bw))
-			status.SetCurrentProgress(lfile, cx / len(invert))
+			output.SetCurrentStatus(lfile, 'PATCHING (%x/%s)' % (bx, bw))
+			output.SetCurrentProgress(lfile, cx / len(invert))
 			cx = cx + 1
 		fd.close()
-		status.SetCurrentStatus(lfile, 'PATCHED')
-		status.RemWorkingItem(lfile)
+		output.SetCurrentStatus(lfile, 'PATCHED')
+		output.RemWorkingItem(lfile)
 		
 def main():
 	client = Client2('localhost', 4322, b'Kdje493FMncSxZs')

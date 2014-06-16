@@ -1,0 +1,36 @@
+QLabel#AccountLabel, QLabel#TargetLabel, QLabel#BytesOutLabel, QLabel#BytesInLabel {
+	font: bold 10pt Tahoma;	
+}
+
+QLabel#AccountLabelValue, QLabel#TargetLabelValue, QLabel#BytesOutLabelValue, QLabel#BytesInLabelValue {
+	font: 8pt Tahoma;
+}
+
+QTableWidget::header {
+	background:		red;
+}
+
+QTableWidget#StatusTable > QScrollBar {
+	background:		red;
+}
+
+QProgressBar#StatusCellProgressBar {
+	background:		#999999;
+	color:			white;
+}
+
+QProgressBar#StatusCellProgressBar::chunk:horizontal {
+	background: #99aa99;
+	text-align:	center;
+}
+
+QTableWidget#StatusTable > QHeaderView {
+	background:		#555555;
+	color:			#bbbbbb;
+}
+
+QTableWidget#StatusTable {
+	font: 			10pt Tahoma;
+	background:		#999999;
+	color:			#ffffff;
+}

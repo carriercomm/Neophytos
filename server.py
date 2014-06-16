@@ -9,18 +9,14 @@ import pprint
 import bz2
 from io import BytesIO
 import ssl
-import status
 
-if status.IsSupported():
-	print('STATUS MODULE SUPPORTED ENABLING CURSES')
-	status.Init(stdout = 'stdout.server', stderr = 'stderr.server')
-else:
-	print('STATUS MODULE NOT SUPPORTED')
+from lib import output
+from lib.pkttypes import *
+from lib.misc import *
+from lib import pubcrypt
 
-from pkttypes import *
-from misc import *
-
-import pubcrypt
+# setup standard outputs
+output.Configure(tcpserver = False)
 
 class DoubleTypeOrRevException(Exception):
 	pass
@@ -570,7 +566,7 @@ class ServerClient:
 	
 		text = '%.02f/%.02f/%.02f' %  (in_bps / 1024 / 1024, out_bps / 1024 / 1024, load)
 	
-		status.SetCurrentStatus(self, text)
+		output.SetCurrentStatus(self, text)
 		
 	def WriteMessage(self, data, vector):		
 		# get type
@@ -722,7 +718,7 @@ class Server:
 				self.sc[caddr] = nsc
 				self.socktosc[nsock] = nsc
 				readable.remove(self.sock)
-				status.AddWorkingItem(nsc)
+				output.AddWorkingItem(nsc)
 				
 			# accept incoming connections (SSL encryption connections)
 			if self.sslsock in readable:
@@ -734,7 +730,7 @@ class Server:
 				self.sc[caddr] = nsc
 				self.socktosc[nsock] = nsc
 				readable.remove(self.sslsock)
-				status.AddWorkingItem(nsc)
+				output.AddWorkingItem(nsc)
 			
 			# read any pending data (and process it)
 			for sock in readable:
@@ -756,7 +752,7 @@ class Server:
 						sc.Cleanup()
 						del self.sc[sc.GetAddr()]
 						del self.socktosc[sock]
-						status.RemWorkingItem(sc)
+						output.RemWorkingItem(sc)
 					else:
 						# for production this should be enabled to
 						# keep the server from die-ing a horrible
@@ -774,7 +770,7 @@ class Server:
 							del self.sc[sc.GetAddr()]
 							del self.socktosc[sc.GetSock()]
 							sc.GetSock().close()
-							status.RemWorkingItem(sc)
+							output.RemWorkingItem(sc)
 
 			# handle any exceptions
 			for sock in exc:
@@ -782,7 +778,7 @@ class Server:
 				sc = self.socktosc[sock]
 				del self.sc[sc.GetAddr()]
 				del self.socktosc[sock]
-				status.RemWorkingItem(sc)
+				output.RemWorkingItem(sc)
 				
 			# continue main loop
 			continue

@@ -3,6 +3,17 @@
 	it just places in a dummy proxy that does nothing. It could be extended
 	to support other things. I suppose, and hope, maybe I can use it for a
 	connection to a GUI front end.
+	
+	
+	There are a few different modes the application can execute under:
+		1. it does not use this module and outputs directly to the standard output
+		2. it uses this module in curses mode
+		3. it uses this module in standard output mode
+		4. it uses this module in socket mode
+		
+	The 4th mode can be used in conjunction with any of the other modes. It provides
+	a server socket that can accept connections and update the client on the status
+	and bring them up to status on some things.
 '''
 import math
 import os
@@ -13,21 +24,22 @@ try:
 	import curses
 	supported = True
 except ImportError:
-	class window:
-		def addstr(self, y, x, str):
-			pass
-		def getmaxyx(self):
-			return (5, 5)
-		def clrtoeol(self):
-			pass
-		def erase(self):
-			pass
-		def refresh(self):
-			pass
-	class curses:
-		def initscr():
-			return window()
 	supported = False
+	
+class stdoutwindow:
+	def addstr(self, y, x, str):
+		pass
+	def getmaxyx(self):
+		return (5, 5)
+	def clrtoeol(self):
+		pass
+	def erase(self):
+		pass
+	def refresh(self):
+		pass
+class stdoutcurses:
+	def initscr():
+		return stdoutwindow()
 	
 title = ''
 win = None
@@ -123,15 +135,49 @@ def __update():
 			row = row + 1
 	win.refresh()
 	
-def Init(stdout = 'stdout', stderr = 'stderr'):
+def Configure(tcpserver = False):
+	# find and modify sys.argv
+	mode = Modes.StandardConsole
+	for arg in sys.argv:
+		if arg == '--curses':
+			mode = Modes.Curses
+			sys.argv.remove(arg)
+		if arg == '--std':
+			mode = Modes.StandardConsole
+			sys.argv.remove(arg)
+	Init(mode, tcpserver = tcpserver)
+	
+class Modes:
+	StandardConsole		= 1
+	Curses				= 2
+
+# os.devnull
+def Init(mode, tcpserver = False, stdout = None, stderr = None):
 	global win
-	# redirect it to nothing
-	f = open(stdout, 'w')
-	sys.stdout = f
-	f = open(stderr, 'w')
-	sys.stderr = f
+	if mode == Modes.StandardConsole:
+		stdout = sys.stdout
+		stderr = sys.stderr
+	if mode == Modes.Curses:
+		if stdout is None:
+			stdout = 'stdout'
+		else:
+			stdout = open(stdout, 'w')
+		if stderr is None:
+			stderr = 'stderr'
+		else:
+			stderr = open(stderr, 'w')
+			
+	# redirect to appropriate facility
+	sys.stdout = stdout
+	sys.stderr = stderr
+	
 	# initialize curses
-	win = curses.initscr()
+	if mode == Modes.Curses:
+		# use the real curses output
+		win = curses.initscr()
+	else:
+		# use the fake curses output
+		win = stdoutcurses.initscr()
 	
 def SetTitle(_title):
 	global lock

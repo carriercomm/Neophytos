@@ -4,7 +4,11 @@ import os.path
 import sys
 import pprint
 import re
-import status
+
+from lib import output
+
+# setup standard outputs (run TCP server)
+output.Configure(tcpserver = True)
 
 class ConsoleApplication:
 	def GetConfigPath(self):
@@ -754,6 +758,7 @@ class ConsoleApplication:
 		if name is not None:
 			# display information about name		
 			print('== %s ==' % name)
+			print('    enabled: %s' % cfg[name]['enabled'])
 			print('    disk-path: %s' % cfg[name]['disk-path'])
 			self.__cmd_list_showfilter(cfg['paths'][name]['filter'])
 
@@ -765,6 +770,7 @@ class ConsoleApplication:
 		
 		for k in cfg['paths']:
 			print('== %s ==' % k)
+			print('    enabled: %s' % cfg['paths'][k]['enabled'])
 			print('    disk-path: %s' % cfg['paths'][k]['disk-path'])
 			self.__cmd_list_showfilter(cfg['paths'][k]['filter'])		
 		return
@@ -895,6 +901,4 @@ class ConsoleApplication:
 # script file being executed by Python
 if __name__ == '__main__':
 	ca = ConsoleApplication()
-	if status.IsSupported():
-		status.Init()
 	ca.main(sys.argv[1:])
