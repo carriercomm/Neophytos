@@ -537,6 +537,9 @@ class ConsoleApplication:
 	def __cmd_push_target(self, cfg, name, target, rpath = None, lpath = None, dry = True):
 		print('pushing [%s]' % name)
 		
+		output.SetTitle('account', self.accountname)
+		output.SetTitle('target', name)
+		
 		dpath = target['disk-path']
 		filter = target['filter']
 		

@@ -21,6 +21,8 @@ import sys
 import threading
 import socket
 import select
+import struct
+import time
 
 try:
 	import curses
@@ -62,7 +64,7 @@ class TCPServer:
 			# find a free port that we can use
 			for port in range(41000, 41100):
 				try:
-					self.sock.bind(('localhost', 41000))
+					self.sock.bind(('localhost', port))
 					# we could prolly get away with one or two, but three
 					# seems quite safe considering it does not take much
 					# in resources to keep a backlog of three
@@ -85,13 +87,14 @@ class TCPServer:
 		# start the thread
 		thread.start()
 	
+	def SendSingle(self, sock, message):
+		sock.sendall(struct.pack('>I', len(message)) + bytes(message, 'utf8'))
+	
 	def Send(self, message):
-		if self.sock is None:
-			return
 		for sock in self.socks:
 			try:
-				self.sock.sendall(struct.pack('>I', len(message)) + bytes(message, 'utf8'))
-			except:
+				sock.sendall(struct.pack('>I', len(message)) + bytes(message, 'utf8'))
+			except Exception as e:
 				# if anything happens just pretend it never existed.. LOL
 				self.socks.remove(sock)
 	
@@ -105,14 +108,16 @@ class TCPServer:
 		global title
 		
 		for key in title:
-			self.Send('[title]:%s:%s' % (key, title[key]))
+			self.SendSingle(sock, '[title]:%s:%s' % (key, title[key]))
 		for name in working:
 			work = working[name]
-			self.Send('[add]:%s' % name)
-			if work['old']:
+			self.SendSingle(sock, '[add]:%s' % name)
+			if work.old:
 				self.Send('[old]:%s' % name)
-			self.Send('[status]:%s:%s' % (name, work['status']))
-			self.Send('[progress]:%s:%s' % (name, work['progress']))
+			self.SendSingle(sock, '[status]:%s:%s' % (name, work.status))
+			self.SendSingle(sock, '[progress]:%s:%s' % (name, work.progress))
+		self.SendSingle(sock, '[uptodate]')
+
 		
 	'''
 		The main loop that accepts connections and brings
@@ -131,25 +136,35 @@ class TCPServer:
 			
 			# lock so nothing tries to send stuff while we are busy
 			# dropping clients or anything
-			with lock:
-				if self.sock in readable:
-					# accept new connection
-					readable.remove(self.sock)
-					nsock = self.sock.accept()
+			if self.sock in readable:
+				# accept new connection
+				readable.remove(self.sock)
+				nsock, naddr = self.sock.accept()
+				try:
+					# we lock because we dont want to be trying
+					# to read any lists, objects, or dicts while
+					# they are being manipulated...mainly not
+					# because it will corrupt state but rather
+					# it could produce some weird bugs
+					with lock:
+						self.BringUp(nsock)
+					# only add if no exceptions
 					self.socks.append(nsock)
-					self.BringUp(nsock)
-				
-				for sock in readable:
-					# discard data
-					data = sock.read()
-					if not data:
-						socks.remove(sock)
-						sock.close()
-
-				for sock in exc:
-					# drop client
+				except Exception as e:
+					# just ignore it and the client sock gets silently dropped
+					pass
+			
+			for sock in readable:
+				# discard data
+				data = sock.read()
+				if not data:
 					socks.remove(sock)
 					sock.close()
+
+			for sock in exc:
+				# drop client
+				socks.remove(sock)
+				sock.close()
 			continue
 
 def Configure(tcpserver = False):

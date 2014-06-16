@@ -557,12 +557,6 @@ class Client2(Client):
 			self.WorkerThreadEntry(workitem[0], workitem[1], workitem[2])
 		
 	def __UpdateTitle(self):
-		outkb = 'OUT-KB: %.2f' % (self.bytesout  / 1024 / 1024)
-		totoutkb = 'ALLOUT-KB: %.2f' % (self.allbytesout / 1024 / 1024)
-		
-		outkb = outkb.rjust(20)
-		totoutkb = totoutkb.rjust(20)
-		
 		c = 0
 		for worker in self.workers:
 			if worker.isAlive():
@@ -581,8 +575,8 @@ class Client2(Client):
 		# new title styles handles individual indication rather
 		# than a solid string which allows programs reading our
 		# output to make better usage of the output
-		output.SetTitle('outmb', outkb)
-		output.SetTitle('totoutmb', totoutkb)
+		output.SetTitle('outmb', self.bytesout  / 1024 / 1024)
+		output.SetTitle('totoutmb', self.allbytesout / 1024 / 1024)
 		output.SetTitle('wpc', wpc)
 		output.SetTitle('c', c)
 		output.SetTitle('areqs', len(self.keepresult))
