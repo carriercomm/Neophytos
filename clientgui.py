@@ -65,6 +65,108 @@ class ClientInterface:
 		buf.seek(0)
 		return buf.read()
 
+class QCompactLayout():
+	def __init__(self, parent, horizontal = True):
+		self.parent = parent
+		self.widgets = []
+		self.horizontal = horizontal
+
+	def __GetTextWidth(text, font = 'Monospace', size = 10):
+		font = QtGui.QFont(font, size)
+		fm = QtGui.QFontMetrics(font)
+		return fm.width(text)
+		
+	def AddWidget(self, widget):
+		self.widgets.append(widget)
+	
+	def Do(self):
+		i = 0
+		cx = 0
+		cy = 0
+		mx = 0
+		my = 0
+		while i < len(self.widgets):
+			w = self.widgets[i]
+			if hasattr(w, 'xlayout'):
+				w.xlayout.Do()
+			
+			f_family = w.font().family()
+			f_size = w.font().pointSize()
+			#if isinstance(w, QtGui.QLabel):
+			#	w_w = QCompactLayout.__GetTextWidth(w.text(), font = f_family, size = f_size)
+			#	w.resize(w_w, w.height())
+			w.move(cx, w.y())
+			if self.horizontal:
+				if hasattr(w, 'xpadding'):
+					cx = cx + w.xpadding
+				cx = cx + w.width()
+				if w.height() > my:
+					my = w.height()
+			else:
+				cy = cy + w.height()
+				if w.width() > mx:
+					mx = w.width()
+			i = i + 1
+		if self.horizontal:
+			return (cx, my)
+		return (mx, cy)
+		
+class QBackupEntryStatus(QtGui.QFrame):
+	def __init__(self, parent, account, target):
+		super().__init__(parent)
+		self.account = account
+		self.target = target
+		
+		self.lbacc = QtGui.QLabel('Account:', self)
+		self.lbacc.xpadding = 5
+		self.lbacc.setObjectName('AccountLabel')
+		self.lbaccval = QtGui.QLabel(account, self)
+		self.lbaccval.xpadding = 10
+		self.lbaccval.setObjectName('AccountLabelValue')
+		self.lbtar = QtGui.QLabel('Target:', self)
+		self.lbtar.xpadding = 5
+		self.lbtar.setObjectName('TargetLabel')
+		self.lbtarval = QtGui.QLabel(target, self)
+		self.lbtarval.xpadding = 10
+		self.lbtarval.setObjectName('TargetLabelValue')
+		
+		self.lbbo = QtGui.QLabel('Bytes-Out(MB):', self)
+		self.lbbo.xpadding = 5
+		self.lbbo.setObjectName('BytesOutLabel')
+		self.lbboval = QtGui.QLabel('0', self)
+		self.lbboval.xpadding = 10
+		self.lbboval.setObjectName('BytesOutLabelValue')
+
+		self.lbbi = QtGui.QLabel('Bytes-In(MB):', self)
+		self.lbbi.xpadding = 5
+		self.lbbi.setObjectName('BytesInLabel')
+		self.lbbival = QtGui.QLabel('0', self)
+		self.lbbival.xpadding = 10
+		self.lbbival.setObjectName('BytesInLabelValue')
+		
+		self.pb = QtGui.QProgressBar(self)
+		self.pb.setRange(0, 1)
+		self.pb.setValue(0.5)
+		self.pb.move(0, 5)
+		self.pb.resize(200, 20)
+		self.pb.xpadding = 5
+		
+		self.xlayout = QCompactLayout(self, horizontal = True)
+		self.xlayout.AddWidget(self.lbacc)
+		self.xlayout.AddWidget(self.lbaccval)
+		self.xlayout.AddWidget(self.lbtar)
+		self.xlayout.AddWidget(self.lbtarval)
+		self.xlayout.AddWidget(self.pb)
+		self.xlayout.AddWidget(self.lbbo)
+		self.xlayout.AddWidget(self.lbboval)
+		self.xlayout.AddWidget(self.lbbi)
+		self.xlayout.AddWidget(self.lbbival)
+		
+	def resize(self, w, h):
+		pass
+	
+	def Update(self):
+		pass
 		
 class QAccountsAndTargetSystem(QtGui.QFrame):
 	def __init__(self, parent):
@@ -73,44 +175,28 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 	
 	def Create(self):
 		accounts = ClientInterface.GetAccounts()
-
-		table = QtGui.QTableWidget(self)
-		table.resize(self.width(), self.height())
-		self.table = table
 		
-		table.setColumnCount(5)
-		table.setHorizontalHeaderLabels(('Account', 'Target', 'Path', 'Enabled', 'Status'))
+		self.panels = {}
+		
+		self.xlayout = QCompactLayout(self, horizontal = False)
 		
 		for account in accounts:
 			targets = ClientInterface.GetTargets(account)
 			for target in targets:
-				acctarname = '%s.%s' % (account, target)
-				
-				table.insertRow(0)
-				
-				item = QtGui.QTableWidgetItem()
-				item.setText(account)
-				table.setItem(0, 0, item)
-				item = QtGui.QTableWidgetItem()
-				item.setText(target)
-				table.setItem(0, 1, item)
-				item = QtGui.QTableWidgetItem()
-				item.setText(targets[target]['disk-path'])
-				table.setItem(0, 2, item)
-				# create new frame to hold information
-				#self.apanel[acctarname] = QtGui.QFrame(self)
-				# create account name and target name fields
-				#self.apanel[acctarname].setLayout(lo)
-				#lo.setContentsMargin(0, 0, 0, 0)
-				
-				print(acctarname)
+				acctarname = '%s.%s' % (account, target)				
+				panel = QBackupEntryStatus(self, account, target)
+				self.panels[acctarname] = panel
+				self.xlayout.AddWidget(panel)
+				panel.setStyleSheet('QBackupEntryStatus { border-style: inset; border-width: 1px; }')
+				#panel.setFrameStyle(QtGui.QFrame.Raised)
 		
 		#self.setLayout(vlo)
 		self.show()
 	
 	def resize(self, w, h):
 		super().resize(w, h)
-		self.table.resize(w, h)
+		
+		self.xlayout.Do()
 				
 				
 class QStatusWindow(QtGui.QMainWindow):
@@ -123,7 +209,11 @@ class QStatusWindow(QtGui.QMainWindow):
 	def __init__(self):
 		QtGui.QMainWindow.__init__(self)
 		
-		self.setStyleSheet('')
+		fd = open('./media/client.css', 'r')
+		cssdata = fd.read()
+		fd.close()
+		self.setStyleSheet(cssdata)
+		print('@', cssdata)
 		
 		icon = QtGui.QIcon('./media/book.ico')
 		self.setWindowIcon(icon)
