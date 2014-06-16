@@ -577,8 +577,17 @@ class Client2(Client):
 			wpc = len(self.workpool)
 		else:
 			wpc = 'None'
-				
-		output.SetTitle('%s %s tc:%s wpool:%s areqs:%s tpw:%s' % (outkb[0:20], totoutkb[0:20], wpc, c, len(self.keepresult), d))
+
+		# new title styles handles individual indication rather
+		# than a solid string which allows programs reading our
+		# output to make better usage of the output
+		output.SetTitle('outmb', outkb)
+		output.SetTitle('totoutmb', totoutkb)
+		output.SetTitle('wpc', wpc)
+		output.SetTitle('c', c)
+		output.SetTitle('areqs', len(self.keepresult))
+		output.SetTitle('d', d)
+		#output.SetTitle('%s %s tc:%s wpool:%s areqs:%s tpw:%s' % (outkb[0:20], totoutkb[0:20], wpc, c, len(self.keepresult), d))
 		
 	def WorkerThreadEntry(self, fid, lfile, synclocal):
 		try:
