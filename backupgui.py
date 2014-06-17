@@ -9,6 +9,9 @@ from PyQt4 import QtCore
 import io
 import os.path
 import pprint
+import status
+import threading
+import time
 
 class ClientInterface:
 	'''
@@ -221,21 +224,21 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 			out.append(item)
 		return out
 		
-	def SetTableRow(self, row, items):
+	def SetTableRow(self, table, row, items):
 		for x in range(0, len(items)):
 			# just skip this column (dont update it)
 			if items[x] is None:
 				continue
-			item = self.table.item(row, x)
+			item = table.item(row, x)
 			# this should be an QTableWidgetItem
 			if type(items[x]) is not str:
 				print('not str')
 				# treat it is QTableWidgetItem
-				self.table.setItem(row, x, items[x])
+				table.setItem(row, x, items[x])
 				continue
 			if item is None:
 				item = QtGui.QTableWidgetItem()
-				self.table.setItem(row, x, item)
+				table.setItem(row, x, item)
 			# should be a string type
 			item.setText(items[x])
 	
@@ -251,11 +254,14 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 		
 		table.setObjectName('StatusTable')
 		
+		split = QtGui.QSplitter(self)
+		self.split = split
+		
 		#DumpObjectTree(self)
 		
 		# enabled, account, target, path, bytesout, bytesin, status, progress
-		table.setColumnCount(9)
-		table.setHorizontalHeaderLabels(['Enabled', 'Account', 'Target', 'Path', 'Out/KB/Second', 'In/KB/Second', 'Status', 'Progress', 'Next Run'])
+		table.setColumnCount(5)
+		table.setHorizontalHeaderLabels(['Enabled', 'Account', 'Target', 'Path', 'Next Run'])
 		
 		for account in accounts:
 			targets = ClientInterface.GetTargets(account)
@@ -270,35 +276,123 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 					nrt = 'Manual Only'
 				
 				table.insertRow(0)
-				self.SetTableRow(0, (
+				self.SetTableRow(table, 0, (
 					cfg['enabled'],
 					account, target,
 					cfg['disk-path'],
-					'0',
-					'0',
-					'',
-					'',
 					nrt
 				))
 				
-				pb = QtGui.QProgressBar()
-				pb.setObjectName('StatusCellProgressBar')
-				pb.setValue(50)
-				table.setCellWidget(0, 7, pb)
+				#pb = QtGui.QProgressBar()
+				#pb.setObjectName('StatusCellProgressBar')
+				#pb.setValue(50)
+				#table.setCellWidget(0, 7, pb)
+		
+		stable = QtGui.QTableWidget(self)
+		self.stable = stable
+		stable.setObjectName('StatusTable')
+		stable.setColumnCount(5)
+		stable.setHorizontalHeaderLabels(['User', 'Account', 'Target', 'Work', 'Up/MB/Sec'])
 		
 		table.setVerticalHeaderLabels(['', ''])
 		table.resizeColumnsToContents()
 				
+		split.setOrientation(2)
+		split.addWidget(table)
+		split.addWidget(stable)
+				
 		self.show()
 		
-	def resizeEvent(self, event):
-		table = self.table
-			
-		rect = table.visualItemRect(table.item(0, table.columnCount() - 1))
+		scantimer = QtCore.QTimer(self)
+		self.scantimer = scantimer
+		scantimer.timeout.connect(lambda : QAccountsAndTargetSystem.PeriodicScanUpdate(self))
+		scantimer.start(5000)
 		
-		w = rect.x() + rect.width() + 20
-
-		table.resize(self.width(), self.height())
+		scanthread = threading.Thread(target = QAccountsAndTargetSystem.PeriodicScanThreadEntry, args = (self,))
+		scanthread.daemon = True
+		self.scanthread = scanthread
+		scanthread.start()
+	
+	'''
+		This uses the data maintained by the periodic scan thread
+		to keep the table up to date.
+	'''
+	def PeriodicScanUpdate(self):
+		# access copy of services dict, the thread
+		# will create a new dict and set it then
+		# never touch it so this should be quite
+		# safe and does not need a lock
+		services = self.services
+		stable = self.stable
+		
+		for port in services:
+			service = services[port]
+			title = service['title']
+			work = service['work']
+			# just ignore it if it does not report the account
+			if 'account' not in title:
+				continue
+			user = title['user']
+			account = title['account']
+			target = title['target']
+			
+			# find row if it exists and update it
+			frow = None
+			for row in range(0, stable.rowCount()):
+				t_user = stable.item(row, 0).text()
+				t_account = stable.item(row, 1).text()
+				t_target = stable.item(row, 2).text()
+				
+				if t_user == user and t_account == account and t_target == target:
+					frow = row
+					break
+			
+			# if row does not exist then create it
+			if frow is None:
+				frow = 0
+				stable.insertRow(0)
+				self.SetTableRow(stable, 0, (
+					user,
+					account, target,
+					'',				# work item count
+					''				# throughput
+				))
+				
+			stable.item(frow, 3).setText('%s' % len(work))
+			stable.item(frow, 4).setText('%s:%s' % (title['outmb'], title['totoutmb']))
+		
+	def PeriodicScanThreadEntry(self):
+		# initial the status query object
+		q = status.StatusQuery()
+		while True:
+			# scan for running services
+			#print('scanning')
+			services = q.Scan()
+			self.services = services
+			#print('done scanning')
+			# iterate through services found
+			for port in services:
+				service = services[port]
+				title = service['title']
+				if 'account' not in title:
+					continue
+				title = service['title']
+				account = title['account']
+				target = title['target']
+				# try to find the row that matches this running service, we might
+				# not find one if it is running under a different user account and
+				# if so we can just add a row
+				#print(title, account)
+			time.sleep(5)
+		
+	def resizeEvent(self, event):
+		#table = self.table	
+		#rect = table.visualItemRect(table.item(0, table.columnCount() - 1))
+		#w = rect.x() + rect.width() + 20
+		#table.resize(self.width(), self.height())
+		split = self.split
+		
+		self.split.resize(self.width(), self.height())
 	
 	def resize(self, w, h):
 		super().resize(w, h)

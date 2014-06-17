@@ -86,6 +86,8 @@ class Client:
 		self.WriteMessage(data, False, True)
 		#print('waiting for login reply')
 		result = self.ProcessMessage(0, 0, self.ReadMessage()[2])
+		# initialize the time we starting recording the number of bytes sent
+		self.bytesoutst = time.time()
 		if result:
 			print('login good')
 			return True
@@ -372,6 +374,10 @@ class Client2(Client):
 			self.FileWrite(fid, off, fd.read(_sz), block = False, discard = True)
 			output.SetCurrentProgress(name, x / c)
 			x = x + 1
+			# i feel bad using this lock.. but trying to debug
+			# some crazy numbers..
+			with self.socklockwrite:
+				self.bytesout = self.bytesout + lsz
 			#print('$')
 		output.SetCurrentProgress(name, x / c)
 		
@@ -575,8 +581,10 @@ class Client2(Client):
 		# new title styles handles individual indication rather
 		# than a solid string which allows programs reading our
 		# output to make better usage of the output
-		output.SetTitle('outmb', self.bytesout  / 1024 / 1024)
-		output.SetTitle('totoutmb', self.allbytesout / 1024 / 1024)
+		dt = time.time() - self.bytesoutst
+		
+		output.SetTitle('outmb', (self.bytesout  / 1024 / 1024) / dt)
+		output.SetTitle('totoutmb', (self.allbytesout / 1024 / 1024) / dt)
 		output.SetTitle('wpc', wpc)
 		output.SetTitle('c', c)
 		output.SetTitle('areqs', len(self.keepresult))
@@ -672,7 +680,6 @@ class Client2(Client):
 				self.UploadFile(fid, fd, lsz, lfile)
 				output.SetCurrentStatus(lfile, 'UPLOADED')
 				fd.close()
-				self.bytesout = self.bytesout + lsz
 				output.RemWorkingItem(lfile)
 				return
 		else:

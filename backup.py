@@ -7,9 +7,6 @@ import re
 
 from lib import output
 
-# setup standard outputs (run TCP server)
-output.Configure(tcpserver = True)
-
 class ConsoleApplication:
 	def GetConfigPath(self):
 		# build base path (without file)
@@ -539,6 +536,7 @@ class ConsoleApplication:
 		
 		output.SetTitle('account', self.accountname)
 		output.SetTitle('target', name)
+		output.SetTitle('user', os.getlogin())
 		
 		dpath = target['disk-path']
 		filter = target['filter']
@@ -621,7 +619,13 @@ class ConsoleApplication:
 	'''
 	'''		
 	def dofilters(self, filters, fpath):
-		mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
+		try:
+			mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
+		except:
+			# just say the filter failed since we can not access it
+			# to event do a stat more than likely, or something has
+			# gone wrong
+			return False
 		
 		for f in filters:
 			notmatch = False
@@ -903,5 +907,7 @@ class ConsoleApplication:
 # only execute this if we are the primary
 # script file being executed by Python
 if __name__ == '__main__':
+	# setup standard outputs (run TCP server)
+	output.Configure(tcpserver = True)
 	ca = ConsoleApplication()
 	ca.main(sys.argv[1:])
