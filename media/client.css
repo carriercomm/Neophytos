@@ -17,6 +17,7 @@ QTableWidget#StatusTable > QScrollBar {
 QProgressBar#StatusCellProgressBar {
 	background:		#999999;
 	color:			white;
+	border:			0px;
 }
 
 QProgressBar#StatusCellProgressBar::chunk:horizontal {

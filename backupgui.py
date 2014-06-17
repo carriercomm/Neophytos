@@ -282,21 +282,19 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 					cfg['disk-path'],
 					nrt
 				))
-				
-				#pb = QtGui.QProgressBar()
-				#pb.setObjectName('StatusCellProgressBar')
-				#pb.setValue(50)
-				#table.setCellWidget(0, 7, pb)
 		
 		stable = QtGui.QTableWidget(self)
 		self.stable = stable
 		stable.setObjectName('StatusTable')
-		stable.setColumnCount(5)
-		stable.setHorizontalHeaderLabels(['User', 'Account', 'Target', 'Work', 'Up/MB/Sec'])
+		stable.setColumnCount(6)
+		stable.setHorizontalHeaderLabels(['User', 'Account', 'Target', 'Queue', 'Up/MB/Sec', 'Complete'])
+		stable.setVerticalHeaderLabels(['', ''])
+		stable.resizeColumnsToContents()
 		
 		table.setVerticalHeaderLabels(['', ''])
 		table.resizeColumnsToContents()
-				
+		
+		
 		split.setOrientation(2)
 		split.addWidget(table)
 		split.addWidget(stable)
@@ -335,6 +333,8 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 			user = title['user']
 			account = title['account']
 			target = title['target']
+			filecount = float(title['filecount'])
+			donecount = float(title['filedonecount'])
 			
 			# find row if it exists and update it
 			frow = None
@@ -358,8 +358,26 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 					''				# throughput
 				))
 				
-			stable.item(frow, 3).setText('%s' % len(work))
-			stable.item(frow, 4).setText('%s:%s' % (title['outmb'], title['totoutmb']))
+				# create a progress bar for eye candy
+				pb = QtGui.QProgressBar()
+				pb.setObjectName('StatusCellProgressBar')
+				pb.setRange(0.0, 100.0)
+				pb.setValue(0.0)
+				stable.setCellWidget(0, 5, pb)
+				
+			workcount = 0
+			for wname in work:
+				witem = work[wname]
+				if 'old' in witem and witem['old'] is False:
+					workcount = workcount + 1
+					
+			stable.item(frow, 3).setText('%s' % workcount)
+			stable.item(frow, 4).setText('%.03f:%.03f' % (float(title['outmb']), float(title['totoutmb'])))
+			stable.cellWidget(frow, 5).setValue((donecount / filecount) * 100.0)
+			# if we are dealing with LOTS of rows this might 
+			# get slow and CPU hungry, but I doubt 99% of
+			# the things using this will be that hungry..
+			stable.resizeColumnsToContents()
 		
 	def PeriodicScanThreadEntry(self):
 		# initial the status query object

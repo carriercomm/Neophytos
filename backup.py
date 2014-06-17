@@ -4,6 +4,8 @@ import os.path
 import sys
 import pprint
 import re
+import threading
+import time
 
 from lib import output
 
@@ -452,7 +454,7 @@ class ConsoleApplication:
 				count = count + 1
 		return count, dcount
 	
-	def dopush(self, name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = None, dry = True, totalcount = None):
+	def dopush(self, name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = None, dry = True, lastdonereport = 0, _donecount = 0):
 		if c is None:
 			# only connect if not dry run
 			if not dry:
@@ -470,11 +472,10 @@ class ConsoleApplication:
 			
 		if base is None:
 			base = dpath
-			print('SCANNING TARGET DIRECTORY')
-			#totalcount, tmp = self.enumfilecount(dpath)
-			totalcount = 1
-			self.curcount = 0
-			
+		
+		# track how many files we have processed
+		donecount = 0
+		
 		try:
 			nodes = os.listdir(dpath)
 		except OSError:
@@ -489,12 +490,12 @@ class ConsoleApplication:
 				if self.dofilters(filter, fpath):
 					if dry:
 						print('[DIR-OK] %s' % fpath)
-					self.dopush(name, rhost, rport, sac, cfg, fpath, '%s/%s' % (rpath, node), filter, base = base, c = c, dry = dry, totalcount = totalcount)
+					# also update donecount along the way
+					donecount = donecount + self.dopush(name, rhost, rport, sac, cfg, fpath, '%s/%s' % (rpath, node), filter, base = base, c = c, dry = dry, lastdonereport = lastdonereport, _donecount = donecount + _donecount)
 				else:
 					if dry:
 						print('[DIR-IGNORE] %s' % fpath)
 				continue
-			self.curcount = self.curcount + 1
 			# run filters
 			if self.dofilters(filter, fpath):
 				# backup the file
@@ -509,12 +510,23 @@ class ConsoleApplication:
 			else:
 				if dry is True:
 					print('[IGNORED] %s' % fpath)
+			donecount = donecount + 1
+			ct = time.time()
+			if ct - lastdonereport > 10:
+				lastdonereport = ct
+				# update the title to reflect how many files
+				# we have processed since the last update
+				output.SetTitle('filedonecount', donecount + _donecount)
+		
 		# iterate through remote files
 		#self.__handle_missingremfiles(
 			# delete/stash any remote that no longer exists locally
+			
 		if not child:
 			# allow all workers to finish
 			c.WaitUntilWorkersFinish()
+			return
+		return donecount
 		
 	def __handle_missingremfiles(self):
 		pass
@@ -530,7 +542,28 @@ class ConsoleApplication:
 		sac = cfg['storage-auth-code']
 		#def dopull(name, rhost, rport, sac, cfg, rpath, lpath, filter, base = None, c = None, erpath = None, dry = True):
 		return self.dopull(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, rpath = rpath, lpath = lpath, filter = filter, dry = dry)
-		
+	
+	def __enumfilesandreport(self, base, lastreport = 0, initial = True):
+		nodes = os.listdir(base)
+		count = 0
+		for node in nodes:
+			fpath = '%s/%s' % (base, node)
+			if os.path.isdir(fpath):
+				_count, lastreport = self.__enumfilesandreport(fpath, lastreport = lastreport, initial = False)
+				count = count + _count
+			else:
+				count = count + 1
+			ct = time.time()
+			if ct - lastreport > 10:
+				lastreport = ct
+				output.SetTitle('filecount', count)
+				
+		if initial:
+			output.SetTitle('filecount', count)
+			return count
+		return count, lastreport
+			
+	
 	def __cmd_push_target(self, cfg, name, target, rpath = None, lpath = None, dry = True):
 		print('pushing [%s]' % name)
 		
@@ -544,6 +577,19 @@ class ConsoleApplication:
 		rhost = cfg['remote-host']
 		rport = cfg['remote-port']
 		sac = cfg['storage-auth-code']
+		
+		# enumerate all files and directories
+		# using a separate thread so we can
+		# report total count and anything reading
+		# the status can compute a percentage, i hate
+		# using a thread but I am hoping this is somewhat
+		# I/O bound therefore it should work nicer with
+		# the other threads, the good thing being it will
+		# eventually terminate all on it's own
+		tfscan = threading.Thread(target = ConsoleApplication.__enumfilesandreport, args = (self, dpath))
+		tfscan.daemon = True
+		self.tfscan = tfscan
+		tfscan.start()
 		
 		ret = self.dopush(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, rpath = rpath, filter = filter, dry = dry)
 		print('DONE')
