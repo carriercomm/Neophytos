@@ -7,6 +7,7 @@ import re
 import threading
 import time
 
+from lib import misc
 from lib import output
 
 class ConsoleApplication:
@@ -953,6 +954,8 @@ class ConsoleApplication:
 # only execute this if we are the primary
 # script file being executed by Python
 if __name__ == '__main__':
+	# ourselves to idle unless specified to run as normal
+	misc.setProcessPriorityIdle()
 	# setup standard outputs (run TCP server)
 	output.Configure(tcpserver = True)
 	ca = ConsoleApplication()
