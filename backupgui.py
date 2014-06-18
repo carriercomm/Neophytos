@@ -245,6 +245,11 @@ class QTargetEditor(QtGui.QDialog):
 		btnPath = QtGui.QPushButton(self)					# display path selection dialog
 		btnPath.setText('Browse For Path')
 		
+		def actionPathButtonClicked(self):
+			folder = QtGui.QFileDialog.getExistingDirectory()
+			self.editPath.widget().setText(folder)
+		
+		btnPath.clicked.connect(lambda : actionPathButtonClicked(self))
 		#labelFilter = QtGui.QLabel('Filter:', self)
 		#labelFilterTest = QtGui.QLineEdit(self) 			# on change re-test with filter
 		
@@ -252,6 +257,7 @@ class QTargetEditor(QtGui.QDialog):
 		editFilterTest.widget().setFixedWidth(250)
 		
 		listFilter = QtGui.QTableWidget(self)				# on change re-test the test string
+		listFilter.setObjectName('FilterTable')
 		#btnFilterAdd = QtGui.QPushButton('Add', self)
 		#btnFilterDel = QtGui.QPushButton('Del', self)
 		#btnFilterUp = QtGui.QPushButton('Up', self) 
@@ -366,6 +372,9 @@ class QTargetEditor(QtGui.QDialog):
 				
 				paths = cfg['paths']
 							
+				# set authorization code so it can be modified if desired
+				self.editAuth.widget().setText(cfg['storage-auth-code'])
+							
 				# add new targets
 				for path in paths:
 					self.editTarget.widget().insertItem(0, path)
@@ -396,6 +405,23 @@ class QTargetEditor(QtGui.QDialog):
 				
 				# populate other controls with data
 				self.editPath.widget().setText(target['disk-path'])
+				
+				ftable = self.listFilter
+				
+				# clear the filter table
+				ftable.setRowCount(0)
+				
+				# populate filter table
+				filter = target['filter']
+				ftable.setRowCount(len(filter))
+				for x in range(0, len(filter)):
+					fitem = filter[x]
+					
+					for y in range(0, len(fitem)):
+						item = QtGui.QTableWidgetItem()
+						item.setText('%s' % fitem[y])
+						ftable.setItem(x, y, item)
+					
 			else:
 				ChangeStyle(self.editTarget.widget(), 'EditInvalid')
 				
@@ -418,6 +444,7 @@ class QTargetEditor(QtGui.QDialog):
 		self.editTarget = editTarget
 		self.editPath = editPath
 		self.listFilter = listFilter
+		self.editAuth = editAuth
 		
 		#self.setObjectName('Apple')
 		#editAccount.setObjectName('Apple')
