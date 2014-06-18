@@ -2,6 +2,7 @@
 	This implements a client GUI.
 '''
 import os
+import os.path
 import sys
 import backup
 from PyQt4 import QtGui
@@ -12,6 +13,12 @@ import pprint
 import status
 import threading
 import time
+import types
+import subprocess
+
+def ChangeStyle(widget, name):
+	widget.setObjectName(name)
+	widget.style().polish(widget)
 
 class ClientInterface:
 	'''
@@ -103,15 +110,32 @@ class ClientInterface:
 		fd.close()
 
 class QCompactLayout():
-	def __init__(self, parent, horizontal = True):
-		self.parent = parent
+	def __init__(self, horizontal = True, defxpad = 5, defypad = 5):
 		self.widgets = []
 		self.horizontal = horizontal
-
-	def __GetTextWidth(text, font = 'Monospace', size = 10):
-		font = QtGui.QFont(font, size)
-		fm = QtGui.QFontMetrics(font)
-		return fm.width(text)
+		self.parent = None
+		self.defxpad = defxpad
+		self.defypad = defypad
+	
+	def SetParent(self, parent):
+		# if we had a parent set...
+		if self.parent is not None:
+			# if our parent had us set as the layout..
+			if self.parent.xlayout is self:
+				# remove ourselves..
+				self.parent.xlayout = None
+		self.parent = parent
+		parent.xlayout = self
+		
+	def AddLayout(self, layout):
+		dframe = QtGui.QFrame(self.parent)
+		self.AddWidget(dframe)
+		layout.SetParent(dframe)
+		layout.MigrateWidgetsTo(dframe)
+		
+	def MigrateWidgetsTo(self, towidget):
+		for widget in self.widgets:
+			widget.setParent(towidget)
 		
 	def AddWidget(self, widget):
 		self.widgets.append(widget)
@@ -126,90 +150,300 @@ class QCompactLayout():
 			w = self.widgets[i]
 			if hasattr(w, 'xlayout'):
 				w.xlayout.Do()
-			
-			#f_family = w.font().family()
-			#f_size = w.font().pointSize()
-			#if isinstance(w, QtGui.QLabel):
-			#	w_w = QCompactLayout.__GetTextWidth(w.text(), font = f_family, size = f_size)
-			#	w.resize(w_w, w.height())
-			w.move(cx, w.y())
+			w.move(cx, cy)
 			if self.horizontal:
 				if hasattr(w, 'xpadding'):
 					cx = cx + w.xpadding
-				cx = cx + w.width()
+				cx = cx + w.width() + self.defxpad
 				if w.height() > my:
 					my = w.height()
 			else:
-				cy = cy + w.height()
+				cy = cy + w.height() + self.defypad
 				if w.width() > mx:
 					mx = w.width()
 			i = i + 1
 		if self.horizontal:
+			self.parent.resize(cx, my)
 			return (cx, my)
+		self.parent.resize(mx, cy)
 		return (mx, cy)
 		
-class QBackupEntryStatus(QtGui.QFrame):
-	def __init__(self, parent, account, target):
-		super().__init__(parent)
-		self.account = account
-		self.target = target
-		
-		self.lbacc = QtGui.QLabel('Account:', self)
-		self.lbacc.xpadding = 5
-		self.lbacc.setObjectName('AccountLabel')
-		self.lbaccval = QtGui.QLabel(account, self)
-		self.lbaccval.xpadding = 10
-		self.lbaccval.setObjectName('AccountLabelValue')
-		self.lbtar = QtGui.QLabel('Target:', self)
-		self.lbtar.xpadding = 5
-		self.lbtar.setObjectName('TargetLabel')
-		self.lbtarval = QtGui.QLabel(target, self)
-		self.lbtarval.xpadding = 10
-		self.lbtarval.setObjectName('TargetLabelValue')
-		
-		self.lbbo = QtGui.QLabel('Bytes-Out(MB):', self)
-		self.lbbo.xpadding = 5
-		self.lbbo.setObjectName('BytesOutLabel')
-		self.lbboval = QtGui.QLabel('0', self)
-		self.lbboval.xpadding = 10
-		self.lbboval.setObjectName('BytesOutLabelValue')
-
-		self.lbbi = QtGui.QLabel('Bytes-In(MB):', self)
-		self.lbbi.xpadding = 5
-		self.lbbi.setObjectName('BytesInLabel')
-		self.lbbival = QtGui.QLabel('0', self)
-		self.lbbival.xpadding = 10
-		self.lbbival.setObjectName('BytesInLabelValue')
-		
-		self.pb = QtGui.QProgressBar(self)
-		self.pb.setRange(0, 1)
-		self.pb.setValue(0.5)
-		self.pb.move(0, 5)
-		self.pb.resize(200, 20)
-		self.pb.xpadding = 5
-		
-		self.xlayout = QCompactLayout(self, horizontal = True)
-		self.xlayout.AddWidget(self.lbacc)
-		self.xlayout.AddWidget(self.lbaccval)
-		self.xlayout.AddWidget(self.lbtar)
-		self.xlayout.AddWidget(self.lbtarval)
-		self.xlayout.AddWidget(self.pb)
-		self.xlayout.AddWidget(self.lbbo)
-		self.xlayout.AddWidget(self.lbboval)
-		self.xlayout.AddWidget(self.lbbi)
-		self.xlayout.AddWidget(self.lbbival)
-		
-	def resize(self, w, h):
-		pass
-	
-	def Update(self):
-		pass
-		
+class HandlerAction(QtGui.QAction):
+	def __init__(self, icon, text, parent, handler, arg):
+		QtGui.QAction.__init__(self, icon, text, parent)
+		self.triggered.connect(lambda : handler(*arg))
+				
 def DumpObjectTree(obj, space = ''):
 	print('%s%s [%s]' % (space, obj, obj.objectName()))
 	for child in obj.children():
 		if isinstance(obj, QtGui.QWidget):
 			DumpObjectTree(child, space = '%s ' % space)
+			
+class QLabelWith(QtGui.QFrame):
+	def __init__(self, parent, label, widget):
+		self.init = False
+		super().__init__(parent)
+		self.xlabel = QtGui.QLabel(self)
+		self.xwidget = widget
+		widget.setParent(self)
+		self.xlabel.setText(label)
+		self.init = True
+	def label(self):
+		return self.xlabel
+	def widget(self):
+		return self.xwidget
+	def size(self):
+		self.xlabel.move(0, 3)
+		self.xwidget.move(self.xlabel.width() + 5, 0)
+		if self.xlabel.height() > self.xwidget.height():
+			h = self.xlabel.height()
+		else:
+			h = self.xwidget.height()
+		self.resize(self.xlabel.width() + self.xwidget.width() + 5, h)
+	def event(self, event):
+		# yes.. very very evil.. but for gods
+		# sake at least it gets a final width
+		# and height on the label and is able
+		# to position the widgets properly
+		if self.init:
+			self.size()
+		return True
+'''
+
+	Account: [edittable drop down populated]    Authorization Code:[authorization code]
+	Target: [editbox for target name]
+	Path: [button to browse for path] [editbox for disk-path]
+	Filters: [editbox with string to check filters against (for testing)]
+			 [listbox with filters in order][vertical line of buttons for moving up/down/delete/add][each line is editable]
+	
+	[button to save] [button to discard]
+'''
+class QTargetEditor(QtGui.QDialog):
+	def __init__(self, account = None, target = None):
+		super().__init__()
+		
+		self.resize(10, 10)
+		icon = QtGui.QIcon('./media/edit.ico')
+		self.setWindowIcon(icon)
+
+		self.setWindowTitle('Edit Entry')
+		
+		# create controls
+		editAccount = QLabelWith(self, 'Account:', QtGui.QComboBox())
+		editAccount.widget().setMinimumContentsLength(20)
+		editAccount.widget().setEditable(True)
+		
+		editAuth = QLabelWith(self, 'Authorization Code:', QtGui.QLineEdit())
+		editAuth.widget().setFixedWidth(200)
+		
+		editTarget = QLabelWith(self, 'Target:', QtGui.QComboBox())
+		editTarget.widget().setMinimumContentsLength(20)
+		editTarget.widget().setEditable(True)
+
+		editPath = QLabelWith(self, 'Path:', QtGui.QLineEdit())
+		editPath.widget().setFixedWidth(150)
+		btnPath = QtGui.QPushButton(self)					# display path selection dialog
+		btnPath.setText('Browse For Path')
+		
+		#labelFilter = QtGui.QLabel('Filter:', self)
+		#labelFilterTest = QtGui.QLineEdit(self) 			# on change re-test with filter
+		
+		editFilterTest = QLabelWith(self, 'Test:', QtGui.QLineEdit())
+		editFilterTest.widget().setFixedWidth(250)
+		
+		listFilter = QtGui.QTableWidget(self)				# on change re-test the test string
+		#btnFilterAdd = QtGui.QPushButton('Add', self)
+		#btnFilterDel = QtGui.QPushButton('Del', self)
+		#btnFilterUp = QtGui.QPushButton('Up', self) 
+		#btnFilterDown = QtGui.QPushButton('Down', self)
+		
+		
+		
+		#btnSave = QtGui.QPushButton(self)
+		#btnCancel = QtGui.QPushButton(self)
+		
+		# place controls
+		lv0 = QCompactLayout(horizontal = False)
+		lv0.SetParent(self)
+		
+		lh1 = QCompactLayout(horizontal = True)
+		lh1.AddWidget(editAccount)
+		lh1.AddWidget(editAuth)
+		
+		lh2 = QCompactLayout(horizontal = True)
+		lh2.AddWidget(editTarget)
+		lh2.AddWidget(editPath)
+		lh2.AddWidget(btnPath)
+		
+		#lv2 = QCompactLayout(horizontal = False)
+		#lv2.AddWidget(btnFilterAdd)
+		#lv2.AddWidget(btnFilterDel)
+		#lv2.AddWidget(btnFilterUp)
+		#lv2.AddWidget(btnFilterDown)
+		
+		lh3 = QCompactLayout(horizontal = True)
+		lh3.AddWidget(listFilter)
+		#lh3.AddLayout(lv2)
+		
+		lv0.AddLayout(lh1)
+		lv0.AddLayout(lh2)
+		lv0.AddWidget(editFilterTest)
+		lv0.AddLayout(lh3)
+		
+		lv0.Do()
+		
+		self.lv0 = lv0
+		
+		def menuAdd(self):
+			pass
+			
+		def menuDelete(self):
+			pass
+
+		def __contextMenuEvent(self, event):
+			# i just like the style of building the menu when needed
+			if self.menu is None:
+				self.menu = QtGui.QMenu(self)
+				self.menu2.addAction(HandlerAction(QtGui.QIcon(), 'Add New Target', self.menu, menuAdd, (self,)))
+				self.menu.addAction(HandlerAction(QtGui.QIcon(), 'Delete', self.menu, menuDelete, (self,)))
+				
+				self.menu2 = QtGui.QMenu(self)
+				self.menu2.addAction(HandlerAction(QtGui.QIcon(), 'Add New Target', self.menu, menuAdd, (self,)))
+				
+			# get the item then the row
+			item = self.itemAt(event.x(), event.y())
+			# no item was under cursor so exit
+			if item is None:
+				# execute menu 2 instead
+				self.menu2.exec(event.globalPos())
+				return
+			self.__row = item.row()
+			
+			self.menu.exec(event.globalPos())
+
+		listFilter.menu = None
+		listFilter.contextMenuEvent = types.MethodType(__contextMenuEvent, listFilter)
+		
+		listFilter.setColumnCount(3)
+		listFilter.setHorizontalHeaderLabels(['Invert', 'Type', 'Expression'])
+		
+		listFilter.resize(500, 100)
+		
+		# populate account combo box with accounts
+		self.bku = backup.ConsoleApplication()
+		configs = self.bku.GetConfigs()
+		
+		for config in configs:
+			editAccount.widget().insertItem(0, config)
+			
+		def actionAccountTextChanged(self, text):
+			print('account', self, text)
+			# is this a valid account
+			bku = self.bku
+			
+			configs = bku.GetConfigs()
+			existing = False
+			if text in configs:
+				if text.lower() == text:
+					existing = True
+			
+			if existing:
+				ChangeStyle(self.editAccount.widget(), 'EditValid')
+			else:
+				ChangeStyle(self.editAccount.widget(), 'EditInvalid')
+			
+			# populate
+			cpath = bku.GetConfigPath(account = text)
+			
+			# remove all items in target combobox
+			while self.editTarget.widget().count() > 0:
+				self.editTarget.widget().removeItem(0)
+			
+			if os.path.exists(cpath):
+				fd = open(cpath, 'r')
+				cfg = eval(fd.read())
+				fd.close()
+				
+				paths = cfg['paths']
+							
+				# add new targets
+				for path in paths:
+					self.editTarget.widget().insertItem(0, path)
+			
+			actionTargetTextChanged(self, self.editTarget.widget().currentText())
+			
+		def actionTargetTextChanged(self, text):
+			print('target', self, text)
+			
+			bku = self.bku
+			
+			cpath = bku.GetConfigPath(account = self.editAccount.widget().currentText())
+			
+			# load
+			exists = False
+			if os.path.exists(cpath):
+				fd = open(cpath, 'r')
+				cfg = eval(fd.read())
+				fd.close()
+				if self.editTarget.widget().currentText() in cfg['paths']:
+					exists = True
+					# also just grab the target meta-data too while we are at it
+					target = cfg['paths'][self.editTarget.widget().currentText()]
+			
+			
+			if exists:
+				ChangeStyle(self.editTarget.widget(), 'EditValid')
+				
+				# populate other controls with data
+				self.editPath.widget().setText(target['disk-path'])
+			else:
+				ChangeStyle(self.editTarget.widget(), 'EditInvalid')
+				
+		'''
+			More eye-candy...
+		'''
+		def actionDiskPathChanged(self, text):
+			if os.path.exists(text) and os.path.isdir(text):
+				ChangeStyle(self.editPath.widget(), 'EditValid')
+			else:
+				ChangeStyle(self.editPath.widget(), 'EditInvalid')
+		
+		editAccount.widget().editTextChanged.connect(lambda text: actionAccountTextChanged(self, text))
+		editTarget.widget().editTextChanged.connect(lambda text: actionTargetTextChanged(self, text))
+		editPath.widget().textChanged.connect(lambda text: actionDiskPathChanged(self, text))
+			
+		self.show()
+		
+		self.editAccount = editAccount
+		self.editTarget = editTarget
+		self.editPath = editPath
+		self.listFilter = listFilter
+		
+		#self.setObjectName('Apple')
+		#editAccount.setObjectName('Apple')
+		#editAccount.widget().setObjectName('Apple')
+		
+		fd = open('./media/client.css', 'r')
+		cssdata = fd.read()
+		fd.close()
+		self.setStyleSheet(cssdata)
+		
+		actionAccountTextChanged(self, editAccount.widget().currentText())
+		
+		self.style().polish(editAccount.widget())
+		
+		#style()->unpolish(theWidget);
+		#style()->polish(theWidget);
+		
+	#def resize(self, w, h):
+	#	super().resize(w, h)
+	#	print('called resize', w, h)
+		
+	def event(self, e):
+		if type(e) is QtGui.QPaintEvent:
+			self.lv0.Do()
+		return super().event(e)
+		# end-of-function
 		
 class QAccountsAndTargetSystem(QtGui.QFrame):
 	def __init__(self, parent):
@@ -246,8 +480,6 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 		accounts = ClientInterface.GetAccounts()
 		
 		self.panels = {}
-		
-		self.xlayout = QCompactLayout(self, horizontal = False)
 	
 		table = QtGui.QTableWidget(self)
 		self.table = table
@@ -291,9 +523,64 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 		stable.setVerticalHeaderLabels(['', ''])
 		stable.resizeColumnsToContents()
 		
+		# disable editing
+		table.setEditTriggers(QtGui.QAbstractItemView.NoEditTriggers)
+		stable.setEditTriggers(QtGui.QAbstractItemView.NoEditTriggers)
+		
 		table.setVerticalHeaderLabels(['', ''])
 		table.resizeColumnsToContents()
 		
+		def menuPush(self):
+			# push the target on specified account
+			python = sys.executable
+
+			account = self.item(self.__row, 1).text()
+			target = self.item(self.__row, 2).text()
+			
+			fnull = open(os.devnull, 'w')
+			subprocess.Popen((python, 'backup.py', account, 'push', target), stdout = fnull, stderr = fnull)
+			print('executed push with account:%s target:%s' % (account, target))
+		
+		def menuEdit(self):
+			pass
+		def menuAddNew(self):
+			n = QTargetEditor()
+			# create reference or garbage collector will
+			# release it and it will disappear
+			self.n = n
+			# make sure it is displayed
+			n.show()
+			
+			print('created new')
+			
+		def menuDelete(self):
+			pass
+		
+		def __contextMenuEvent(self, event):
+			# i just like the style of building the menu when needed
+			if self.menu is None:
+				self.menu = QtGui.QMenu(self)
+				self.menu.addAction(HandlerAction(QtGui.QIcon(), 'Edit', self.menu, menuEdit, (self,)))
+				self.menu.addAction(HandlerAction(QtGui.QIcon(), 'Push (Backup)', self.menu, menuPush, (self,)))
+				self.menu.addAction(HandlerAction(QtGui.QIcon(), 'Add New Target', self.menu, menuAddNew, (self,)))
+				self.menu.addAction(HandlerAction(QtGui.QIcon(), 'Delete', self.menu, menuDelete, (self,)))
+				
+				self.menu2 = QtGui.QMenu(self)
+				self.menu2.addAction(HandlerAction(QtGui.QIcon(), 'Add New Target', self.menu, None, (self,)))
+				
+			# get the item then the row
+			item = self.itemAt(event.x(), event.y())
+			# no item was under cursor so exit
+			if item is None:
+				# execute menu 2 instead
+				self.menu2.exec(event.globalPos())
+				return
+			self.__row = item.row()
+			
+			self.menu.exec(event.globalPos())
+
+		table.menu = None
+		table.contextMenuEvent = types.MethodType(__contextMenuEvent, table)
 		
 		split.setOrientation(2)
 		split.addWidget(table)
@@ -444,7 +731,6 @@ class QStatusWindow(QtGui.QMainWindow):
 		self.move(400, 20)
 		self.setWindowTitle('Neophytos Backup Status')
 		self.show()
-
 		
 def main():
 	app = QtGui.QApplication(sys.argv)

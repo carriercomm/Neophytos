@@ -11,11 +11,13 @@ from lib import misc
 from lib import output
 
 class ConsoleApplication:
-	def GetConfigPath(self):
+	def GetConfigPath(self, account = None):
 		# build base path (without file)
 		base = self.GetConfigBase()
 		# add on file
-		path = '%s/%s.py' % (base, self.accountname)
+		if account is None:
+			account = self.accountname
+		path = '%s/%s.py' % (base, account)
 		return path
 		
 	def GetConfigBase(self):
@@ -37,8 +39,8 @@ class ConsoleApplication:
 			_nodes.append(node)
 		return _nodes
 		
-	def __LoadConfig(self):
-		path = self.GetConfigPath()
+	def __LoadConfig(self, account = None):
+		path = self.GetConfigPath(account = account)
 		if os.path.exists(path) is False:
 			return {}
 		fd = open(path, 'r')
@@ -46,8 +48,8 @@ class ConsoleApplication:
 		fd.close()
 		return cfg
 		
-	def LoadConfig(self):
-		cfg = self.__LoadConfig()
+	def LoadConfig(self, account = None):
+		cfg = self.__LoadConfig(account = account)
 		if 'remote-host' not in cfg:
 			cfg['remote-host'] = 'kmcg3413.net'
 		if 'remote-port' not in cfg:

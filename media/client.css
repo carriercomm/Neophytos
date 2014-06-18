@@ -1,37 +1,30 @@
-QLabel#AccountLabel, QLabel#TargetLabel, QLabel#BytesOutLabel, QLabel#BytesInLabel {
-	font: bold 10pt Tahoma;	
-}
-
-QLabel#AccountLabelValue, QLabel#TargetLabelValue, QLabel#BytesOutLabelValue, QLabel#BytesInLabelValue {
-	font: 8pt Tahoma;
-}
-
-QTableWidget::header {
-	background:		red;
-}
-
-QTableWidget#StatusTable > QScrollBar {
-	background:		red;
-}
-
-QProgressBar#StatusCellProgressBar {
+#StatusCellProgressBar {
 	background:		#999999;
 	color:			white;
 	border:			0px;
 }
 
-QProgressBar#StatusCellProgressBar::chunk:horizontal {
+#StatusCellProgressBar::chunk:horizontal {
 	background: #99aa99;
 	text-align:	center;
 }
 
-QTableWidget#StatusTable > QHeaderView {
+#StatusTable > QHeaderView {
 	background:		#555555;
 	color:			#bbbbbb;
 }
 
-QTableWidget#StatusTable {
-	font: 			10pt Tahoma;
+#StatusTable {
+	font: 			10pt verdana;
 	background:		#999999;
 	color:			#ffffff;
+	selection-background-color:		gray;
+}
+
+#EditValid {
+	background:		#99ff99;
+}
+
+#EditInvalid {
+	background:		#ff9999;
 }
