@@ -44,7 +44,10 @@ class ConsoleApplication:
 		if os.path.exists(path) is False:
 			return {}
 		fd = open(path, 'r')
-		cfg = eval(fd.read())
+		try:
+			cfg = eval(fd.read())
+		except:
+			cfg = {}
 		fd.close()
 		return cfg
 		
@@ -667,14 +670,19 @@ class ConsoleApplication:
 
 	'''
 	'''		
-	def dofilters(self, filters, fpath):
+	def dofilters(self, filters, fpath, allownonexistant = False):
 		try:
 			mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
 		except:
 			# just say the filter failed since we can not access it
 			# to event do a stat more than likely, or something has
 			# gone wrong
-			return False
+			if allownonexistant is False:
+				return False
+			# just set the mode to zero.. until i figure
+			# out something better
+			mode = 0
+			size = 0
 		
 		for f in filters:
 			notmatch = False
@@ -688,6 +696,7 @@ class ConsoleApplication:
 				base = fpath[0:fpath.rfind('/') + 1]
 				_fpath = fpath[len(base):]
 				result = re.match(farg, _fpath)
+				print('repattern', result)
 				if result is not None:
 					result = True
 				else:
