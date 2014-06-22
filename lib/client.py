@@ -353,11 +353,65 @@ class Client:
 				# replace it with a dot
 				part = part.replace('b\x00', b'.')
 			# 3. encode it (any stash value can be used)
-			part = base64.b64encode(part)
+			part = self.FSEncodeBytes(part)
 			_parts.append(part)
 		path = b'/'.join(_parts)
 		return path
-	
+		
+	def FSEncodeBytes(self, s):
+		out = []
+		
+		valids = (
+			(ord('a'), ord('z')),
+			(ord('A'), ord('Z')),
+			(ord('0'), ord('9')),
+		)
+		
+		dotord = ord('.')
+		dashord = ord('-')
+		uscoreord = ord('_')
+		
+		for c in s:
+			was = False
+			for valid in valids:
+				if c >= valid[0] and c <= valid[1]:
+					was = True
+					break
+			if was or c == dotord or c == dashord or c == uscoreord:
+				out.append(c)
+				continue
+			# encode byte value as %XXX where XXX is decimal value since
+			# i think it is faster to decode the decimal value than a hex
+			# value even though the hex will look nicer
+			out.append(ord('%'))
+			v = int(c / 100)
+			out.append(ord('0') + v)
+			c = c - (v * 100)
+			v = int(c / 10)
+			out.append(ord('0') + v)
+			c = c - (v * 10)
+			out.append(ord('0') + c)
+		
+		return bytes(out)
+							
+	def FSDecodeBytes(self, s):
+		out = []
+		
+		x = 0
+		po = ord('%')
+		while x < len(s):
+			c = s[x]
+			if c != po:
+				out.append(c)
+				x = x + 1
+				continue
+			zo = ord('0')
+			v = (s[x + 1] - zo) * 100 + (s[x + 2] - zo) * 10 + (s[x + 3] - zo) 
+			out.append(v)
+			x = x + 4
+		
+		return bytes(out)
+		
 	def DirList(self, dir, block = True, discard = False):
 		dir = self.GetServerPathForm(dir)
 		return self.WriteMessage(struct.pack('>B', ClientType.DirList) + dir, block, discard)
