@@ -374,7 +374,10 @@ def Prune():
 	global working
 	global mode
 
-	while len(__working) > 100:
+	max = 200
+	
+	while len(__working) > max:
+		oldlen = len(__working)
 		x = len(__working) - 1
 		while x > -1:
 			_name = __working[x]
@@ -386,6 +389,14 @@ def Prune():
 				if mode == Mode.StandardConsole:
 					print('[rem]:%s' % _name)
 				break
+				
+		if oldlen == len(__working) and len(__working) > max:
+			# just let it grow.. if someone has a leak and is adding
+			# and never removing then let them find out when the process
+			# runs out of memory..
+			# TODO: maybe add some sort of flag to periodically report through
+			#       stderr a warning that something might be wrong..
+			break
 	
 def RemWorkingItem(name):
 	global working

@@ -9,6 +9,7 @@ import pprint
 import bz2
 from io import BytesIO
 import ssl
+import base64
 
 from lib import output
 from lib.pkttypes import *
@@ -171,7 +172,10 @@ class ServerClient:
 			# keep 40 previous times (essentially 40 previous network packets)
 			self.times_buffer.pop(0)
 		self.times_buffer.append(bdt)
-		
+	
+	'''
+		This ensures the path does not reference outside the root directory.
+	'''
 	def SanitizePath(self, path):
 		while path.find(b'..') > -1:
 			path = path.replace(b'..', b'.')
@@ -267,27 +271,16 @@ class ServerClient:
 				# add directories in a special way so that they
 				# can be interpreted as a directory and not a file
 				if os.path.isdir('%s/%s' % (cpath, node)):
-					objs.append((bytes(node, 'utf8'), 0xffffffff))
+					objs.append((bytes(node, 'utf8'), 1))
 					continue
 				# break node into appropriate parts
-				frev = int(node[0:node.find('.')])
-				fname = bytes(node[node.find('.') + 1:], 'utf8')
-				# there should be only one type of each fname
-				if (fname, frev) not in objs:
-					# store so we can detect duplicates
-					objs.append((fname, frev))
-					#print('	added fname:%s frev:%s' % (fname, frev))
-				else:
-					# since were in development stage get our attention!
-					raise DoubleTypeOrRevException()
-					# remove it before it causes more problems
-					os.remove('%s/%s' % (cpath, node))
+				objs.append((bytes(node, 'utf8'), 0))
+				
 			# serialize output into list of entries
 			#print('	serializing')
 			out = []
 			for key in objs:
-				print('key[0]:[%s]' % key[0])
-				out.append(struct.pack('>HI', len(key[0]), key[1]) + key[0])
+				out.append(struct.pack('>HB', len(key[0]), key[1]) + key[0])
 			out = b''.join(out)
 			#print('	writing message')
 			self.WriteMessage(struct.pack('>B', ServerType.DirList) + out, vector)	
@@ -299,7 +292,7 @@ class ServerClient:
 		if type == ClientType.FileTrun:
 			return self.FileTrun(msg, vector)
 		if type == ClientType.FileRead:
-			rev, offset, length = struct.unpack_from('>HQQ', msg)
+			offset, length = struct.unpack_from('>QQ', msg)
 			fname = self.SanitizePath(msg[2 + 8 + 8:]).decode('utf8', 'ignore')
 			
 			# maximum read length default is 1MB (anything bigger must be split into separate requests)
@@ -313,7 +306,7 @@ class ServerClient:
 			fbase, fname = self.GetPathParts(fname)
 			
 			# build full path to file (including revision)
-			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)
 			if os.path.exists(fpath) is False:
 				# oops.. no such file (lets tell them it failed)
 				self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 0), vector)
@@ -356,12 +349,11 @@ class ServerClient:
 			return
 			
 		if type == ClientType.FileDel:
-			rev = struct.unpack_from('>H', msg)[0]
-			fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
+			fname = self.SanitizePath(msg).decode('utf8', 'ignore')
 			
 			fbase, fname = self.GetPathParts(fname)
 			
-			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+			fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)
 			if os.path.exists(fpath) is False:
 				self.WriteMessage(struct.pack('>BB', ServerType.FileDel, 0), vector)
 				return
@@ -386,11 +378,11 @@ class ServerClient:
 			self.WriteMessage(struct.pack('>BB', ServerType.FileDel, 1), vector)
 			return
 		if type == ClientType.FileHash:
-			rev, offset, length = struct.unpack_from('>HQQ', msg)
-			fname = self.SanitizePath(msg[2 + 8 * 2:]).decode('utf8', 'ignore')
+			offset, length = struct.unpack_from('>QQ', msg)
+			fname = self.SanitizePath(msg[8 * 2:]).decode('utf8', 'ignore')
 			
 			fbase, fname = self.GetPathParts(fname)
-			fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)			
+			fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)			
 			
 			if os.path.exists(fpath) is False:
 				self.WriteMessage(struct.pack('>BB', ServerType.FileHash, 0), vector)
@@ -417,12 +409,11 @@ class ServerClient:
 		raise Exception('unknown message type:%s' % type)
 
 	def FileSize(self, msg, vector):
-		rev = struct.unpack_from('>H', msg)[0]
-		fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
+		fname = self.SanitizePath(msg).decode('utf8', 'ignore')
 		
 		fbase, fname = self.GetPathParts(fname)
 		
-		fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+		fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)
 		
 		if os.path.exists(fpath) is False:
 			self.WriteMessage(struct.pack('>BBQ', ServerType.FileSize, 0, 0), vector)
@@ -437,12 +428,11 @@ class ServerClient:
 		return
 		
 	def FileTime(self, msg, vector):
-		rev = struct.unpack_from('>H', msg)[0]
-		fname = self.SanitizePath(msg[2:]).decode('utf8', 'ignore')
+		fname = self.SanitizePath(msg).decode('utf8', 'ignore')
 		
 		fbase, fname = self.GetPathParts(fname)	
 		
-		fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+		fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)
 		if os.path.exists(fpath) is False:
 			self.WriteMessage(struct.pack('>BQ', ServerType.FileTime, 0), vector)
 			return
@@ -458,13 +448,13 @@ class ServerClient:
 
 		
 	def FileTrun(self, msg, vector):
-		rev, newsize = struct.unpack_from('>HQ', msg)
-		fname = self.SanitizePath(msg[2 + 8:]).decode('utf8', 'ignore')
+		newsize = struct.unpack_from('>Q', msg)[0]
+		fname = self.SanitizePath(msg[8:]).decode('utf8', 'ignore')
 		
 		fbase, fname = self.GetPathParts(fname)
 		
 		# this will either create the file OR change the size of it
-		fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+		fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)
 		#fd = self.GetFileDescriptor(fpath, 'wb')
 		#fd.truncate(newsize)
 		#fd.close()
@@ -516,9 +506,9 @@ class ServerClient:
 		return
 
 	def FileWrite(self, msg, vector):
-		rev, offset, fnamesz, compression = struct.unpack_from('>HQHB', msg)
-		fname = self.SanitizePath(msg[2 + 8 + 2 + 1:2 + 8 + 2 + 1 + fnamesz]).decode('utf8', 'ignore')
-		data = msg[2 + 8 + 2 + 1 + fnamesz:]
+		offset, fnamesz, compression = struct.unpack_from('>QHB', msg)
+		fname = self.SanitizePath(msg[8 + 2 + 1:8 + 2 + 1 + fnamesz]).decode('utf8', 'ignore')
+		data = msg[8 + 2 + 1 + fnamesz:]
 		
 		# only decompression if it was compressed
 		if compression > 0:
@@ -530,7 +520,7 @@ class ServerClient:
 			return
 		
 		fbase, fname = self.GetPathParts(fname)
-		fpath = '%s/%s/%s.%s' % (self.info['disk-path'], fbase, rev, fname)
+		fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)
 		
 		if os.path.exists(fpath) is False:
 			self.WriteMessage(struct.pack('>BB', ServerType.FileWrite, 0), vector)
@@ -762,7 +752,7 @@ class Server:
 						try:
 							sc.HandleData(data)
 						except Exception as e:
-							#raise e
+							raise e
 							# to keep from killing the server and
 							# any other clients just kill the client
 							# and keep going

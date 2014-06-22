@@ -526,6 +526,61 @@ class Backup:
 				count = count + 1
 		return count, dcount
 		
+	'''
+		This will find files that exist on the remote but not local and either stash
+		them on the remote or delete them from local.
+	'''
+	def stashRemoteDir(self, client, rpath):
+		pass
+	
+	def dodel(self, account, target, client = None, lpath = None, rpath = None):
+		if c is None:
+			cfg = LoadConfig(account = account)
+			tcfg = cfg['paths'][target]
+			rhost = cfg['remote-host']
+			rport = cfg['remote-port']
+			sac = bytes(cfg['storage-auth-code'], 'utf8')
+			c = client.client2(rhost, rport, sac)
+			c.Connect(essl = cfg['ssl'])
+			# produce remote and local paths
+			lpath = tcfg['disk-path']
+			rpath = '%s/' % target
+		# enumerate remote files and directories
+		nodes = c.DirList(rpath)
+		brpath = rpath[rpath.find('/') + 1:]
+		for node in nodes:
+			# does this exist local?
+			if not os.path.exist('%s/%s' % (lpath, brpath)):
+				# is this a directory or file
+				if node[1] == 0xffffffff:
+					# we need to stash all files in this directory (like a delete)
+					self.stashRemoteDir(c, '%s/%s' % (rpath, node[0]))
+				else:
+					# just stash this file
+					pass
+				continue
+			ldir = os.path.isdir('%s/%s' % (lpath, brpath))
+			rdir = node[1] == 0xffffffff
+			
+			# it exists and it is a directory locally and remotely
+			if ldir and rdir:
+				#'%s/%s' % (lpath, node[0])
+				#'%s/%s' % (
+				self.dodel(account, target, c, lpath, rpath)
+			# it is a directory locally and a file remotely
+			if ldir and not rdir:
+				# stash the remote file 
+				# (a push operation should update it) ...
+				pass
+			# it is a file locally and a directory remotely
+			if not ldir and rdir:
+				# stash all files in directory remotely (like a delete)
+				self.stashRemoteDir(c, '%s/%s' % (rpath, node[0]))
+				# (a push operation should update it) ...
+		return
+	'''
+		This will push any local files to the remote, or update existing to match local.
+	'''
 	def dopush(self, name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = None, dry = True, lastdonereport = 0, _donecount = 0):
 		if c is None:
 			# only connect if not dry run
@@ -574,7 +629,7 @@ class Backup:
 				base = fpath[0:fpath.rfind('/') + 1]
 				_fpath = fpath[len(base):]
 				#print('PROCESSING [%s]' % _fpath)
-				fid = (bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8'), 0)
+				fid = bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8')
 				if dry is False:
 					c.FilePush(fid, fpath)
 				if dry is True:

@@ -8,6 +8,8 @@ import threading
 import bz2
 import ssl
 import traceback
+import base64
+
 from io import BytesIO
 
 from lib import output
@@ -181,13 +183,13 @@ class Client:
 			list = []
 			while len(data) > 0:
 				# parse header
-				fnamesz, frev = struct.unpack_from('>HI', data)
+				fnamesz, ftype = struct.unpack_from('>HB', data)
 				# grab out name
-				fname = data[2 + 4: 2 + 4 + fnamesz]
+				fname = data[3: 3 + fnamesz]
 				# chop off part we just read
-				data = data[2 + 4 + fnamesz:]
+				data = data[3 + fnamesz:]
 				# build list
-				list.append((fname, frev))
+				list.append((fname, ftype))
 			# return list
 			return list
 		if type == ServerType.FileTime:
@@ -317,38 +319,87 @@ class Client:
 				raise RuntimeError("socket connection broken")
 			totalsent = totalsent + sent
 	
+	'''
+		The client can use any format of a path, but in order to support
+		file stashing and any characters in the path we convert it into
+		a stashing format and encode the parts. Therefore it makes it possible
+		to use any character for a directory name or file name. This function
+		however reserves the character `/` and `\x00` as special and neither
+		are usable as an or part of a file or directory name.
+		
+		You can freely reimplement this method as long as the server supports
+		the characters you use. The output of the base 64 encoded shall always
+		be supported by the server for directory and file names.
+	'''
+	def GetLocalPathForm(self, path):
+		pass
+	
+	def GetServerPathForm(self, path):
+		# 1. prevent security hole (helps reduce server CPU load if these exist)
+		while path.find(b'..') > -1:
+			path = path.replace(b'..', b'.')
+		# remove duplicate path separators
+		while path.find(b'//') > -1:
+			path = path.replace(b'//', b'/')
+		# 2. convert entries into stash format
+		parts = path.split(b'/')
+		_parts = []
+		for part in parts:	
+			# see if it is already in stash format
+			if part.find(b'\x00') < 0:
+				# convert into stash format
+				part = b'0.' + part
+			else:
+				# replace it with a dot
+				part = part.replace('b\x00', b'.')
+			# 3. encode it (any stash value can be used)
+			part = base64.b64encode(part)
+			_parts.append(part)
+		path = b'/'.join(_parts)
+		return path
+	
 	def DirList(self, dir, block = True, discard = False):
+		dir = self.GetServerPathForm(dir)
 		return self.WriteMessage(struct.pack('>B', ClientType.DirList) + dir, block, discard)
 	def FileRead(self, fid, offset, length, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BHQQ', ClientType.FileRead, fid[1], offset, length) + fid[0], block, discard)
+		dir = self.GetServerPathForm(fid)
+		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + fid, block, discard)
 	def FileWrite(self, fid, offset, data, block = True, discard = False):
-		#print('compresslevel:%s' % self.bz2compression)
+		# compress the data if it is enabled
 		if self.bz2compression > 0:
 			data = bz2.compress(data, compresslevel=self.bz2compression)
-		#bz = bz2.BZ2Compressor(compresslevel=self.bz2compression)
-		#out = []
-		#out.append(bz.compress(data))
-		#out.append(bz.flush())
-		#data = b''.join(out)
-		return self.WriteMessage(struct.pack('>BHQHB', ClientType.FileWrite, fid[1], offset, len(fid[0]), self.bz2compression) + fid[0] + data, block, discard)
+		fid = self.GetServerPathForm(fid)
+		return self.WriteMessage(struct.pack('>BQHB', ClientType.FileWrite, offset, len(fid), self.bz2compression) + fid + data, block, discard)
 	def FileSize(self, fid, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BH', ClientType.FileSize, fid[1]) + fid[0], block, discard)
+		fid = self.GetServerPathForm(fid)
+		return self.WriteMessage(struct.pack('>B', ClientType.FileSize) + fid, block, discard)
 	def FileTrun(self, fid, newsize, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BHQ', ClientType.FileTrun, fid[1], newsize) + fid[0], block, discard)
+		fid = self.GetServerPathForm(fid)
+		return self.WriteMessage(struct.pack('>BQ', ClientType.FileTrun, newsize) + fid, block, discard)
 	def FileDel(self, fid, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BH', ClientType.FileDel, fid[1]) + fid[0], block, discard)
+		fid = self.GetServerPathForm(fid)
+		return self.WriteMessage(struct.pack('>B', ClientType.FileDel) + fid, block, discard)
 	def FileCopy(self, srcfid, dstfid, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BHHH', ClientType.FileCopy, srcfid[1], dstfid[1], len(srcfid[0])) + srcfid[0] + dstfid[0], block, discard)
 	def FileMove(self, fid, newfile, block = True, discard = False):
 		return self.WriteMessage(struct.pack('>BHHH', ClientType.FileMove, srcfid[1], dstfid[1], len(srcfid[0])) + srcfid[0] + dstfid[0], block, discard)
 	def FileHash(self, fid, offset, length, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BHQQ', ClientType.FileHash, fid[1], offset, length) + fid[0], block, discard)
+		fid = self.GetServerPathForm(fid)
+		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileHash, offset, length) + fid, block, discard)
 	def FileStash(self, fid, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BH', ClientType.FileStash, fid[1]) + fid[0])
+		fid = self.GetServerPathForm(fid)
+		return self.WriteMessage(struct.pack('>B', ClientType.FileStash) + fid[0])
 	def FileGetStashes(self, fid, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BH', ClientType.FileGetStashes, fid[1]) + fid[0])
+		# this was going to be implemented server side, and i might still do it but
+		# at the moment i am thinking about implementing it client side and having
+		# the client do all the heavy CPU work of decoding and breaking off the stash
+		# as this also removes the server and makes it easier for the client to 
+		# implement it's own stashing format
+		raise Exception('Not Implemented')
+		#return self.WriteMessage(struct.pack('>BH', ClientType.FileGetStashes, fid[1]) + fid[0])
 	def FileTime(self, fid, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BH', ClientType.FileTime, fid[1]) + fid[0], block, discard)
+		fid = self.GetServerPathForm(fid)
+		return self.WriteMessage(struct.pack('>B', ClientType.FileTime) + fid, block, discard)
 
 class Client2(Client):
 	def __init__(self, rhost, rport, aid):
@@ -474,6 +525,8 @@ class Client2(Client):
 			# oops.. we got a problem.. lets shut everything down
 			raise Exception('Worker Thread Crashed')
 			
+		print('FilePush: %s' % lfile)
+			
 		# keep title updated
 		if time.time() - self.lasttitleupdated > 2:
 			self.lasttitleupdated = time.time()
@@ -500,7 +553,7 @@ class Client2(Client):
 		if self.workerpool is None:
 			# fill worker pool with workers
 			self.workerpool = []
-			for x in range(0, 64):
+			for x in range(0, 128):
 				thread = threading.Thread(target = Client2.WorkerPoolEntry, args = (self, x))
 				thread.daemon = True
 				thread.start()
@@ -520,6 +573,7 @@ class Client2(Client):
 			# and services the job queue
 			while len(self.workpool) > 128:
 				time.sleep(0.1)
+				print('workpool > 128')
 		# this should release a thread only if
 		# one was waiting, so if none were waiting
 		# then hopefully the worker's time out on
@@ -533,6 +587,7 @@ class Client2(Client):
 		print('[master] waiting on workers to complete')
 		self.workersdie = True
 		while len(self.workpool) > 0:
+			print('workpool > 0')
 			time.sleep(0.1)
 			self.__UpdateTitle()
 			output.Update()
@@ -544,9 +599,9 @@ class Client2(Client):
 			# wait on lock
 			self.workhere.acquire()
 			#
-			print('[worker:%x] waiting' % myid)
+			#print('[worker:%x] waiting' % myid)
 			self.workhere.wait(1)
-			print('[worker:%x] looking' % myid)
+			#print('[worker:%x] looking' % myid)
 			# there could have been more than one
 			# thread release when the lock was signalled
 			# or when the time out occurs.. the docs
@@ -555,14 +610,14 @@ class Client2(Client):
 			# one to release on notify occasionally
 			with self.workpoolguard:
 				if len(self.workpool) < 1:
-					print('[worker:%x] no work' % myid)
+					#print('[worker:%x] no work' % myid)
 					self.workhere.release()
 					continue
-				print('[worker:%x] getting work' % myid)
+				#print('[worker:%x] getting work' % myid)
 				workitem = self.workpool.pop(0)
 			self.workhere.release()
 			# work on the job
-			print('[worker:%x] working' % myid)
+			#print('[worker:%x] working' % myid)
 			self.WorkerThreadEntry(workitem[0], workitem[1], workitem[2])
 		
 	def __UpdateTitle(self):
