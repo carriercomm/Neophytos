@@ -46,6 +46,9 @@ class Client:
 		self.dbgv = 0
 		self.dbgc = 0
 	
+	def Shutdown(self):
+		self.sock.close()
+	
 	def Connect(self, essl = False):
 		# try to establish a connection
 		if essl:

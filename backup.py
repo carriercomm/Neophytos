@@ -1,4 +1,3 @@
-import client
 import os
 import os.path
 import sys
@@ -9,6 +8,7 @@ import time
 
 from lib import misc
 from lib import output
+from lib.Backup import Backup
 
 # only execute this if we are the primary
 # script file being executed by Python
@@ -17,5 +17,5 @@ if __name__ == '__main__':
 	misc.setProcessPriorityIdle()
 	# setup standard outputs (run TCP server)
 	output.Configure(tcpserver = True)
-	ca = ConsoleApplication()
+	ca = Backup()
 	ca.main(sys.argv[1:])

@@ -2,10 +2,13 @@
 	This implements an editor that can edit the accounts and targets under the current user.
 '''
 import os
+import types
+import pprint
+
 from PyQt4 import QtGui
 from PyQt4 import QtCore
 
-import types
+import lib.Backup as backup
 
 from lib.gui.misc import *
 from lib.Backup import Backup
@@ -13,8 +16,10 @@ from lib.gui.QLabelWith import QLabelWith
 from lib.gui.QCompactLayout import QCompactLayout
 
 class QTargetEditor(QtGui.QDialog):
-	def __init__(self, account = None, target = None):
+	def __init__(self, account = None, target = None, closeCallback = (None, None)):
 		super().__init__()
+		
+		self.closeCallback = closeCallback
 		
 		self.resize(10, 10)
 		icon = QtGui.QIcon('./media/edit.ico')
@@ -228,8 +233,7 @@ class QTargetEditor(QtGui.QDialog):
 		listFilter.resize(575, 500)
 		
 		# populate account combo box with accounts
-		self.bku = Backup()
-		configs = self.bku.GetConfigs()
+		configs = backup.GetConfigs()
 		
 		for config in configs:
 			editAccount.widget().insertItem(0, config)
@@ -237,9 +241,8 @@ class QTargetEditor(QtGui.QDialog):
 		def actionAccountTextChanged(self, text):
 			print('account', self, text)
 			# is this a valid account
-			bku = self.bku
 			
-			configs = bku.GetConfigs()
+			configs = backup.GetConfigs()
 			existing = False
 			if text in configs:
 				if text.lower() == text:
@@ -254,7 +257,7 @@ class QTargetEditor(QtGui.QDialog):
 			while self.editTarget.widget().count() > 0:
 				self.editTarget.widget().removeItem(0)
 			
-			cfg = bku.LoadConfig(account = text)
+			cfg = backup.LoadConfig(account = text)
 				
 			paths = cfg['paths']
 						
@@ -278,10 +281,9 @@ class QTargetEditor(QtGui.QDialog):
 		def actionButtonSave(self):
 			account = self.editAccount.widget().currentText()
 			
-			bku = self.bku
-			cpath = bku.GetConfigPath(account = account)
+			cpath = backup.GetConfigPath(account = account)
 				
-			cfg = bku.LoadConfig(account = account)
+			cfg = backup.LoadConfig(account = account)
 			
 			if 'paths' not in cfg:
 				cfg['paths'] = {}
@@ -307,12 +309,40 @@ class QTargetEditor(QtGui.QDialog):
 			
 			# create the filter list
 			filter = []
+			
+			# pull data from QTableWidget
+			for row in range(0, self.listFilter.rowCount()):
+				f_inverse = self.listFilter.cellWidget(row, 0).currentText()
+				f_type = self.listFilter.cellWidget(row, 1).currentText()
+				f_exp = self.listFilter.item(row, 2).text()
+				
+				# convert to numerical value
+				if f_type in ('sizegreater', 'sizelesser', 'mode'):
+					try:
+						# try to convert (it may fail)
+						f_exp = int(f_exp)
+					except:
+						QtGui.QMessageBox.critical(self, 'Not Integer', 'The expression [%s] is not a valid integer.' % f_exp).exec()
+						return
+				
+				fitem = (f_inverse == 'True', f_type, f_exp)
+				filter.append(fitem)
+				
 			path['filter'] = filter
+				
+			# baby.. no high level functioning
+			# 
 			
 			# open the file and write the output
 			fd = open(cpath, 'w')
 			pprint.pprint(cfg, fd)
 			fd.close()
+			
+			self.hide()
+			# call the callback to let system that spawned us
+			# know we are finished and it can do whatever
+			# it needs to do
+			self.closeCallback[0](*self.closeCallback[1])
 			return
 			
 		btnSave.clicked.connect(lambda : actionButtonSave(self))
@@ -321,13 +351,11 @@ class QTargetEditor(QtGui.QDialog):
 		def actionTargetTextChanged(self, text):
 			print('target', self, text)
 			
-			bku = self.bku
-			
 			account = self.editAccount.widget().currentText()
 			
 			exists = False
 			
-			cfg = bku.LoadConfig(account = account)
+			cfg = backup.LoadConfig(account = account)
 			
 			if self.editTarget.widget().currentText() in cfg['paths']:
 				exists = True
@@ -413,11 +441,8 @@ class QTargetEditor(QtGui.QDialog):
 				print('saved-old', item.text())
 				self.listFilter.old = item.text()
 		
-		
 		def actionFilterTestTextChanged(self, text = None):
 			# run the filter on this..
-			bku = self.bku
-			
 			if self.listFilter.init:
 				return
 			
@@ -444,7 +469,7 @@ class QTargetEditor(QtGui.QDialog):
 				filter.append(fentry)
 				
 			
-			if bku.dofilters(filter, text, allownonexistant = True):
+			if backup.DoFilter(filter, text, allownonexistant = True):
 				# it matched
 				ChangeStyle(self.editFilterTest.widget(), 'EditValid')
 			else:
@@ -468,10 +493,7 @@ class QTargetEditor(QtGui.QDialog):
 		self.listFilter = listFilter
 		self.editAuth = editAuth
 		self.editFilterTest = editFilterTest
-		
-		#self.setObjectName('Apple')
-		#editAccount.setObjectName('Apple')
-		#editAccount.widget().setObjectName('Apple')
+		self.listFilter.init = False				# keeps code from trying to update when True
 		
 		fd = open('./media/client.css', 'r')
 		cssdata = fd.read()
@@ -481,9 +503,6 @@ class QTargetEditor(QtGui.QDialog):
 		actionAccountTextChanged(self, editAccount.widget().currentText())
 		
 		self.style().polish(editAccount.widget())
-		
-		#style()->unpolish(theWidget);
-		#style()->polish(theWidget);
 		
 	def resize(self, w, h):
 		super().resize(w, h)

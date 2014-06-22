@@ -4,7 +4,6 @@
 import os
 import os.path
 import sys
-import backup
 from PyQt4 import QtGui
 from PyQt4 import QtCore
 import io
@@ -28,14 +27,9 @@ from lib.gui.misc import CloneComboBox
 from lib.gui.misc import ChangeStyle
 from lib.ClientInterface import ClientInterface
 from lib.Backup import Backup
-							
-def DumpObjectTree(obj, space = ''):
-	print('%s%s [%s]' % (space, obj, obj.objectName()))
-	for child in obj.children():
-		if isinstance(obj, QtGui.QWidget):
-			DumpObjectTree(child, space = '%s ' % space)
-					
-class QAccountsAndTargetSystem(QtGui.QFrame):
+from lib.gui.QRemoteTargetsView import QRemoteTargetsView			
+			
+class QTargetAndStatusView(QtGui.QFrame):
 	def __init__(self, parent):
 		QtGui.QFrame.__init__(self, parent)
 		self.Create()
@@ -67,8 +61,35 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 			# should be a string type
 			item.setText(items[x])
 	
-	def Create(self):
+	def refresh(self):
 		accounts = ClientInterface.GetAccounts()
+	
+		# clear the QTableWidget
+		while self.table.rowCount() > 0:
+			self.table.removeRow(0)
+		
+		# populate the QTableWidget
+		for account in accounts:
+			targets = ClientInterface.GetTargets(account)
+			for target in targets:
+				cfg = targets[target]
+				acctarname = '%s.%s' % (account, target)
+				
+				scfg = ClientInterface.GetServiceConfig(account)
+				if scfg is not None and target in scfg:
+					nrt = '8hrs 5min'
+				else:
+					nrt = 'Manual Only'
+				
+				self.table.insertRow(0)
+				self.SetTableRow(self.table, 0, (
+					cfg['enabled'],
+					account, target,
+					cfg['disk-path'],
+					nrt
+				))
+	
+	def Create(self):
 		
 		self.panels = {}
 	
@@ -85,26 +106,8 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 		# enabled, account, target, path, bytesout, bytesin, status, progress
 		table.setColumnCount(5)
 		table.setHorizontalHeaderLabels(['Enabled', 'Account', 'Target', 'Path', 'Next Run'])
-		
-		for account in accounts:
-			targets = ClientInterface.GetTargets(account)
-			for target in targets:
-				cfg = targets[target]
-				acctarname = '%s.%s' % (account, target)
 				
-				scfg = ClientInterface.GetServiceConfig(account)
-				if scfg is not None and target in scfg:
-					nrt = '8hrs 5min'
-				else:
-					nrt = 'Manual Only'
-				
-				table.insertRow(0)
-				self.SetTableRow(table, 0, (
-					cfg['enabled'],
-					account, target,
-					cfg['disk-path'],
-					nrt
-				))
+		self.refresh()
 		
 		stable = QtGui.QTableWidget(self)
 		self.stable = stable
@@ -123,6 +126,7 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 		# place to check for and attach dialog window for
 		# editing the accounts and targets
 		table.tedit = None			
+		table.rtv = None
 		
 		def menuPush(self):
 			# push the target on specified account
@@ -139,11 +143,23 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 			menuAddNew(self)
 			
 		def menuAddNew(self):
-			# dont create multiple instances.. use the same one
+			# do not create multiple instances.. use the same one
 			if self.tedit is None:
-				self.tedit = QTargetEditor()
-			# make sure it is displayed
+				# set up a callback so when close we can refresh
+				# our view of the accounts and targets
+				closeCallback = (QTargetAndStatusView.refresh, (self.parent().parent(),))
+				self.tedit = QTargetEditor(closeCallback = closeCallback)
+			# make sure it is displayed (it hides it's self on save or cancel)
 			self.tedit.show()
+			
+		def menuViewRemoteTargets(self):
+			if self.rtv is None:
+				print('created')
+				self.rtv = QRemoteTargetsView()
+			# get the account, populate widget, then show widget
+			account = self.item(self.__row, 1).text()
+			print('populating')
+			self.rtv.Populate(account, caller = self.parent().parent())
 			
 		def menuDelete(self):
 			pass
@@ -156,6 +172,7 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 				self.menu.addAction(HandlerAction(QtGui.QIcon(), 'Push (Backup)', self.menu, menuPush, (self,)))
 				self.menu.addAction(HandlerAction(QtGui.QIcon(), 'Add New Target', self.menu, menuAddNew, (self,)))
 				self.menu.addAction(HandlerAction(QtGui.QIcon(), 'Delete', self.menu, menuDelete, (self,)))
+				self.menu.addAction(HandlerAction(QtGui.QIcon(), 'View Remote Targets For Account', self.menu, menuViewRemoteTargets, (self,)))
 				
 				self.menu2 = QtGui.QMenu(self)
 				self.menu2.addAction(HandlerAction(QtGui.QIcon(), 'Add New Target', self.menu, menuAddNew, (self,)))
@@ -182,10 +199,10 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 		
 		scantimer = QtCore.QTimer(self)
 		self.scantimer = scantimer
-		scantimer.timeout.connect(lambda : QAccountsAndTargetSystem.PeriodicScanUpdate(self))
+		scantimer.timeout.connect(lambda : QTargetAndStatusView.PeriodicScanUpdate(self))
 		scantimer.start(5000)
 		
-		scanthread = threading.Thread(target = QAccountsAndTargetSystem.PeriodicScanThreadEntry, args = (self,))
+		scanthread = threading.Thread(target = QTargetAndStatusView.PeriodicScanThreadEntry, args = (self,))
 		scanthread.daemon = True
 		self.scanthread = scanthread
 		scanthread.start()
@@ -300,7 +317,7 @@ class QAccountsAndTargetSystem(QtGui.QFrame):
 				
 class QStatusWindow(QtGui.QMainWindow):
 	def resizeEvent(self, event):
-		self.fAccountsAndTargets.resize(self.width(), self.height())
+		self.fTargetAndStatusView.resize(self.width(), self.height())
 
 	def resize(self, w, h):
 		super().resize(w, h)
@@ -316,12 +333,12 @@ class QStatusWindow(QtGui.QMainWindow):
 		icon = QtGui.QIcon('./media/book.ico')
 		self.setWindowIcon(icon)
 	
-		self.fAccountsAndTargets = QAccountsAndTargetSystem(self)
-		self.fAccountsAndTargets.resize(self.width(), self.height())
+		self.fTargetAndStatusView = QTargetAndStatusView(self)
+		self.fTargetAndStatusView.resize(self.width(), self.height())
 
 		self.resize(700, 340)
 		self.move(400, 20)
-		self.setWindowTitle('Neophytos Backup Status')
+		self.setWindowTitle('Neophytos Backup UI')
 		self.show()
 		
 def main():

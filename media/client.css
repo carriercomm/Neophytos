@@ -9,12 +9,12 @@
 	text-align:	center;
 }
 
-#StatusTable > QHeaderView, #FilterTable > QHeaderView {
+#StatusTable > QHeaderView, #FilterTable > QHeaderView, #RemoteTargetTable > QHeaderView {
 	background:		#555555;
 	color:			#bbbbbb;
 }
 
-#StatusTable, QLineEdit, #FilterTable {
+#StatusTable, QLineEdit, #FilterTable, #RemoteTargetTable {
 	font: 			10pt verdana;
 	background:		#999999;
 	color:			#ffffff;

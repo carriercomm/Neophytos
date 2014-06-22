@@ -5,6 +5,12 @@
 from PyQt4 import QtGui
 from PyQt4 import QtCore
 
+def DumpObjectTree(obj, space = ''):
+	print('%s%s [%s]' % (space, obj, obj.objectName()))
+	for child in obj.children():
+		if isinstance(obj, QtGui.QWidget):
+			DumpObjectTree(child, space = '%s ' % space)
+
 def CloneComboBox(w):
 	n = QtGui.QComboBox()
 	for i in range(0, w.count()):

@@ -6,62 +6,137 @@
 import os
 import sys
 import os.path
+import re
+import lib.client as client
+import lib.output as output
+import threading
+import time
 
+def GetConfigPath(account):
+	# build base path (without file)
+	base = GetConfigBase()
+	# add on file
+	path = '%s/%s.py' % (base, account)
+	return path
+
+def GetConfigBase():
+	base = '%s/.neophytos/accounts' % os.path.expanduser('~')
+	if os.path.exists(base) is False:
+		os.makedirs(base)
+	return base
+	
+def DeleteConfig(cfgname):
+	base = GetConfigBase()
+	os.delete('%s/%s.py' % (base, cfgname))
+	
+def GetConfigs():
+	base = GetConfigBase()
+	nodes = os.listdir(base)
+	_nodes = []
+	for node in nodes:
+		node = node[0:node.rfind('.')]
+		_nodes.append(node)
+	return _nodes
+	
+def __LoadConfig(account):
+	path = GetConfigPath(account = account)
+	if os.path.exists(path) is False:
+		return {}
+	fd = open(path, 'r')
+	try:
+		cfg = eval(fd.read())
+	except:
+		cfg = {}
+	fd.close()
+	return cfg
+	
+def LoadConfig(account):
+	cfg = __LoadConfig(account = account)
+	if 'remote-host' not in cfg:
+		cfg['remote-host'] = 'kmcg3413.net'
+	if 'remote-port' not in cfg:
+		cfg['remote-port'] = 4322
+	if 'storage-auth-code' not in cfg:
+		cfg['storage-auth-code'] = None
+	if 'paths' not in cfg:
+		cfg['paths'] = {}
+	if 'ssl' not in cfg:
+		cfg['ssl'] = True
+	return cfg
+
+def GetClientForAccount(account):
+	# load account information
+	cfg = LoadConfig(account = account)
+	print('remote-host:%s remote-port:%s auth:%s' % (cfg['remote-host'], cfg['remote-port'], cfg['storage-auth-code']))
+	c = client.Client2(cfg['remote-host'], cfg['remote-port'], bytes(cfg['storage-auth-code'], 'utf8'))
+	c.Connect(essl = cfg['ssl'])
+	return c
+	
+def SaveConfig(self, account, cfg):
+	path = self.GetConfigPath(account)
+	fd = open(path, 'w')
+	pprint.pprint(cfg, fd)
+	fd.close()
+
+def DoFilter(filters, fpath, allownonexistant = False):
+	try:
+		mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
+	except:
+		# just say the filter failed since we can not access it
+		# to event do a stat more than likely, or something has
+		# gone wrong
+		if allownonexistant is False:
+			return False
+		# just set the mode to zero.. until i figure
+		# out something better
+		mode = 0
+		size = 0
+	
+	for f in filters:
+		notmatch = False
+		
+		finvert = f[0]
+		ftype = f[1]
+		farg = f[2]
+		
+		# do regular expression matching
+		if ftype == 'repattern':
+			base = fpath[0:fpath.rfind('/') + 1]
+			_fpath = fpath[len(base):]
+			result = re.match(farg, _fpath)
+			if result is not None:
+				result = True
+			else:
+				result = False
+			
+		if ftype == 'sizegreater':
+			result = False
+			if size > farg:
+				result = True
+		
+		if ftype == 'sizelesser':
+			result = False
+			if size < farg:
+				result = True
+		
+		if ftype == 'mode':
+			result = False
+			if mode == farg:
+				result = True
+		
+		if finvert:
+			# if match exclude file
+			if result:
+				return False
+		else:
+			# if match include file
+			if result:
+				return True
+	# if no match on anything then exclude file by default
+	return False
+
+	
 class Backup:
-	def GetConfigPath(self, account = None):
-		# build base path (without file)
-		base = self.GetConfigBase()
-		# add on file
-		if account is None:
-			account = self.accountname
-		path = '%s/%s.py' % (base, account)
-		return path
-		
-	def GetConfigBase(self):
-		base = '%s/.neophytos/accounts' % os.path.expanduser('~')
-		if os.path.exists(base) is False:
-			os.makedirs(base)
-		return base
-		
-	def DeleteConfig(self, cfgname):
-		base = self.GetConfigBase()
-		os.delete('%s/%s.py' % (base, cfgname))
-		
-	def GetConfigs(self):
-		base = self.GetConfigBase()
-		nodes = os.listdir(base)
-		_nodes = []
-		for node in nodes:
-			node = node[0:node.rfind('.')]
-			_nodes.append(node)
-		return _nodes
-		
-	def __LoadConfig(self, account = None):
-		path = self.GetConfigPath(account = account)
-		if os.path.exists(path) is False:
-			return {}
-		fd = open(path, 'r')
-		try:
-			cfg = eval(fd.read())
-		except:
-			cfg = {}
-		fd.close()
-		return cfg
-		
-	def LoadConfig(self, account = None):
-		cfg = self.__LoadConfig(account = account)
-		if 'remote-host' not in cfg:
-			cfg['remote-host'] = 'kmcg3413.net'
-		if 'remote-port' not in cfg:
-			cfg['remote-port'] = 4322
-		if 'storage-auth-code' not in cfg:
-			cfg['storage-auth-code'] = None
-		if 'paths' not in cfg:
-			cfg['paths'] = {}
-		if 'ssl' not in cfg:
-			cfg['ssl'] = True
-		return cfg
-
 	def cmd_config(self, args):
 		if len(args) < 1:
 			print('not enough arguments: <server-auth-code>')
@@ -69,15 +144,9 @@ class Backup:
 		
 		sac = args[0]
 		
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		cfg['storage-auth-code'] = sac
-		self.SaveConfig(cfg)
-		
-	def SaveConfig(self, cfg):
-		path = self.GetConfigPath()
-		fd = open(path, 'w')
-		pprint.pprint(cfg, fd)
-		fd.close()
+		SaveConfig(self.accountname, cfg)
 
 	def cmd_add(self, args):
 		if len(args) < 2:
@@ -89,7 +158,7 @@ class Backup:
 		
 		if os.path.exists(path) is False:
 			print('path [%s] does not exist' % path)
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if name in cfg['paths']:
 			print('name [%s] already exists' % name)
@@ -100,7 +169,7 @@ class Backup:
 		cfg['paths'][name]['enabled'] = True
 		cfg['paths'][name]['filter'] = [(False, 'repattern', '.*')]
 		
-		self.SaveConfig(cfg)
+		SaveConfig(self.accountname, cfg)
 		
 		print('added name [%s] with path [%s]' % (name, path))
 		return
@@ -112,7 +181,7 @@ class Backup:
 		
 		name = args[0]
 		
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if name not in cfg['paths']:
 			print('name [%s] does not exist' % name)
@@ -122,7 +191,7 @@ class Backup:
 		
 		del cfg['paths'][name]
 		
-		self.SaveConfig(cfg)
+		SaveConfig(self.accountname, cfg)
 		
 		print('deleted name [%s] with path [%s]' % (name, path))
 		return
@@ -134,7 +203,7 @@ class Backup:
 		
 		name = args[0]
 		
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if name not in cfg['paths']:
 			print('name [%s] does not exist' % name)
@@ -144,7 +213,7 @@ class Backup:
 			
 		cfg['paths'][name]['enabled'] = False
 
-		self.SaveConfig(cfg)
+		SaveConfig(self.accountname, cfg)
 		
 		print('disabled name [%s] with path [%s]' % (name, path))
 		return
@@ -156,7 +225,7 @@ class Backup:
 			
 		name = args[0]
 		
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if name not in cfg['paths']:
 			print('name [%s] does not exist' % name)
@@ -166,7 +235,7 @@ class Backup:
 		
 		cfg['paths'][name]['enabled'] = True
 		
-		self.SaveConfig(cfg)
+		SaveConfig(self.accountname, cfg)
 		
 		print('enabled name [%s] with path [%s]' % (name, path))
 		return
@@ -197,7 +266,7 @@ class Backup:
 		return
 	
 	def cmd_clearfilter(self, name, args):
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if name not in cfg['paths']:
 			print('name [%s] does not exist' % name)
@@ -207,10 +276,10 @@ class Backup:
 		
 		print('the filter has been cleared for target [%s]' % name)
 		
-		self.SaveConfig(cfg)
+		SaveConfig(self.accountnamecfg)
 	
 	def cmd_listfilter(self, name, args):
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if name not in cfg['paths']:
 			print('name [%s] does not exist' % name)
@@ -271,7 +340,7 @@ class Backup:
 				print('...expected number for [%s] if not + or - or swap' % op)
 				return
 		
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if name not in cfg['paths']:
 			print('name [%s] does not exist' % name)
@@ -296,7 +365,7 @@ class Backup:
 			f = filter.pop(index)
 			filter.insert(op, f)
 		
-		self.SaveConfig(cfg)
+		SaveConfig(self.accountname, cfg)
 		return
 		
 	def cmd_addfilter(self, name, args):
@@ -333,7 +402,7 @@ class Backup:
 			print('  %s' % ', '.join(validtypes))
 			return
 		
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if name not in cfg['paths']:
 			print('name [%s] does not exist' % name)
@@ -341,7 +410,7 @@ class Backup:
 		
 		cfg['paths'][name]['filter'].append((invert, type, pattern))
 		
-		self.SaveConfig(cfg)
+		SaveConfig(self.accountname, cfg)
 		print('added to name [%s] invert:[%s] type:[%s] pattern [%s]' % (name, invert, type, pattern))
 		return
 		
@@ -456,14 +525,14 @@ class Backup:
 			else:
 				count = count + 1
 		return count, dcount
-	
+		
 	def dopush(self, name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = None, dry = True, lastdonereport = 0, _donecount = 0):
 		if c is None:
 			# only connect if not dry run
 			if not dry:
 				print('CONNECTING TO REMOTE SERVER')
 				c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
-				cfg = self.LoadConfig()
+				cfg = LoadConfig(self.accountname)
 				c.Connect(essl = cfg['ssl'])
 				print('CONNECTION ESTABLISHED, SECURED, AND AUTHENTICATED')
 			
@@ -490,7 +559,7 @@ class Backup:
 			fpath = '%s/%s' % (dpath, node)
 			# if directory..
 			if os.path.isdir(fpath):
-				if self.dofilters(filter, fpath):
+				if DoFilter(filter, fpath):
 					if dry:
 						print('[DIR-OK] %s' % fpath)
 					# also update donecount along the way
@@ -500,7 +569,7 @@ class Backup:
 						print('[DIR-IGNORE] %s' % fpath)
 				continue
 			# run filters
-			if self.dofilters(filter, fpath):
+			if DoFilter(filter, fpath):
 				# backup the file
 				base = fpath[0:fpath.rfind('/') + 1]
 				_fpath = fpath[len(base):]
@@ -589,7 +658,7 @@ class Backup:
 		# I/O bound therefore it should work nicer with
 		# the other threads, the good thing being it will
 		# eventually terminate all on it's own
-		tfscan = threading.Thread(target = ConsoleApplication.__enumfilesandreport, args = (self, dpath))
+		tfscan = threading.Thread(target = Backup.__enumfilesandreport, args = (self, dpath))
 		tfscan.daemon = True
 		self.tfscan = tfscan
 		tfscan.start()
@@ -608,20 +677,20 @@ class Backup:
 		
 		arg = args[0].lower()
 		
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if arg in ('yes', 'y', 'true', 't', 'enable', 'activate'):
 			cfg['ssl'] = True
-			self.SaveConfig(cfg)
+			SaveConfig(self.accountname, cfg)
 			print('    SSL has been enabled!')
 			return
 		cfg['ssl'] = False
-		self.SaveConfig(cfg)
+		SaveConfig(self.accountname, cfg)
 		print('    SLL has been DISabled')
 		return
 		
 	def cmd_pull(self, args, dry = True):
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if cfg['storage-auth-code'] is None:
 			print('   Opps.. you need to do <program> config <server-auth-code>')
@@ -664,66 +733,6 @@ class Backup:
 		# run all that are enabled
 		for k in cfg['paths']:
 			self.__cmd_pull_target(cfg, k, cfg['paths'][k], rpath = rpath, lpath = lpath, dry = dry)	
-
-	'''
-	'''		
-	def dofilters(self, filters, fpath, allownonexistant = False):
-		try:
-			mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
-		except:
-			# just say the filter failed since we can not access it
-			# to event do a stat more than likely, or something has
-			# gone wrong
-			if allownonexistant is False:
-				return False
-			# just set the mode to zero.. until i figure
-			# out something better
-			mode = 0
-			size = 0
-		
-		for f in filters:
-			notmatch = False
-			
-			finvert = f[0]
-			ftype = f[1]
-			farg = f[2]
-			
-			# do regular expression matching
-			if ftype == 'repattern':
-				base = fpath[0:fpath.rfind('/') + 1]
-				_fpath = fpath[len(base):]
-				result = re.match(farg, _fpath)
-				print('repattern', result)
-				if result is not None:
-					result = True
-				else:
-					result = False
-				
-			if ftype == 'sizegreater':
-				result = False
-				if size > farg:
-					result = True
-			
-			if ftype == 'sizelesser':
-				result = False
-				if size < farg:
-					result = True
-			
-			if ftype == 'mode':
-				result = False
-				if mode == farg:
-					result = True
-			
-			if finvert:
-				# if match exclude file
-				if result:
-					return False
-			else:
-				# if match include file
-				if result:
-					return True
-		# if no match on anything then exclude file by default
-		return False
 		
 	def __cmd_chksize_target(self, cfg, name, target):
 		dpath = target['disk-path']
@@ -743,7 +752,7 @@ class Backup:
 						todo.append(fpath)
 						continue
 					# see if one of the filters marks it as valid
-					if dofilters(target['filter'], fpath):
+					if DoFilter(target['filter'], fpath):
 						# get file size
 						mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(fpath)
 						total = total + size
@@ -755,7 +764,7 @@ class Backup:
 		return
 		
 	def cmd_chksize(self, args):
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 
 		if len(args) > 0:
 			# treat as list of targets to run (run them even if they are disabled)
@@ -771,7 +780,7 @@ class Backup:
 			self.__cmd_chksize_target(cfg, k, cfg['paths'][k])
 		
 	def cmd_push(self, args, dry = True):
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 
 		if cfg['storage-auth-code'] is None:
 			print('   Opps.. you need to do <program> config <server-auth-code>')
@@ -815,7 +824,7 @@ class Backup:
 		else:
 			name = None
 		
-		cfg = self.LoadConfig()
+		cfg = LoadConfig(self.accountname)
 		
 		if name is not None:
 			# display information about name		
@@ -885,26 +894,26 @@ class Backup:
 				return
 			self.accountname = args[0]
 			# will create the configuration file also
-			cfg = self.LoadConfig()
+			cfg = LoadConfig(self.accountname)
 			cfg['remote-host'] = args[1]
 			if len(args) > 2:
 				cfg['remote-port'] = int(args[2])
-			self.SaveConfig(cfg)
+			SaveConfig(self.accountname, cfg)
 			return
 			
 		if args[0] == 'del':
 			args = args[1:]
 			if len(args) < 1:
 				print('del <account-name>')
-			configs = self.GetConfigs()
+			configs = GetConfigs()
 			if args[0] not in configs:
 				print('The account name [%s] was not found.' % args[0])
 				return
-			self.DeleteConfig(args[0])
+			DeleteConfig(args[0])
 			return
 		
 		if args[0] == 'list':
-			configs = self.GetConfigs()
+			configs = GetConfigs()
 			print('=== ACCOUNT NAMES ===')
 			for config in configs:
 				print('    %s' % config)
@@ -920,7 +929,7 @@ class Backup:
 		self.accountname = args[0]
 		
 		# make sure account name exists
-		if os.path.exists(self.GetConfigPath()) is False:
+		if os.path.exists(GetConfigPath(self.accountname)) is False:
 			print('The account name [%s] does not exist. Try the list command.' % self.accountname)
 			return
 		
