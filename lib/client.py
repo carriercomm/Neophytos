@@ -5,7 +5,7 @@ import struct
 import hashlib
 import math
 import threading
-import bz2
+import zlib
 import ssl
 import traceback
 import base64
@@ -420,9 +420,8 @@ class Client:
 		dir = self.GetServerPathForm(fid)
 		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + fid, block, discard)
 	def FileWrite(self, fid, offset, data, block = True, discard = False):
-		# compress the data if it is enabled
 		if self.bz2compression > 0:
-			data = bz2.compress(data, compresslevel=self.bz2compression)
+			data = zlib.compress(data, self.bz2compression)
 		fid = self.GetServerPathForm(fid)
 		return self.WriteMessage(struct.pack('>BQHB', ClientType.FileWrite, offset, len(fid), self.bz2compression) + fid + data, block, discard)
 	def FileSize(self, fid, block = True, discard = False):

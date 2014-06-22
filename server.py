@@ -6,7 +6,7 @@ import struct
 import shutil
 import hashlib
 import pprint
-import bz2
+import zlib
 from io import BytesIO
 import ssl
 import base64
@@ -16,6 +16,45 @@ from lib.pkttypes import *
 from lib.misc import *
 from lib import pubcrypt
 
+'''
+	This helps to cache account info which contains the bytes used. If
+	each client opened their own account information and two or more
+	clients connected on the same account they might read an old used
+	byte quota which would effectively give them free bytes on their
+	quotes, and even worse is the ability to save an old used quota.
+	
+	By connecting one client and not using it. Then connecting others
+	and writing data. Then closing the first client connection they
+	could erase all bytes used.
+	
+	So this caches this information. I need to add the ability to flush
+	out old entries that are not being used or else this is going to 
+	turn into one big memory leak on a long term server.
+	
+	TODO: remove unused cache entries
+'''
+class AccountMan:
+	# static class and methods
+	cache = {}
+	
+	def LoadAccount(account):
+		if account in AccountMan.cache:
+			# do not read from disk or else someone could
+			# connect a client after a client and get free
+			# byte to their quota, so return the currently
+			# being used account quota
+			return AccountMan.cache[account]
+		fd = open('./accounts/%s' % account, 'r')
+		info = eval(fd.read())
+		fd.close()
+		AccountMan.cache[account] = info
+		return info
+		
+	def SaveAccount(account, info):
+		fd = open('./accounts/%s' % account, 'w')
+		pprint(info, fd)
+		fd.close()
+	
 # setup standard outputs
 output.Configure(tcpserver = False)
 
@@ -91,9 +130,7 @@ class ServerClient:
 			# opted to write it all on cleanup (even though server
 			# failure could give clients more disk space we can
 			# always go in and correct this)
-			fd = open('./accounts/%s' % self.aid, 'w')
-			pprint.pprint(self.info, fd)
-			fd.close()
+			AccountMan.SaveAccount(self.aid, self.info)
 		# close all open file descriptors
 		for fpath in self.fdcache:
 			c = self.fdcache[fpath]
@@ -239,10 +276,8 @@ class ServerClient:
 				return
 			print('loading account')
 			# load account information
+			self.info = AccountMan.LoadAccount(aid)
 			self.aid = aid
-			fd = open('./accounts/%s' % aid, 'r')
-			self.info = eval(fd.read())
-			fd.close()
 			# ensure directory exists
 			diskpath = self.info['disk-path']
 			if os.path.exists(diskpath) is False:
@@ -513,7 +548,7 @@ class ServerClient:
 		
 		# only decompression if it was compressed
 		if compression > 0:
-			data = bz2.decompress(data)
+			data = zlib.decompress(data)
 		
 		length = len(data)
 		if length > self.info.get('max-write-length', self.maxbuffer):
