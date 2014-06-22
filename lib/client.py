@@ -186,6 +186,8 @@ class Client:
 				fnamesz, ftype = struct.unpack_from('>HB', data)
 				# grab out name
 				fname = data[3: 3 + fnamesz]
+				# decode it back to what we expect
+				fname = self.FSDecodeBytes(fname)
 				# chop off part we just read
 				data = data[3 + fnamesz:]
 				# build list
@@ -331,9 +333,6 @@ class Client:
 		the characters you use. The output of the base 64 encoded shall always
 		be supported by the server for directory and file names.
 	'''
-	def GetLocalPathForm(self, path):
-		pass
-	
 	def GetServerPathForm(self, path):
 		# 1. prevent security hole (helps reduce server CPU load if these exist)
 		while path.find(b'..') > -1:
@@ -344,14 +343,16 @@ class Client:
 		# 2. convert entries into stash format
 		parts = path.split(b'/')
 		_parts = []
-		for part in parts:	
+		for part in parts:
+			if len(part) == 0:
+				continue
 			# see if it is already in stash format
 			if part.find(b'\x00') < 0:
 				# convert into stash format
 				part = b'0.' + part
 			else:
 				# replace it with a dot
-				part = part.replace('b\x00', b'.')
+				part = part.replace(b'\x00', b'.')
 			# 3. encode it (any stash value can be used)
 			part = self.FSEncodeBytes(part)
 			_parts.append(part)
@@ -456,10 +457,11 @@ class Client:
 		return self.WriteMessage(struct.pack('>B', ClientType.FileTime) + fid, block, discard)
 
 class Client2(Client):
-	def __init__(self, rhost, rport, aid):
+	def __init__(self, rhost, rport, aid, maxthread = 128):
 		Client.__init__(self, rhost, rport, aid)
 		self.maxbuffer = 1024 * 1024 * 8
 		self.workers = []
+		self.maxthread = maxthread
 
 	def __HashLocalFile(self, fd, offset, length):
 		fd.seek(offset)
@@ -607,7 +609,7 @@ class Client2(Client):
 		if self.workerpool is None:
 			# fill worker pool with workers
 			self.workerpool = []
-			for x in range(0, 128):
+			for x in range(0, self.maxthread):
 				thread = threading.Thread(target = Client2.WorkerPoolEntry, args = (self, x))
 				thread.daemon = True
 				thread.start()
@@ -620,14 +622,14 @@ class Client2(Client):
 		# @TODO:THREADED IFFY
 		# i think it is fairly safe to check the length
 		# even *if* another thread is modifying it..
-		if len(self.workpool) > 128:
+		if len(self.workpool) > self.maxthread:
 			# apparently things are not getting done so
 			# lets wait around and keep signalling the
 			# condition in hopes a thread finally releases
 			# and services the job queue
-			while len(self.workpool) > 128:
+			while len(self.workpool) > self.maxthread:
 				time.sleep(0.1)
-				print('workpool > 128')
+				print('workpool > %s' % self.maxthread)
 		# this should release a thread only if
 		# one was waiting, so if none were waiting
 		# then hopefully the worker's time out on

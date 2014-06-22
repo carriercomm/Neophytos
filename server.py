@@ -177,8 +177,10 @@ class ServerClient:
 		This ensures the path does not reference outside the root directory.
 	'''
 	def SanitizePath(self, path):
-		while path.find(b'..') > -1:
-			path = path.replace(b'..', b'.')
+		while path.find(b'/..') > -1:
+			path = path.replace(b'/..', b'.')
+		while path.find(b'../') > -1:
+			path = path.replace('b../', b'.')
 		return path
 		
 	def GetPathParts(self, fname):
@@ -321,15 +323,18 @@ class ServerClient:
 			self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 1) + data, vector)
 			return
 		if type == ClientType.FileCopy or type == ClientType.FileMove:
-			srcrev, dstrev, srclen = struct.unpack_from('>HHH', msg)
-			fsrc = self.SanitizePath(msg[2 * 3: 2 * 3 + srclen:]).decode('utf8', 'ignore')
-			fdst = self.SanitizePath(msg[2 * 3 + srclen:]).decode('utf8', 'ignore')
+			srclen = struct.unpack_from('>HH', msg)
+			fsrc = msg[2:2 + srclen]
+			fdst = msg[2 + srclen:]
+			
+			fsrc = self.SanitizePath(fsrc).decode('utf8', 'ignore')
+			fdst = self.SanitizePath(fdst).decode('utf8', 'ignore')
 			
 			fsrcbase, fsrcname = self.GetPathParts(fsrc)
 			fdstbase, fdstname = self.GetPathParts(fdst)
 			
-			fsrcpath = '%s/%s/%s.%s' % (self.info['disk-path'], fsrcbase, srcrev, fsrcname)
-			fdstpath = '%s/%s/%s.%s' % (self.info['disk-path'], fdstbase, dstrev, fdstname)
+			fsrcpath = '%s/%s/%s' % (self.info['disk-path'], fsrcbase, fsrcname)
+			fdstpath = '%s/%s/%s' % (self.info['disk-path'], fdstbase, fdstname)
 			
 			if os.path.exists(fdstpath) is True:
 				if type == ClientType.FileCopy:
@@ -402,10 +407,6 @@ class ServerClient:
 			return
 		if type == ClientType.FileWrite:
 			return self.FileWrite(msg, vector)
-		if type == ClientType.FileStash:
-			pass
-		if type == ClientType.FileGetStashes:
-			pass
 		raise Exception('unknown message type:%s' % type)
 
 	def FileSize(self, msg, vector):
