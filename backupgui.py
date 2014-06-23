@@ -112,8 +112,8 @@ class QTargetAndStatusView(QtGui.QFrame):
 		stable = QtGui.QTableWidget(self)
 		self.stable = stable
 		stable.setObjectName('StatusTable')
-		stable.setColumnCount(6)
-		stable.setHorizontalHeaderLabels(['User', 'Account', 'Target', 'Queue', 'Up/MB/Sec', 'Complete'])
+		stable.setColumnCount(8)
+		stable.setHorizontalHeaderLabels(['User', 'Account', 'Target', 'Queue', 'Up/MB/Sec', 'Complete', 'Files Done', 'Files Total'])
 		stable.setVerticalHeaderLabels(['', ''])
 		stable.resizeColumnsToContents()
 		
@@ -251,7 +251,10 @@ class QTargetAndStatusView(QtGui.QFrame):
 					user,
 					account, target,
 					'',				# work item count
-					''				# throughput
+					'',				# throughput
+					'',				# file done
+					'',				# file count
+					'',
 				))
 				
 				# create a progress bar for eye candy
@@ -269,7 +272,11 @@ class QTargetAndStatusView(QtGui.QFrame):
 					
 			stable.item(frow, 3).setText('%s' % workcount)
 			stable.item(frow, 4).setText('%.03f:%.03f' % (float(title['outmb']), float(title['totoutmb'])))
+			if filecount == 0:
+				filecount = 1
 			stable.cellWidget(frow, 5).setValue((donecount / filecount) * 100.0)
+			stable.item(frow, 6).setText('%s' % donecount)
+			stable.item(frow, 7).setText('%s' % filecount)
 			# if we are dealing with LOTS of rows this might 
 			# get slow and CPU hungry, but I doubt 99% of
 			# the things using this will be that hungry..

@@ -44,6 +44,10 @@ class Client:
 		self.workerpool = None
 		self.workpool = None
 		
+		self.data = BytesIO()
+		self.datasz = None
+		self.datatosend = []
+		
 		self.dbgl = time.time()
 		self.dbgv = 0
 		self.dbgc = 0
@@ -100,8 +104,17 @@ class Client:
 			print('login bad')
 			exit() 
 			return False
+
+	def GetStoredMessage(self, vector):
+		with self.socklockread:
+			if vector in self.keepresult and self.keepresult[vector] is not None:
+				ret = self.keepresult[vector]
+				del self.keepresult[vector]
+				return ret
+		return None
+			
 	# processes any incoming messages and exits after specified time
-	def HandleMessages(self, timeout, lookfor = None):
+	def HandleMessages(self, timeout = None, lookfor = None):
 		# while we wait for the lock keep an eye out for
 		# out response to arrive
 		while not self.socklockread.acquire(False):
@@ -118,7 +131,12 @@ class Client:
 		if timeout is not None:
 			st = time.time()
 			et = st + timeout
-		while timeout is None or timeout < 0 or et - time.time() > 0:
+		
+		once = False
+		while timeout is None or timeout < 0 or et - time.time() > 0 or once is False:
+			# at least loop once in the event timeout was too small
+			once = True
+			
 			if timeout is not None:
 				to = et - time.time()
 				if to < 0:
@@ -127,6 +145,11 @@ class Client:
 				to = None
 			#print('reading for message vector:%s' % lookfor)
 			sv, v, d = self.ReadMessage(to)
+			if sv is None:
+				# if we were reading using a time out this can happen
+				# which means there was no data to be read in the time
+				# specified to read, so lets just continue onward
+				continue
 			msg = self.ProcessMessage(sv, v, d)
 			#print('got msg vector:%s' % v)
 			#print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
@@ -234,26 +257,53 @@ class Client:
 		raise UnknownMessageTypeException('%s' % type)
 	
 	def recv(self, sz):
-		_sz = sz
-		data = BytesIO()
-		while sz > 0:
-			_data = self.sock.recv(sz)
-			sz = sz - len(_data)
+		data = self.data
+		
+		# keep track of if we have enough data in our buffer
+		while data.tell() < sz:
+			try:
+				_data = self.sock.recv(sz)
+			except ssl.SSLError:
+				return None
+			except socket.error:
+				return None
+			# save data in buffer
 			data.write(_data)
+		
+		# create a new buffer
+		self.data = BytesIO()
+		
+		# read out the data
 		data.seek(0)
 		data = data.read()
-		assert(len(data) == _sz)
 		return data
 	
 	# read a single message from the stream and exits after specified time
 	def ReadMessage(self, timeout = None):
-		#print('reading message')
 		self.sock.settimeout(timeout)
-		sz, svector, vector = struct.unpack('>IQQ', self.recv(4 + 8 + 8))
-		#print('read header')
-		data = self.recv(sz)
-		#print('read data', data)
-		return svector, vector, data
+		
+		# if no size set then we need to read the header
+		if self.datasz is None:
+			data = self.recv(4 + 8 + 8)
+			if data is None:
+				return None, None, None
+			
+			sz, svector, vector = struct.unpack('>IQQ', data)
+			self.datasz = sz
+			self.datasv = svector
+			self.datav = vector
+			
+		# try to read the remaining data
+		data = self.recv(self.datasz)
+		if data is None:
+			# not enough data read
+			return None, None, None
+		
+		# ensure the next reads tries to get the header
+		self.datasz = None
+		
+		# return the data
+		return self.datasv, self.datav, data
 		
 	def WriteMessage(self, data, block, discard):
 		with self.socklockwrite:
@@ -312,14 +362,37 @@ class Client:
 			return res
 		return vector
 	
-	def send(self, data):
-		#self.sock.sendall(data)
-		totalsent = 0
-		while totalsent < len(data):
-			sent = self.sock.send(data[totalsent:])
-			if sent == 0:
-				raise RuntimeError("socket connection broken")
-			totalsent = totalsent + sent
+	def canSend(self):
+		return len(self.datatosend) > 0
+	
+	def send(self, data = None):
+		if data is not None:
+			self.datatosend.append(data)
+		
+		self.sock.settimeout(0)
+		# check there is data to send
+		while len(self.datatosend) > 0:
+			# pop from the beginning of the queue
+			data = self.datatosend.pop(0)
+			
+			# try to send it
+			totalsent = 0
+			while totalsent < len(data):
+				try:
+					sent = self.sock.send(data[totalsent:])
+				except socket.error:
+					# non-ssl socket likes to throw this exception instead
+					# of returning zero bytes sent it seems
+					self.datatosend.insert(0, data[totalsent:])
+					return False
+					
+				if sent == 0:
+					# place remaining data back at front of queue and
+					# we will try to send it next time
+					self.datatosend.insert(0, data[totalsent:])
+					return False
+				totalsent = totalsent + sent
+		return True
 	
 	'''
 		The client can use any format of a path, but in order to support

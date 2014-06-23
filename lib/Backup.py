@@ -548,7 +548,170 @@ class Backup:
 			
 		for target in targets:
 			output.SetTitle('operation', 'sync-rdel %s:%s' % (self.accountname, target))
-			self.syncdel(self.accountname, target, stash = stash)
+			# this is the old recursive single request style
+			#self.syncdel(self.accountname, target, stash = stash)
+			# this is the non-recursive multiple asynchronous request style
+			self.syncdel_async(self.accountname, target, stash = stash)
+	
+	def syncdel_async(self, account, target, stash = True):
+		cfg = LoadConfig(account = account)
+		tcfg = cfg['paths'][target]
+		rhost = cfg['remote-host']
+		rport = cfg['remote-port']
+		sac = bytes(cfg['storage-auth-code'], 'utf8')
+		c = client.Client2(rhost, rport, sac)
+		c.Connect(essl = cfg['ssl'])
+		# produce remote and local paths
+		lpath = tcfg['disk-path']
+		rpath = bytes(target, 'utf8') + b'/'
+		
+		# initialize our wait list
+		waitlist = {}
+		waitlist[c.DirList(rpath, block = False, discard = False)] = (lpath, rpath)
+		
+		# keep going until nothing is left in the wait list
+		while len(waitlist) > 0:
+			print('LEN', len(waitlist))
+		
+			# process any incoming messages; the 0 means
+			# wait 0 seconds which is non-blocking; if
+			# it was None we would block for a message
+			#print('handling messages')
+			c.HandleMessages(0, None)
+			
+			# do we have pending data to be sent
+			if c.canSend():
+				# send it.. we can eventually stall out
+				# waiting for data when there is data to
+				# send and the server's incoming buffer is
+				# empty
+				c.send()
+			
+			# see if anything has arrived
+			toremove = []
+			toadd = []
+			#print('checking for arrived requests')
+			for v in waitlist:
+				#print('checking for %s' % v)
+				# check if it has arrived
+				nodes = c.GetStoredMessage(v)
+				if nodes is None:
+					#print('    not arrived')
+					continue
+				# okay remove it from waitlist
+				toremove.append(v)
+				# yes, so process it
+				subdirs = []
+				for node in nodes:
+					lpath = waitlist[v][0]
+					rpath = waitlist[v][1]
+				
+					nodename = node[0]
+					nodetype = node[1]
+					
+					# get stash id 
+					try:
+						nodestashid = int(nodename[0:nodename.find(b'.')])
+					except:
+						# just skip it.. non-conforming to stash format or non-numeric stash id
+						continue
+					
+					# check if current
+					if nodestashid != 0:
+						# it is a stashed version (skip it)
+						continue
+					
+					# drop stash id
+					nodename = nodename[nodename.find(b'.') + 1:]
+					
+					# build remote path as bytes type
+					remote = rpath + b'/' + nodename
+					
+					# build local path as string
+					local = '%s/%s' % (lpath, nodename.decode('utf8'))
+					
+					# determine if local resource exists
+					lexist = os.path.exists(local) 
+					rexist = True
+					
+					#print('checking remote:[%s] for local:[%s]' % (remote, local))
+					
+					# determine if remote is directory
+					if nodetype == 1:
+						risdir = True
+					else:
+						risdir = False
+					
+					# determine if local is a directory
+					if lexist:
+						lisdir = os.path.isdir(local)
+					else:
+						lisdir = False
+
+					#remote = b'%s/%s.%s' % (rpath, nodestashid, nodename)				# bytes  (including stash id)
+					remote = rpath + b'/' + bytes('%s' % nodestashid, 'utf8') + b'\x00' + nodename
+					
+					# local exist and both local and remote is a directory
+					if lexist and risdir and lisdir:
+						# go into remote directory and check deeper
+						# delay this..
+						_lpath = '%s/%s' % (lpath, nodename.decode('utf8'))							# string
+						#print('[pushing for sub-directory]:%s' % _lpath)
+						subdirs.append((_lpath, remote))
+						continue
+					
+					# local exist and remote is a directory but local is a file
+					if lexist and risdir and not lisdir:
+						print('[stashing remote directory]:%s' % local)
+						# stash remote directory, use time.time() as the stash id since it
+						# should be unique and also easily serves to identify the latest stashed
+						# remote since zero/0 is reserved for current working version
+						_newremote = rpath + b'/' + bytes('%s' % time.time(), 'utf8') + b'\x00' + nodename
+						# one problem is the remote directory could contain a lot of files that
+						# are were actually moved or copied somewhere else - i am thinking of
+						# using another algorithm to pass over and link up clones saving server
+						# space
+						#c.FileMove(remote, _newremote)
+						# let push function update local file to remote
+						continue
+						
+					# local exist and remote is a file but local is a directory
+					if lexist and not risdir and lisdir:
+						print('[stashing remote file]:%s' % local)
+						# stash remote file
+						#_newremote = b'%s/%s.%s' % (rpath, time.time(), nodename)
+						_newremote = rpath + b'/' + bytes('%s' % time.time(), 'utf8') + b'\x00' + nodename
+						#c.FileMove(remote, _newremote)
+						# let push function update local directory to remote
+						continue
+						
+					# local does not exist
+					if not lexist:
+						print('[stashing deleted]:%s' % local)
+						#_newremote = b'%s/%s.%s' % (rpath, time.time(), nodename)
+						_newremote = rpath + b'/' + bytes('%s' % time.time(), 'utf8') + b'\x00' + nodename
+						#c.FileMove(remote, _newremote)
+						continue
+					continue
+					# <end-of-node-loop> (looping over results of request)
+				# create requests for any sub-directories
+				for subdir in subdirs:
+					_lpath = subdir[0]
+					_rpath = subdir[1]
+					#print('[requesting]:%s' % _rpath)
+					toadd.append((c.DirList(_rpath, block = False, discard = False), _lpath, _rpath))
+				# <end-of-wait-list-loop> (looping over waiting vectors)
+			
+			# add anything we got
+			for p in toadd:
+				waitlist[p[0]] = (p[1], p[2])
+			# remove anything we got from the wait list
+			for v in toremove:
+				del waitlist[v]
+			
+			# if we just fly by we will end up burning
+			# like 100% CPU so lets delay a bit in
+			#time.sleep(0.01)
 	
 	def syncdel(self, account, target, *, c = None, lpath = None, rpath = None, stash = True):
 		if c is None:
@@ -571,9 +734,9 @@ class Backup:
 			#tfscan.daemon = True
 			#self.tfscan = tfscan
 			#tfscan.start()
-			
+		
 		# enumerate remote files and directories
-		#print('[dirlist]:%s' % rpath)
+		print('[dirlist]:%s' % rpath)
 		nodes = c.DirList(rpath)
 		# drop that target prefix
 		brpath = rpath[rpath.find(b'/') + 1:]
@@ -586,7 +749,7 @@ class Backup:
 			
 			# get stash id 
 			try:
-				nodestashid = int(nodename[0:nodename.find(b'\x00')])
+				nodestashid = int(nodename[0:nodename.find(b'.')])
 			except:
 				# just skip it.. non-conforming to stash format or non-numeric stash id
 				continue
@@ -597,7 +760,7 @@ class Backup:
 				continue
 			
 			# drop stash id
-			nodename = nodename[nodename.find(b'\x00') + 1:]
+			nodename = nodename[nodename.find(b'.') + 1:]
 			
 			# build remote path as bytes type
 			remote = rpath + b'/' + nodename
@@ -808,20 +971,20 @@ class Backup:
 			return count
 		return count, lastreport
 	
-	def __enumfilesandreport(self, base, lastreport = 0, initial = True):
+	def __enumfilesandreport(self, base, lastreport = 0, initial = True, prevcount = 0):
 		nodes = os.listdir(base)
 		count = 0
 		for node in nodes:
 			fpath = '%s/%s' % (base, node)
 			if os.path.isdir(fpath):
-				_count, lastreport = self.__enumfilesandreport(fpath, lastreport = lastreport, initial = False)
+				_count, lastreport = self.__enumfilesandreport(fpath, lastreport = lastreport, initial = False, prevcount = count)
 				count = count + _count
 			else:
 				count = count + 1
 			ct = time.time()
 			if ct - lastreport > 10:
 				lastreport = ct
-				output.SetTitle('filecount', count)
+				output.SetTitle('filecount', count + prevcount)
 				
 		if initial:
 			output.SetTitle('filecount', count)

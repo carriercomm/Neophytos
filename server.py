@@ -52,7 +52,7 @@ class AccountMan:
 		
 	def SaveAccount(account, info):
 		fd = open('./accounts/%s' % account, 'w')
-		pprint(info, fd)
+		pprint.pprint(info, fd)
 		fd.close()
 	
 # setup standard outputs
@@ -610,6 +610,7 @@ class ServerClient:
 				data = bytes((ServerType.Encrypted,)) + data
 		# at the moment i do not use server-vector
 		# so it is hard coded as zero
+		self.sock.settimeout(None)
 		self.sock.sendall(struct.pack('>IQQ', len(data), 0, vector))
 		self.sock.sendall(data)
 		self.bytes_out_total = self.bytes_out_total + 4 + 8 * 2 + len(data)
