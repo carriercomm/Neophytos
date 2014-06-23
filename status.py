@@ -98,9 +98,14 @@ class StatusQuery:
 				if parts[0] == '[old]':
 					info['work'][parts[1]]['old'] = False
 					anydata = True
+				if parts[0] == '[wkey]':
+					info['work'][parts[1]][parts[2]] = parts[3]
+					anydata = True
+				# old way (replaced with [wkey])
 				if parts[0] == '[status]':
 					info['work'][parts[1]]['status'] = parts[2]
 					anydata = True
+				# old way (replaced with [wkey])
 				if parts[0] == '[progress]':
 					info['work'][parts[1]]['progress'] = parts[2]
 					anydata = True

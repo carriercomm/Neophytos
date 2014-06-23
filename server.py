@@ -80,10 +80,10 @@ class ServerClient:
 		
 		self.ssl = essl
 		
-		print('HERE')
 		if essl:
-			print('    wrapping socket with SSL')
-			self.sock = ssl.wrap_socket(self.sock, server_side = True, certfile = 'cert.pem', ssl_version = ssl.PROTOCOL_TLSv1)
+			#ciphers = ('AES25-SHA', 'TLSv1/SSLv3', 256)
+			ciphers = 'RC4'
+			self.sock = ssl.wrap_socket(self.sock, server_side = True, certfile = 'cert.pem', ssl_version = ssl.PROTOCOL_TLSv1, ciphers = ciphers)
 		
 		self.server = server
 		
@@ -268,6 +268,9 @@ class ServerClient:
 		# will associate client with an account
 		if type == ClientType.Login:
 			print('got login message', msg)
+			# decrypt account ID if we are going over non-SSL link
+			if not self.ssl:
+				aid = pubcrypt.decrypt(aid, self.kpri)
 			aid = msg.decode('utf8', 'ignore')
 			# check that account exists
 			if os.path.exists('./accounts/%s' % aid) is False:

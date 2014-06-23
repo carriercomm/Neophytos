@@ -4,8 +4,6 @@
 import os
 import os.path
 import sys
-from PyQt4 import QtGui
-from PyQt4 import QtCore
 import io
 import os.path
 import pprint
@@ -14,6 +12,9 @@ import threading
 import time
 import types
 import subprocess
+
+from PyQt4 import QtGui
+from PyQt4 import QtCore
 
 '''
 	These are components that have been separated from our main module here
@@ -28,7 +29,8 @@ from lib.gui.misc import ChangeStyle
 from lib.ClientInterface import ClientInterface
 from lib.Backup import Backup
 from lib.gui.QRemoteTargetsView import QRemoteTargetsView			
-			
+from lib.gui.QMultiTableWidget import QMultiTableWidget		
+		
 class QTargetAndStatusView(QtGui.QFrame):
 	def __init__(self, parent):
 		QtGui.QFrame.__init__(self, parent)
@@ -101,6 +103,11 @@ class QTargetAndStatusView(QtGui.QFrame):
 		split = QtGui.QSplitter(self)
 		self.split = split
 		
+		# used by the services scan
+		self.uidtorow = {}
+		# used by the services scan
+		self.lastuidupdate = {}
+		
 		#DumpObjectTree(self)
 		
 		# enabled, account, target, path, bytesout, bytesin, status, progress
@@ -109,17 +116,19 @@ class QTargetAndStatusView(QtGui.QFrame):
 				
 		self.refresh()
 		
-		stable = QtGui.QTableWidget(self)
+		stable = QMultiTableWidget(self)
+		stable.show()
+		#stable = QtGui.QTableWidget(self)
 		self.stable = stable
 		stable.setObjectName('StatusTable')
-		stable.setColumnCount(8)
-		stable.setHorizontalHeaderLabels(['User', 'Account', 'Target', 'Queue', 'Up/MB/Sec', 'Complete', 'Files Done', 'Files Total'])
-		stable.setVerticalHeaderLabels(['', ''])
-		stable.resizeColumnsToContents()
+		#stable.setColumnCount(8)
+		#stable.setHorizontalHeaderLabels(['User', 'Account', 'Target', 'Queue', 'Up/MB/Sec', 'Complete', 'Files Done', 'Files Total'])
+		#stable.setVerticalHeaderLabels(['', ''])
+		#stable.resizeColumnsToContents()
 		
 		# disable editing
 		table.setEditTriggers(QtGui.QAbstractItemView.NoEditTriggers)
-		stable.setEditTriggers(QtGui.QAbstractItemView.NoEditTriggers)
+		#stable.setEditTriggers(QtGui.QAbstractItemView.NoEditTriggers)
 		
 		table.setVerticalHeaderLabels(['', ''])
 		table.resizeColumnsToContents()
@@ -194,7 +203,7 @@ class QTargetAndStatusView(QtGui.QFrame):
 		split.setOrientation(2)
 		split.addWidget(table)
 		split.addWidget(stable)
-				
+		
 		self.show()
 		
 		scantimer = QtCore.QTimer(self)
@@ -218,110 +227,70 @@ class QTargetAndStatusView(QtGui.QFrame):
 		# safe and does not need a lock
 		services = self.services
 		stable = self.stable
+		uidtorow = self.uidtorow
 		
+		# add active services or update them and track last update time
+		ct = time.time()
 		for port in services:
 			service = services[port]
+			# should always exist before connections are accepted
 			title = service['title']
-			work = service['work']
-			# just ignore it if it does not report the account
-			if 'account' not in title:
-				continue
-			user = title['user']
-			account = title['account']
-			target = title['target']
-			filecount = float(title['filecount'])
-			donecount = float(title['filedonecount'])
+			# it is possible that this might not exist
+			if 'work' in service:
+				work = service['work']
+			else:
+				work = None
 			
-			# find row if it exists and update it
-			frow = None
-			for row in range(0, stable.rowCount()):
-				t_user = stable.item(row, 0).text()
-				t_account = stable.item(row, 1).text()
-				t_target = stable.item(row, 2).text()
-				
-				if t_user == user and t_account == account and t_target == target:
-					frow = row
-					break
+			# this should always be set before any connections
+			# are accepted
+			guid = title['uid']
 			
-			# if row does not exist then create it
-			if frow is None:
-				frow = 0
-				stable.insertRow(0)
-				self.SetTableRow(stable, 0, (
-					user,
-					account, target,
-					'',				# work item count
-					'',				# throughput
-					'',				# file done
-					'',				# file count
-					'',
-				))
-				
-				# create a progress bar for eye candy
-				pb = QtGui.QProgressBar()
-				pb.setObjectName('StatusCellProgressBar')
-				pb.setRange(0.0, 100.0)
-				pb.setValue(0.0)
-				stable.setCellWidget(0, 5, pb)
-				
-			workcount = 0
-			for wname in work:
-				witem = work[wname]
-				if 'old' in witem and witem['old'] is False:
-					workcount = workcount + 1
-					
-			stable.item(frow, 3).setText('%s' % workcount)
-			stable.item(frow, 4).setText('%.03f:%.03f' % (float(title['outmb']), float(title['totoutmb'])))
-			if filecount == 0:
-				filecount = 1
-			stable.cellWidget(frow, 5).setValue((donecount / filecount) * 100.0)
-			stable.item(frow, 6).setText('%s' % donecount)
-			stable.item(frow, 7).setText('%s' % filecount)
-			# if we are dealing with LOTS of rows this might 
-			# get slow and CPU hungry, but I doubt 99% of
-			# the things using this will be that hungry..
-			stable.resizeColumnsToContents()
+			self.lastuidupdate[guid] = ct
+			
+			# make a new row if it does not exist
+			if guid not in uidtorow:
+				row = self.stable.AddRow()
+				uidtorow[guid] = row
+			else:
+				row = uidtorow[guid]
+			
+			for k in title:
+				row.SetCol(k, title[k])
+			row.Ready()
+		
+		# look for services that have not updated recently
+		toremove = []
+		for guid in self.lastuidupdate:
+			row = self.uidtorow[guid]
+			delta = time.time() - self.lastuidupdate[guid]
+			if delta > 60 * 0.5:
+				# color it yellow
+				pass
+			if delta > 30 * 3.0:
+				# remove it so we create a new one next time
+				del self.uidtorow[guid]
+				# schedule it to drop from it's container object
+				row.Drop()
+				row.Update()
+				toremove.append(guid)
+		
+		for guid in toremove:
+			del self.lastuidupdate[guid]
+		# <end-of-function>
 		
 	def PeriodicScanThreadEntry(self):
 		# initial the status query object
 		q = status.StatusQuery()
 		while True:
 			# scan for running services
-			#print('scanning')
 			services = q.Scan()
+			# set this so the main thread can read it later
 			self.services = services
-			#print('done scanning')
-			# iterate through services found
-			for port in services:
-				service = services[port]
-				title = service['title']
-				if 'account' not in title:
-					continue
-				title = service['title']
-				account = title['account']
-				target = title['target']
-				# try to find the row that matches this running service, we might
-				# not find one if it is running under a different user account and
-				# if so we can just add a row
-				#print(title, account)
 			time.sleep(5)
 		
 	def resizeEvent(self, event):
-		#table = self.table	
-		#rect = table.visualItemRect(table.item(0, table.columnCount() - 1))
-		#w = rect.x() + rect.width() + 20
-		#table.resize(self.width(), self.height())
-		split = self.split
-		
 		self.split.resize(self.width(), self.height())
-	
-	def resize(self, w, h):
-		super().resize(w, h)
-		
-	def show(self):
-		super().show()
-				
-				
+						
 class QStatusWindow(QtGui.QMainWindow):
 	def resizeEvent(self, event):
 		self.fTargetAndStatusView.resize(self.width(), self.height())

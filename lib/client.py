@@ -62,6 +62,7 @@ class Client:
 		
 		if essl:
 			self.sock.connect((self.rhost, self.rport + 1))
+			output.SetTitle('ssl-cipher', self.sock.cipher())
 		else:
 			self.sock.connect((self.rhost, self.rport))
 		
@@ -79,7 +80,7 @@ class Client:
 			p = pubkey[3 + esz:]
 			self.pubkey = (e, p)
 			#print(self.pubkey)
-			# setup encryption
+			# setup encryption (NOT USED)
 			key = IDGen.gen(10)
 			#print('key:%s' % key)
 			self.crypter = SymCrypt(key)
@@ -327,7 +328,8 @@ class Client:
 		else:
 			if type == ClientType.SetupCrypt:
 				# public key crypt
-				data = data[0:1] + pubcrypt.crypt(data[1:], self.pubkey)
+				if not self.ssl:
+					data = data[0:1] + pubcrypt.crypt(data[1:], self.pubkey)
 			else:
 				# if not SSL then use our built-in encryption
 				if False and not self.ssl:
@@ -336,6 +338,10 @@ class Client:
 					# we just pretend its encrypted when really its not, however
 					# since we are using SSL the individual messages are not encrypted
 					# but the entire socket stream is.. so just prepend this header
+					
+					# lets encryption the login if we are not using SSL
+					if not self.ssl and type == ClientType.Login:
+						data = data[0:1] + pubcrypt.crypt(data[1:], self.pubkey)
 					data = bytes([ClientType.Encrypted]) + data
 		
 		# lock to ensure this entire message is placed
@@ -686,7 +692,12 @@ class Client2(Client):
 				thread.daemon = True
 				thread.start()
 				self.workerpool.append(thread)
-						
+
+		# we use this when updating the title (to kind
+		# of give the status output some indication of
+		# what is kind of going on
+		self.__lastpushedlfile = lfile
+				
 		self.dbgc = self.dbgc + 1
 		# add work item
 		self.workpool.append((fid, lfile, False))
@@ -769,12 +780,15 @@ class Client2(Client):
 		# output to make better usage of the output
 		dt = time.time() - self.bytesoutst
 		
-		output.SetTitle('outmb', (self.bytesout  / 1024 / 1024) / dt)
-		output.SetTitle('totoutmb', (self.allbytesout / 1024 / 1024) / dt)
-		output.SetTitle('wpc', wpc)
-		output.SetTitle('c', c)
-		output.SetTitle('areqs', len(self.keepresult))
-		output.SetTitle('d', d)
+		outdata = '%.03f' % (self.bytesout / 1024 / 1024 / dt)
+		outcontrol = '%.03f' % ((self.allbytesout - self.bytesout) / 1024 / 1024 / dt)
+		
+		output.SetTitle('DataOutMB', outdata)
+		output.SetTitle('ControlOutMB', outcontrol)
+		output.SetTitle('WorkPoolCount', wpc)
+		output.SetTitle('Threads', c)
+		output.SetTitle('ActiveRequests', len(self.keepresult))
+		output.Settitle('RecentFile', self.__lastpushedlfile)
 		#output.SetTitle('%s %s tc:%s wpool:%s areqs:%s tpw:%s' % (outkb[0:20], totoutkb[0:20], wpc, c, len(self.keepresult), d))
 		
 	def WorkerThreadEntry(self, fid, lfile, synclocal):

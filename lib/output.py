@@ -23,6 +23,7 @@ import socket
 import select
 import struct
 import time
+import uuid
 
 try:
 	import curses
@@ -114,8 +115,10 @@ class TCPServer:
 			self.SendSingle(sock, '[add]:%s' % name)
 			if work.old:
 				self.Send('[old]:%s' % name)
-			self.SendSingle(sock, '[status]:%s:%s' % (name, work.status))
-			self.SendSingle(sock, '[progress]:%s:%s' % (name, work.progress))
+			for k in work.__dict__:
+				self.SendSingle(sock, '[wkey]:%s:%s:%s' % (name, k, work.__dict__[k]))
+			#self.SendSingle(sock, '[status]:%s:%s' % (name, work.status))
+			#self.SendSingle(sock, '[progress]:%s:%s' % (name, work.progress))
 		self.SendSingle(sock, '[uptodate]')
 
 		
@@ -169,7 +172,7 @@ class TCPServer:
 
 def Configure(tcpserver = False):
 	# find and modify sys.argv
-	mode = Mode.StandardConsole
+	mode = Mode.NoOutput
 	for arg in sys.argv:
 		if arg == '--curses':
 			mode = Mode.Curses
@@ -186,6 +189,7 @@ def Configure(tcpserver = False):
 class Mode:
 	StandardConsole		= 1
 	Curses				= 2
+	NoOutput			= 0
 
 # os.devnull
 def Init(_mode, tcpserver = False, stdout = None, stderr = None):
@@ -202,9 +206,9 @@ def Init(_mode, tcpserver = False, stdout = None, stderr = None):
 		# just pretend to work
 		server = TCPServer(nullsock = True)
 	
-	if mode == Mode.StandardConsole:
-		stdout = sys.stdout
-		stderr = sys.stderr
+	stdout = sys.stdout
+	stderr = sys.stderr
+	
 	if mode == Mode.Curses:
 		if stdout is None:
 			stdout = 'stdout'
@@ -226,7 +230,10 @@ def Init(_mode, tcpserver = False, stdout = None, stderr = None):
 	else:
 		# use the fake curses output
 		win = stdoutcurses.initscr()
-
+	
+	# set unique identifier for this session
+	SetTitle('uid', uuid.uuid4().hex)
+		
 class Working:
 	pass
 
@@ -358,6 +365,15 @@ def SetCurrentStatus(name, status):
 			print('[status]:%s:%s' % (status, name))
 		working[name].status = status
 		__update()
+	
+def SetWorkItem(name, key, value):
+	global working
+	global lock
+	
+	with lock:
+		if mode == Mode.StandardConsole:
+			print('[setitem]:%s:%s' % (key, value))
+		working[name].__dict__[key] = value
 	
 def SetCurrentProgress(name, value):
 	global working
