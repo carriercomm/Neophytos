@@ -281,20 +281,20 @@ class Client:
 	def recv(self, sz):
 		data = self.data
 				
-		self.sock.settimeout(0)
+		#self.sock.settimeout(0)
 		
 		# keep track of if we have enough data in our buffer
 		while data.tell() < sz:
 			# calculate how long we can wait
-			tdelta = (time.time() - self.lastactivity)
-			twait = self.conntimeout - tdelta
-			if twait < 0:
-				raise ConnectionDeadException()
+			#tdelta = (time.time() - self.lastactivity)
+			#twait = self.conntimeout - tdelta
+			#if twait < 0:
+			#	raise ConnectionDeadException()
 			try:
 				# i am using select because settimeout does not
 				# seem to work for the recv method.. so this is
 				# a workaround to force it to work
-				ready = select.select([self.sock], [], [], twait)
+				ready = select.select([self.sock], [], [], self.sock.gettimeout())
 				if ready[0]:
 					_data = self.sock.recv(sz)
 					if _data is not None and len(_data) > 0:
@@ -305,21 +305,21 @@ class Client:
 						# then the connection has closed..
 						raise ConnectionDeadException()
 				else:
-					self.ifDead()
-					continue
+					#self.ifDead()
+					return None
 			except ssl.SSLError:
 				# check if dead..
-				self.ifDead()
+				#self.ifDead()
 				return None
 			except socket.error:
 				# check if dead..
-				self.ifDead()
+				#self.ifDead()
 				return None
 			# save data in buffer
 			data.write(_data)
 	
 		# check if connection is dead
-		self.ifDead()
+		#self.ifDead()
 		
 		# create a new buffer
 		self.data = BytesIO()
