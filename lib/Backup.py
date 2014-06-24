@@ -573,6 +573,9 @@ class Backup:
 		output.SetTitle('target', target)
 		
 		donecount = 0
+		stashfilecount = 0
+		stashdircount = 0
+		
 		# keep going until nothing is left in the wait list
 		while len(waitlist) > 0:
 			dt = time.time() - c.bytesoutst
@@ -584,6 +587,8 @@ class Backup:
 			output.SetTitle('ControlOutMB', outcontrol)
 			output.SetTitle('PendingRequests', len(waitlist))
 			output.SetTitle('FileDoneCount', donecount)
+			output.SetTitle('StashedFiles', stashfilecount)
+			output.SetTitle('StashedDirs', stashdircount)
 		
 			# process any incoming messages; the 0 means
 			# wait 0 seconds which is non-blocking; if
@@ -680,12 +685,14 @@ class Backup:
 						# stash remote directory, use time.time() as the stash id since it
 						# should be unique and also easily serves to identify the latest stashed
 						# remote since zero/0 is reserved for current working version
-						_newremote = rpath + b'/' + bytes('%s' % time.time(), 'utf8') + b'\x00' + nodename
+						stashdircount = stashdircount + 1
+						t = int(time.time() * 1000000.0)
+						_newremote = rpath + b'/' + bytes('%s' % t, 'utf8') + b'\x00' + nodename
 						# one problem is the remote directory could contain a lot of files that
 						# are were actually moved or copied somewhere else - i am thinking of
 						# using another algorithm to pass over and link up clones saving server
 						# space
-						#c.FileMove(remote, _newremote)
+						c.FileMove(remote, _newremote)
 						# let push function update local file to remote
 						continue
 						
@@ -693,18 +700,25 @@ class Backup:
 					if lexist and not risdir and lisdir:
 						print('[stashing remote file]:%s' % local)
 						# stash remote file
+						stashfilecount = stashfilecount + 1
 						#_newremote = b'%s/%s.%s' % (rpath, time.time(), nodename)
-						_newremote = rpath + b'/' + bytes('%s' % time.time(), 'utf8') + b'\x00' + nodename
-						#c.FileMove(remote, _newremote)
+						t = int(time.time() * 1000000.0)
+						_newremote = rpath + b'/' + bytes('%s' % t, 'utf8') + b'\x00' + nodename
+						c.FileMove(remote, _newremote)
 						# let push function update local directory to remote
 						continue
 						
 					# local does not exist
 					if not lexist:
 						print('[stashing deleted]:%s' % local)
+						if risdir:
+							stashdircount = stashdircount + 1
+						else:
+							stashfilecount = stashfilecount + 1
 						#_newremote = b'%s/%s.%s' % (rpath, time.time(), nodename)
-						_newremote = rpath + b'/' + bytes('%s' % time.time(), 'utf8') + b'\x00' + nodename
-						#c.FileMove(remote, _newremote)
+						t = int(time.time() * 1000000.0)
+						_newremote = rpath + b'/' + bytes('%s' % t, 'utf8') + b'\x00' + nodename
+						c.FileMove(remote, _newremote)
 						continue
 					continue
 					# <end-of-node-loop> (looping over results of request)

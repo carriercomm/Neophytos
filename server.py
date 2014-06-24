@@ -7,9 +7,11 @@ import shutil
 import hashlib
 import pprint
 import zlib
-from io import BytesIO
 import ssl
 import base64
+import traceback
+
+from io import BytesIO
 
 from lib import output
 from lib.pkttypes import *
@@ -65,7 +67,7 @@ class NodeTypeUnknownException(Exception):
 	pass
 
 class DataBufferOverflowException(Exception):
-	pass
+	pass 
 	
 class ServerClient:
 	def GetName(self):
@@ -82,6 +84,11 @@ class ServerClient:
 		
 		if essl:
 			#ciphers = ('AES25-SHA', 'TLSv1/SSLv3', 256)
+			
+			# at the moment AES25 seems to eat CPU like candy
+			# so I have dropped down to RC4 and I have much
+			# better CPU usage (around 3% on my test machine
+			# versus 100% using AES)
 			ciphers = 'RC4'
 			self.sock = ssl.wrap_socket(self.sock, server_side = True, certfile = 'cert.pem', ssl_version = ssl.PROTOCOL_TLSv1, ciphers = ciphers)
 		
@@ -267,10 +274,10 @@ class ServerClient:
 		
 		# will associate client with an account
 		if type == ClientType.Login:
-			print('got login message', msg)
+			print('got login message')
 			# decrypt account ID if we are going over non-SSL link
 			if not self.ssl:
-				aid = pubcrypt.decrypt(aid, self.kpri)
+				msg = pubcrypt.decrypt(msg, self.kpri)
 			aid = msg.decode('utf8', 'ignore')
 			# check that account exists
 			if os.path.exists('./accounts/%s' % aid) is False:
@@ -361,7 +368,7 @@ class ServerClient:
 			self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 1) + data, vector)
 			return
 		if type == ClientType.FileCopy or type == ClientType.FileMove:
-			srclen = struct.unpack_from('>HH', msg)
+			srclen = struct.unpack_from('>H', msg)[0]
 			fsrc = msg[2:2 + srclen]
 			fdst = msg[2 + srclen:]
 			
@@ -374,12 +381,8 @@ class ServerClient:
 			fsrcpath = '%s/%s/%s' % (self.info['disk-path'], fsrcbase, fsrcname)
 			fdstpath = '%s/%s/%s' % (self.info['disk-path'], fdstbase, fdstname)
 			
-			if os.path.exists(fdstpath) is True:
-				if type == ClientType.FileCopy:
-					self.WriteMessage(struct.pack('>BB', ServerType.FileCopy, 0), vector)
-				else:
-					self.WriteMessage(struct.pack('>BB', ServerType.FileMove, 0), vector)
-				return
+			print('fsrcpath:%s' % fsrcpath)
+			print('fdstpath:%s' % fdstpath)
 			
 			if type == ClientType.FileMove:
 				# handles move across different file systems (or uses rename)
@@ -389,6 +392,13 @@ class ServerClient:
 				# handles copy across different file systems
 				shutil.copyfile(fsrcpath, fdstpath)
 				self.WriteMessage(struct.pack('>BB', ServerType.FileCopy, 1), vector)
+
+			if os.path.exists(fdstpath) is True:
+				if type == ClientType.FileCopy:
+					self.WriteMessage(struct.pack('>BB', ServerType.FileCopy, 0), vector)
+				else:
+					self.WriteMessage(struct.pack('>BB', ServerType.FileMove, 0), vector)
+				return
 			return
 			
 		if type == ClientType.FileDel:
@@ -774,6 +784,7 @@ class Server:
 					except Exception as e:
 						#print(e)
 						#raise e
+						traceback.print_exc(file = sys.stdout)
 						data = None
 						
 					if not data:
@@ -792,7 +803,8 @@ class Server:
 						try:
 							sc.HandleData(data)
 						except Exception as e:
-							raise e
+							traceback.print_exc(file = sys.stdout)
+							#raise e
 							# to keep from killing the server and
 							# any other clients just kill the client
 							# and keep going

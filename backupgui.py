@@ -251,8 +251,10 @@ class QTargetAndStatusView(QtGui.QFrame):
 			if guid not in uidtorow:
 				row = self.stable.AddRow()
 				uidtorow[guid] = row
+				print('new row')
 			else:
 				row = uidtorow[guid]
+				print('old row')
 			
 			for k in title:
 				row.SetCol(k, title[k])

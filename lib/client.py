@@ -9,6 +9,7 @@ import zlib
 import ssl
 import traceback
 import base64
+import select
 
 from io import BytesIO
 
@@ -21,6 +22,9 @@ class UnknownMessageTypeException(Exception):
 	pass
 
 class QuotaLimitReachedException(Exception):
+	pass
+	
+class ConnectionDeadException(Exception):
 	pass
 	
 class Client:
@@ -43,6 +47,9 @@ class Client:
 		self.lasttitleupdated = 0
 		self.workerpool = None
 		self.workpool = None
+		
+		self.conntimeout = 60
+		self.lastactivity = time.time()
 		
 		self.data = BytesIO()
 		self.datasz = None
@@ -257,19 +264,53 @@ class Client:
 			return out
 		raise UnknownMessageTypeException('%s' % type)
 	
+	def ifDead(self):
+		tdelta = (time.time() - self.lastactivity)
+		if tdelta > self.conntimeout:
+			raise ConnectionDeadException()
+	
 	def recv(self, sz):
 		data = self.data
+				
+		self.sock.settimeout(0)
 		
 		# keep track of if we have enough data in our buffer
 		while data.tell() < sz:
+			# calculate how long we can wait
+			tdelta = (time.time() - self.lastactivity)
+			twait = self.conntimeout - tdelta
+			if twait < 0:
+				raise ConnectionDeadException()
 			try:
-				_data = self.sock.recv(sz)
+				# i am using select because settimeout does not
+				# seem to work for the recv method.. so this is
+				# a workaround to force it to work
+				ready = select.select([self.sock], [], [], twait)
+				if ready[0]:
+					_data = self.sock.recv(sz)
+					if _data is not None and len(_data) > 0:
+						self.lastactivity = time.time()
+					else:
+						# as far as i can tell if receive returns an empty
+						# byte string after select signalled it for a read
+						# then the connection has closed..
+						raise ConnectionDeadException()
+				else:
+					self.ifDead()
+					continue
 			except ssl.SSLError:
+				# check if dead..
+				self.ifDead()
 				return None
 			except socket.error:
+				# check if dead..
+				self.ifDead()
 				return None
 			# save data in buffer
 			data.write(_data)
+	
+		# check if connection is dead
+		self.ifDead()
 		
 		# create a new buffer
 		self.data = BytesIO()
@@ -513,9 +554,13 @@ class Client:
 		fid = self.GetServerPathForm(fid)
 		return self.WriteMessage(struct.pack('>B', ClientType.FileDel) + fid, block, discard)
 	def FileCopy(self, srcfid, dstfid, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BHHH', ClientType.FileCopy, srcfid[1], dstfid[1], len(srcfid[0])) + srcfid[0] + dstfid[0], block, discard)
-	def FileMove(self, fid, newfile, block = True, discard = False):
-		return self.WriteMessage(struct.pack('>BHHH', ClientType.FileMove, srcfid[1], dstfid[1], len(srcfid[0])) + srcfid[0] + dstfid[0], block, discard)
+		srcfid = self.GetServerPathForm(srcfid)
+		dstfid = self.GetServerPathForm(dstfid)
+		return self.WriteMessage(struct.pack('>BH', ClientType.FileCopy, len(srcfid)) + srcfid + dstfid, block, discard)
+	def FileMove(self, srcfid, dstfid, block = True, discard = False):
+		srcfid = self.GetServerPathForm(srcfid)
+		dstfid = self.GetServerPathForm(dstfid)
+		return self.WriteMessage(struct.pack('>BH', ClientType.FileMove, len(srcfid)) + srcfid + dstfid, block, discard)
 	def FileHash(self, fid, offset, length, block = True, discard = False):
 		fid = self.GetServerPathForm(fid)
 		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileHash, offset, length) + fid, block, discard)
@@ -788,7 +833,7 @@ class Client2(Client):
 		output.SetTitle('WorkPoolCount', wpc)
 		output.SetTitle('Threads', c)
 		output.SetTitle('ActiveRequests', len(self.keepresult))
-		output.Settitle('RecentFile', self.__lastpushedlfile)
+		output.SetTitle('RecentFile', self.__lastpushedlfile)
 		#output.SetTitle('%s %s tc:%s wpool:%s areqs:%s tpw:%s' % (outkb[0:20], totoutkb[0:20], wpc, c, len(self.keepresult), d))
 		
 	def WorkerThreadEntry(self, fid, lfile, synclocal):
