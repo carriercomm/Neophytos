@@ -48,6 +48,8 @@ class Client:
 		self.workerpool = None
 		self.workpool = None
 		
+		self.lastpushedlfile = ''
+		
 		self.conntimeout = 60
 		self.lastactivity = time.time()
 		
@@ -173,7 +175,7 @@ class Client:
 			continue
 		self.socklockread.release()
 		return
-		
+	
 	# processes any message and produces output in usable form
 	def ProcessMessage(self, svector, vector, data):
 		type = data[0]
@@ -208,9 +210,16 @@ class Client:
 			if data[0] == ord('y'):
 				return True
 			return False
+			
 		if type == ServerType.DirList:
-			# i hate to chop strings but...later make more efficient
-			#print('parsing DirList results')
+			result = struct.unpack_from('>B', data)[0]
+			
+			# path could not be accessed
+			if result == 0:
+				return None
+			
+			data = data[1:]
+			
 			list = []
 			while len(data) > 0:
 				# parse header
@@ -833,7 +842,7 @@ class Client2(Client):
 		output.SetTitle('WorkPoolCount', wpc)
 		output.SetTitle('Threads', c)
 		output.SetTitle('ActiveRequests', len(self.keepresult))
-		output.SetTitle('RecentFile', self.__lastpushedlfile)
+		output.SetTitle('RecentFile', self.lastpushedlfile)
 		#output.SetTitle('%s %s tc:%s wpool:%s areqs:%s tpw:%s' % (outkb[0:20], totoutkb[0:20], wpc, c, len(self.keepresult), d))
 		
 	def WorkerThreadEntry(self, fid, lfile, synclocal):

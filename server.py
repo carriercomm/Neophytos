@@ -90,6 +90,8 @@ class ServerClient:
 			# better CPU usage (around 3% on my test machine
 			# versus 100% using AES)
 			ciphers = 'RC4'
+			ciphers = 'AES'
+			ciphers = None
 			self.sock = ssl.wrap_socket(self.sock, server_side = True, certfile = 'cert.pem', ssl_version = ssl.PROTOCOL_TLSv1, ciphers = ciphers)
 		
 		self.server = server
@@ -311,6 +313,10 @@ class ServerClient:
 			#print('doing directory listing')
 			cpath = '%s/%s' % (self.info['disk-path'], self.SanitizePath(msg).decode('utf8', 'ignore'))
 			#print('	calling os.listdir(%s)' % cpath)
+			if os.path.exists(cpath) is False:
+				self.WriteMessage(struct.pack('>BB', ServerType.DirList, 0), vector)
+				return
+				
 			nodes = os.listdir(cpath)
 			objs = []
 			#print('	iterating nodes')
@@ -330,7 +336,7 @@ class ServerClient:
 				out.append(struct.pack('>HB', len(key[0]), key[1]) + key[0])
 			out = b''.join(out)
 			#print('	writing message')
-			self.WriteMessage(struct.pack('>B', ServerType.DirList) + out, vector)	
+			self.WriteMessage(struct.pack('>BB', ServerType.DirList, 1) + out, vector)
 			return
 		if type == ClientType.FileTime:
 			return self.FileTime(msg, vector)

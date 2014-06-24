@@ -612,10 +612,10 @@ class Backup:
 				#print('checking for %s' % v)
 				# check if it has arrived
 				nodes = c.GetStoredMessage(v)
+				# okay remove it from waitlist
 				if nodes is None:
 					#print('    not arrived')
 					continue
-				# okay remove it from waitlist
 				toremove.append(v)
 				# yes, so process it
 				subdirs = []
