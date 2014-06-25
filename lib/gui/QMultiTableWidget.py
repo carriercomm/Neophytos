@@ -18,7 +18,7 @@ class QMultiTableWidgetRow:
 	def SetTable(self, table):
 		if self.hastable is not None:
 			# remove row from table
-			self.hastable.removeRow(self__rowindex)
+			self.hastable.removeRow(self.__rowindex)
 			# reset column items
 			self.__colitems = {}
 		self.hastable = table
@@ -84,6 +84,7 @@ class QMultiTableWidget(QtGui.QWidget):
 		self.rows = []
 		self.tables = []
 		self.splitter = QtGui.QSplitter(self)
+		self.splitter.setOrientation(2)
 	
 	def resizeEvent(self, event):
 		self.splitter.resize(self.width(), self.height())
@@ -151,7 +152,7 @@ class QMultiTableWidget(QtGui.QWidget):
 		for table in self.tables:
 			if table.rowCount() < 1:
 				# i hope this unlinks it from the splitter
-				self.table.setParent(None)
+				table.setParent(None)
 				self.tables.remove(table)
 				
 		# make sure all tables are assigned into the splitter

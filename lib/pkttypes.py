@@ -15,6 +15,7 @@ class ClientType:
 	Encrypted		= 13
 	Login			= 14
 	FileTime		= 15
+	FileSetTime		= 16
 	
 class ServerType:
 	DirList 			= 0
@@ -36,3 +37,4 @@ class ServerType:
 	LoginResult			= 16
 	FileTime			= 17
 	SetCompressionLevel = 18
+	FileSetTime			= 19

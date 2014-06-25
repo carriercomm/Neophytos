@@ -7,10 +7,12 @@ import os
 import sys
 import os.path
 import re
-import lib.client as client
 import lib.output as output
 import threading
 import time
+
+from lib.client import Client2
+from lib.client import Client
 
 def GetConfigPath(account):
 	# build base path (without file)
@@ -68,7 +70,7 @@ def GetClientForAccount(account):
 	# load account information
 	cfg = LoadConfig(account = account)
 	print('remote-host:%s remote-port:%s auth:%s' % (cfg['remote-host'], cfg['remote-port'], cfg['storage-auth-code']))
-	c = client.Client2(cfg['remote-host'], cfg['remote-port'], bytes(cfg['storage-auth-code'], 'utf8'))
+	c = Client2(cfg['remote-host'], cfg['remote-port'], bytes(cfg['storage-auth-code'], 'utf8'))
 	c.Connect(essl = cfg['ssl'])
 	return c
 	
@@ -443,76 +445,7 @@ class Backup:
 			ndx = ndx + 1
 		print('could not find index [%s]' % index)
 		return
-		
-	def dopull(self, name, rhost, rport, sac, cfg, rpath, lpath, filter, base = None, c = None, erpath = None, dry = True):
-		if c is None:
-			print('CONNECTING TO REMOTE SERVER')
-			c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
-			cfg = self.LoadConfig()
-			c.Connect(essl = cfg['ssl'])
-			print('CONNECTION ESTABLISHED, SECURED, AND AUTHENTICATED')
-		
-		if rpath is None:
-			raise Exception('rpath can not be None')
-		
-		# make sure effective remote path is placed under /name/
-		if erpath is None:
-			erpath = '%s/%s' % (name, rpath)
-		
-		if dry is True:
-			print('NOPE')
-			exit()
-
-		
-		# i try to do all files in each directory
-		# before diving deeper into sub-directories
-		# so i push directories into this list then
-		# process them after all the files
-		dirstodo = []
-		
-		# list nodes in directory
-		nodes = c.DirList(bytes('%s' % erpath, 'utf8'))
-		for node in nodes:
-			# is this a directory?
-			if node[1] == 0xffffffff:
-				# yes, so push it to be transverse`d later
-				dirstodo.append(node[0].decode('utf8', 'ignore'))
-				print('appended directory %s' % node[0])
-				continue
 			
-			lfile = '%s/%s' % (lpath, node[0].decode('utf8', 'ignore'))
-			# build the remote path
-			rfile = bytes('%s/%s' % (erpath, node[0].decode('utf8', 'ignore')), 'utf8')
-			fid = (rfile, 0)
-			# pull the file to our local storage device
-			# if destination file exists then check if 
-			# source file is newer than destination
-			print('thinking about pulling %s' % lfile)
-			if os.path.exists(lfile):
-				# get remote file time
-				smtime = c.FileGetTime(fid)
-				# get local file time
-				mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime = os.stat(lfile)
-				if ctime > mtime:
-					mtime = ctime
-				if mtime >= smtime:
-					# local file is either same time or greater so
-					# do not worry about pulling the remote file
-					print('local file is same time or greater')
-					continue
-			print('    pulling %s from %s' % (lfile, fid))
-			if dry is False:
-				# make sure destination directory structure exists
-				base = lfile[0:lfile.rfind('/')]
-				if os.path.exists(base) is False:
-					os.makedirs(base)
-				c.FilePull(lfile, fid)
-		
-		# go through the directories that we saved
-		for dir in dirstodo:
-			print('  going into %s' % dir)
-			self.dopull(name, rhost, rport, sac, cfg, rpath, '%s/%s' % (lpath, dir), filter, base = base, c = c, erpath = '%s/%s' % (erpath, dir), dry = dry)
-	
 	def enumfilecount(self, base, count = 0, dcount = 0, depth = 0):
 		nodes = os.listdir(base)
 		for node in nodes:
@@ -553,13 +486,246 @@ class Backup:
 			# this is the non-recursive multiple asynchronous request style
 			self.syncdel_async(self.accountname, target, stash = stash)
 	
+	'''
+		I originally started with a threaded model because of the complexity of the entire
+		process per file. There has to be a size check and time check then a decision is
+		made to upload or hash the remote file and then patch the remote file. The syncdel
+		was easily implemented asynchronously because of its simplistic nature. It simply
+		had to issue one request and recieve one reply. This function has to multiplex many
+		different individually chained steps.
+	'''
+	def dopush_async(self, account, target):
+		cfg = LoadConfig(account = account)
+		tcfg = cfg['paths'][target]
+		rhost = cfg['remote-host']
+		rport = cfg['remote-port']
+		sac = bytes(cfg['storage-auth-code'], 'utf8')
+		c = Client2(rhost, rport, sac)
+		c.Connect(essl = cfg['ssl'])
+		# produce remote and local paths
+		lpath = tcfg['disk-path']
+		lpbsz = len(lpath)
+		rpath = bytes(target, 'utf8')
+		
+		jobDirEnum = []				# stage 1
+		jobGetRemoteSize = []		# stage 2
+		jobGetModifiedDate = []		# stage 3 (optional)
+		jobPatch = []				# stage 4.A
+		jobUpload = []				# stage 4.B
+		
+		jobDirEnum.append(lpath)
+
+		'''
+			These turn the async polling model into a async callback model, at
+			least to some extent. We still poll but we do not poll individual
+			objects which reduces polling time (CPU burn)..
+		'''
+		def __eventFileSize(pkg, result, vector):
+			jobGetRemoteSize.append((pkg, result))
+		def __eventFileTime(pkg, result, vector):
+			jobGetModifiedDate.append((pkg, result)) 
+		
+		databytesout = 0
+		# push starting directory into dirwait
+		while len(jobDirEnum) + len(jobGetRemoteSize) + len(jobGetModifiedDate) + len(jobPatch) + len(jobUpload) > 0:
+			# read any messages
+			c.HandleMessages(0, None)
+			
+			# i do this after handle messages because it will be calling
+			# the callbacks which will update the job lists and if we call
+			# it before only jobUpload and jobPatch will likely be over zero
+			# because the other jobs execute right as they are received
+			dt = time.time() - c.bytesoutst
+			outdata = '%.03f' % (databytesout / 1024 / 1024 / dt)
+			outcontrol = '%.03f' % ((c.allbytesout - databytesout) / 1024 / 1024 / dt)
+			output.SetTitle('DataOutMB', outdata)
+			output.SetTitle('ControlOutMB', outcontrol)
+			output.SetTitle('Jobs[DirEnum]', len(jobDirEnum))
+			output.SetTitle('Jobs[GetRemoteSize]', len(jobGetRemoteSize))
+			output.SetTitle('Jobs[GetModDate]', len(jobGetModifiedDate))
+			output.SetTitle('Jobs[Patch]', len(jobPatch))
+			output.SetTitle('Jobs[Upload]', len(jobUpload))
+			
+			# send if can send
+			boutbuf = c.getBytesToSend()			
+			# just hold here until we get the buffer down; this
+			# is mainly going to be caused by upload operations
+			# throwing megabytes of data into the buffer
+			if boutbuf > 1024 * 25:
+				print('emptying outbound buffer..')
+				# just empty the out going buffer completely.. then of course
+				# fill it up again; having the buffer fill up is not actually
+				# a bad thing as it means we are exceeding the network throughput
+				# which is good because our CPU wont be running wide open
+				while c.getBytesToSend() > 0:
+					# pull data out of network driver buffers into our own buffers or
+					# process it if it has callbacks and essentially place it into
+					# our own buffers just processed <humor intended> ...
+					# OR/AND
+					# flush data from our buffers
+					c.handleOrSend()
+					#print('left:%s' % c.getBytesToSend())
+					
+					# keep the status updated
+					dt = time.time() - c.bytesoutst
+					outdata = '%.03f' % (databytesout / 1024 / 1024 / dt)
+					outcontrol = '%.03f' % ((c.allbytesout - databytesout) / 1024 / 1024 / dt)
+					output.SetTitle('DataOutMB', outdata)
+					output.SetTitle('ControlOutMB', outcontrol)
+					output.SetTitle('OutBuffer', c.getBytesToSend())
+				#print('continuing..')
+			else:
+				# just send what we can right now
+				c.send()
+
+			# enum directories and create tadjobs
+			quecount = len(jobGetRemoteSize) + len(jobGetModifiedDate) + len(jobPatch) + len(jobUpload)
+			# just an effort to keep from eating too much memory with jobs, if we are here
+			# we are likely way ahead of the network in terms of throughput so just wait a
+			# bit before adding more jobs..
+			if quecount < 2000:
+				delayedjobDirEnum = []
+				for dej in jobDirEnum:
+					#print('<enuming-dir>:%s' % dej)
+					nodes = os.listdir(dej)
+					for node in nodes:
+						_lpath = '%s/%s' % (dej, node)
+						if os.path.isdir(_lpath):
+							# delay this..
+							delayedjobDirEnum.append(_lpath)
+							continue
+						stat = os.stat(_lpath)
+						# send request and create job entry
+						_lsize = stat.st_size
+						_rpath = rpath + bytes(_lpath[lpbsz:], 'utf8')
+						#print('<getting-size>:%s' % _rpath)
+						if _lsize > 1024 * 1024 * 200:
+							continue
+							
+						pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
+						c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
+					
+					# just do one directory each time; want this to
+					# stay as a loop so it can be adjusted; also remove
+					# it so it is not done over and over..
+					output.SetTitle('LastDir', dej)
+					jobDirEnum.remove(dej)
+					break
+				# we can not add them as we are iterating or
+				# we will never stop iterating
+				for delayed in delayedjobDirEnum:
+					jobDirEnum.append(delayed)
+
+			# look for replies on remote sizes and create next job
+			tr = []
+			for rsj in jobGetRemoteSize:
+				pkg = rsj[0]
+				_result = rsj[1]
+				_rpath = pkg[0]
+				_lpath = pkg[1]
+				_lsize = pkg[2]
+				_vector = pkg[3]
+				_lmtime = pkg[4]
+				# result[0] = success code is non-zero and result[1] = size (0 on failure code)
+				_rsize = _result[1]
+				# if file does not exist go trun/upload route.. if it does
+				# exist and the size is the same then check the file modified
+				# date and go from there
+				if _lsize == _rsize and _result[0] == 1:
+					# need to check modified date
+					#print('<getting-time>:%s' % _lpath)
+					pkg = (_rpath, _lpath, _rsize, _lsize, _vector, _lmtime)
+					c.FileTime(_rpath, Client.IOMode.Callback, (__eventFileTime, pkg))
+				else:
+					# first make the remote size match the local size
+					#print('<trun>:%s' % _lpath)
+					c.FileTrun(_rpath, _lsize, Client.IOMode.Discard)
+					# need to decide if we want to upload or patch
+					if True or math.min(_rsize, _lsize) / math.max(_rsize, _lsize) < 0.5:
+						# make upload job
+						print('<upload>:%s' % _lpath)
+						jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
+					else:
+						# make patch job
+						jobPatch.append([_rpath, _lpath, _rsize, _lsize])
+			jobGetRemoteSize = []
+			
+			# iterate
+			tr = []
+			for rtj in jobGetModifiedDate:
+				pkg = rtj[0]
+				_rmtime = rtj[1]
+				_rpath = pkg[0]
+				_lpath = pkg[1]
+				_rsize = pkg[2]
+				_lsize = pkg[3]
+				_vector = pkg[4]
+				_lmtime = pkg[5]
+				if _rmtime < _lmtime:
+					# need to decide if we want to upload or patch
+					if True or math.min(_rsize, _lsize) / math.max(_rsize, _lsize) < 0.5:
+						# make upload job
+						print('<upload>:%s' % _lpath)
+						jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
+					else:
+						# make patch job
+						jobPatch.append([_rpath, _lpath, _rsize, _lsize])
+				else:
+					# just drop it since its either up to date or newer
+					#print('<up-to-date>:%s' % _lpath)
+					pass
+				continue
+			jobGetModifiedDate = []
+			
+			# 
+			tr = []
+			for uj in jobUpload:
+				_rpath = uj[0]
+				_lpath = uj[1]
+				_rsize = uj[2]
+				_lsize = uj[3]
+				_curoff = uj[4]
+				_chunksize = 1024 * 1024
+				# see what we can send
+				_rem = _lsize - _curoff
+				if _rem > _chunksize:
+					_rem = _chunksize
+				else:
+					tr.append(uj)
+				# open local file and read chunk
+				_fd = open(_lpath, 'rb')
+				_fd.seek(_curoff)
+				_data = _fd.read(_rem)
+				_fd.close()
+				print('<wrote>:%s:%x' % (_lpath, _curoff))
+				c.FileWrite(_rpath, _curoff, _data, Client.IOMode.Discard)
+				# help track statistics for data out in bytes (non-control data)
+				databytesout = databytesout + _rem
+				# advance our current offset
+				uj[4] = _curoff + _rem
+			# remove finished jobs
+			ct = time.time()
+			for uj in tr:
+				# set the modified time on the file to the current
+				# time to represent it is up to date
+				_rpath = uj[0]
+				c.FileSetTime(_rpath, ct, ct, Client.IOMode.Discard)
+				jobUpload.remove(uj)
+			continue
+	'''
+		I originally started with an recursive model which was slow because of the
+		net latency between the client and server where i waited for each reply to
+		each request. This new model is asynchronous and tries to max out the net
+		and cpu if possible. I might add in a throttle later, but for now it just
+		shovels packets out as fast as possible.
+	'''
 	def syncdel_async(self, account, target, stash = True):
 		cfg = LoadConfig(account = account)
 		tcfg = cfg['paths'][target]
 		rhost = cfg['remote-host']
 		rport = cfg['remote-port']
 		sac = bytes(cfg['storage-auth-code'], 'utf8')
-		c = client.Client2(rhost, rport, sac)
+		c = Client2(rhost, rport, sac)
 		c.Connect(essl = cfg['ssl'])
 		# produce remote and local paths
 		lpath = tcfg['disk-path']
@@ -692,7 +858,7 @@ class Backup:
 						# are were actually moved or copied somewhere else - i am thinking of
 						# using another algorithm to pass over and link up clones saving server
 						# space
-						c.FileMove(remote, _newremote)
+						c.FileMove(remote, _newremote, Client.IOMode.Discard)
 						# let push function update local file to remote
 						continue
 						
@@ -704,7 +870,7 @@ class Backup:
 						#_newremote = b'%s/%s.%s' % (rpath, time.time(), nodename)
 						t = int(time.time() * 1000000.0)
 						_newremote = rpath + b'/' + bytes('%s' % t, 'utf8') + b'\x00' + nodename
-						c.FileMove(remote, _newremote)
+						c.FileMove(remote, _newremote, Client.IOMode.Discard)
 						# let push function update local directory to remote
 						continue
 						
@@ -718,7 +884,7 @@ class Backup:
 						#_newremote = b'%s/%s.%s' % (rpath, time.time(), nodename)
 						t = int(time.time() * 1000000.0)
 						_newremote = rpath + b'/' + bytes('%s' % t, 'utf8') + b'\x00' + nodename
-						c.FileMove(remote, _newremote)
+						c.FileMove(remote, _newremote, Client.IOMode.Discard)
 						continue
 					continue
 					# <end-of-node-loop> (looping over results of request)
@@ -741,84 +907,7 @@ class Backup:
 			# if we just fly by we will end up burning
 			# like 100% CPU *maybe* so lets delay a bit in
 			#time.sleep(0.01)
-	
-	'''
-		This will push any local files to the remote, or update existing to match local.
-	'''
-	def dopush(self, name, rhost, rport, sac, cfg, dpath, rpath, filter, base = None, c = None, dry = True, lastdonereport = 0, _donecount = 0):
-		if c is None:
-			# only connect if not dry run
-			if not dry:
-				print('CONNECTING TO REMOTE SERVER')
-				c = client.Client2(rhost, rport, bytes(sac, 'utf8'))
-				cfg = LoadConfig(self.accountname)
-				c.Connect(essl = cfg['ssl'])
-				print('CONNECTION ESTABLISHED, SECURED, AND AUTHENTICATED')
-			
-		if rpath is None:
-			rpath = ''
-			child = False
-		else:
-			child = True
-			
-		if base is None:
-			base = dpath
-		
-		# track how many files we have processed
-		donecount = 0
-		
-		try:
-			nodes = os.listdir(dpath)
-		except OSError:
-			print('    skipping')
-			return
-		
-		# push any locals files to the server
-		for node in nodes:
-			fpath = '%s/%s' % (dpath, node)
-			# if directory..
-			if os.path.isdir(fpath):
-				if DoFilter(filter, fpath):
-					if dry:
-						print('[DIR-OK] %s' % fpath)
-					# also update donecount along the way
-					donecount = donecount + self.dopush(name, rhost, rport, sac, cfg, fpath, '%s/%s' % (rpath, node), filter, base = base, c = c, dry = dry, lastdonereport = lastdonereport, _donecount = donecount + _donecount)
-				else:
-					if dry:
-						print('[DIR-IGNORE] %s' % fpath)
-				continue
-			# run filters
-			if DoFilter(filter, fpath):
-				# backup the file
-				base = fpath[0:fpath.rfind('/') + 1]
-				_fpath = fpath[len(base):]
-				#print('PROCESSING [%s]' % _fpath)
-				fid = bytes('%s/%s/%s' % (name, rpath, _fpath), 'utf8')
-				if dry is False:
-					c.FilePush(fid, fpath)
-				if dry is True:
-					print('[OK] %s' % fpath)
-			else:
-				if dry is True:
-					print('[IGNORED] %s' % fpath)
-			donecount = donecount + 1
-			ct = time.time()
-			if ct - lastdonereport > 10:
-				lastdonereport = ct
-				# update the title to reflect how many files
-				# we have processed since the last update
-				output.SetTitle('filedonecount', donecount + _donecount)
-		
-		# iterate through remote files
-		#self.__handle_missingremfiles(
-			# delete/stash any remote that no longer exists locally
-			
-		if not child:
-			# allow all workers to finish
-			c.WaitUntilWorkersFinish()
-			return
-		return donecount
-				
+					
 	def __cmd_pull_target(self, cfg, name, target, rpath = None, lpath = None, dry = True):
 		print('pulling [%s]' % name)
 		
@@ -834,7 +923,7 @@ class Backup:
 		return self.dopull(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, rpath = rpath, lpath = lpath, filter = filter, dry = dry)
 	
 	def __enumfilesandreport_remote(self, client, base, lastreport = 0, initial = True):
-		nodes = client.DirList(base)
+		nodes = client.DirList(base, Client.IOMode.Block)
 		count = 0
 		for node in nodes:
 			nodename = node[0]
@@ -903,11 +992,11 @@ class Backup:
 		output.SetTitle('target', name)
 		
 		dpath = target['disk-path']
-		filter = target['filter']
+		#filter = target['filter']
 		
-		rhost = cfg['remote-host']
-		rport = cfg['remote-port']
-		sac = cfg['storage-auth-code']
+		#rhost = cfg['remote-host']
+		#rport = cfg['remote-port']
+		#sac = cfg['storage-auth-code']
 		
 		# enumerate all files and directories
 		# using a separate thread so we can
@@ -922,7 +1011,9 @@ class Backup:
 		self.tfscan = tfscan
 		tfscan.start()
 		
-		ret = self.dopush(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, rpath = rpath, filter = filter, dry = dry)
+		ret = self.dopush_async(self.accountname, name)
+		#def dopush_async(self, account, target):
+		#ret = self.dopush(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, dpath = dpath, rpath = rpath, filter = filter, dry = dry)
 		print('DONE')
 		return ret
 		

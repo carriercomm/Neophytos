@@ -127,6 +127,7 @@ class StatusQuery:
 					info = self.Fetch(sock)
 					if info is not None:
 						services[x] = info
+					sock.sendall(b'terminate')
 					sock.close()
 					sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 				except Exception as e:

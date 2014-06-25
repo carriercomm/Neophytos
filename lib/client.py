@@ -26,11 +26,18 @@ class QuotaLimitReachedException(Exception):
 	
 class ConnectionDeadException(Exception):
 	pass
-	
+		
 class Client:
+	class IOMode:
+		Block 		= 1		# Wait for the results.
+		Async 		= 2		# Return, and will check for results.
+		Callback 	= 3		# Execute callback on arrival.
+		Discard		= 4		# Async, but do not keep results.
+		
 	def __init__(self, rhost, rport, aid):
 		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.keepresult = {}
+		self.callback = {}
 		self.vector = 0
 		self.rhost = rhost
 		self.rport = rport
@@ -56,6 +63,7 @@ class Client:
 		self.data = BytesIO()
 		self.datasz = None
 		self.datatosend = []
+		self.bytestosend = 0
 		
 		self.dbgl = time.time()
 		self.dbgv = 0
@@ -80,7 +88,7 @@ class Client:
 		if not self.ssl:
 			# get public key
 			#print('requesting public key')
-			self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), False, True)
+			self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), Client.IOMode.Async)
 			# wait for packet
 			s, v, pubkey = self.ReadMessage()
 			type, esz = struct.unpack_from('>BH', pubkey)
@@ -93,7 +101,7 @@ class Client:
 			key = IDGen.gen(10)
 			#print('key:%s' % key)
 			self.crypter = SymCrypt(key)
-			self.WriteMessage(struct.pack('>B', ClientType.SetupCrypt) + key, False, True)
+			self.WriteMessage(struct.pack('>B', ClientType.SetupCrypt) + key, Client.IOMode.Async)
 			# wait for reply
 			#print('waiting for setup crypt reply')
 			self.ReadMessage()
@@ -102,7 +110,7 @@ class Client:
 		# do this even with SSL
 		data = struct.pack('>B', ClientType.Login) + self.aid
 		#print('writing-message:[%s]' % data)
-		self.WriteMessage(data, False, True)
+		self.WriteMessage(data, Client.IOMode.Async)
 		#print('waiting for login reply')
 		result = self.ProcessMessage(0, 0, self.ReadMessage()[2])
 		# initialize the time we starting recording the number of bytes sent
@@ -172,6 +180,9 @@ class Client:
 			# either store it or throw it away
 			if v in self.keepresult:
 				self.keepresult[v] = msg
+			# check for callback
+			if v in self.callback:
+				self.callback[v][0](self.callback[v][1], msg, v)
 			continue
 		self.socklockread.release()
 		return
@@ -265,6 +276,8 @@ class Client:
 			return (struct.unpack_from('>B', data)[0], data[1:])
 		if type == ServerType.FileStash:
 			return struct.unpack_from('>B', data)[0]
+		if type == ServerType.FileSetTime:
+			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileGetStashes:
 			parts =  data.split('.')
 			out = []
@@ -356,18 +369,11 @@ class Client:
 		# return the data
 		return self.datasv, self.datav, data
 		
-	def WriteMessage(self, data, block, discard):
+	def WriteMessage(self, data, mode, callback = None):
 		with self.socklockwrite:
 			vector = self.vector
 			self.vector = self.vector + 1
-			
-		# little sanity here.. if were blocking for
-		# a reply for a vector then we dont want to
-		# have it discarded by another thread if we
-		# are using multiple threads... SO..
-		if block:
-			discard = False
-			
+		
 		# get type
 		type = data[0]
 		
@@ -401,16 +407,18 @@ class Client:
 		with self.socklockwrite:
 			#print('inside write lock')
 			# setup to save message so it is not thrown away
-			if discard is False:
+			if mode == Client.IOMode.Callback:
+				self.callback[vector] = callback
+			if mode == Client.IOMode.Async:
 				self.keepresult[vector] = None
-				#print('    keeping result for vector:%s' % vector)
+			
 			self.send(struct.pack('>IQ', len(data), vector))
 			self.send(data)
 			# track the total bytes out
 			self.allbytesout = self.allbytesout + 4 + 8 + len(data)
 			#print('sent data for vector:%s' % vector)
 			
-		if block:
+		if mode == Client.IOMode.Block:
 			#print('blocking by handling messages')
 			#print('blocking for vector:%s' % vector)
 			res = self.HandleMessages(None, lookfor = vector)
@@ -421,11 +429,28 @@ class Client:
 	def canSend(self):
 		return len(self.datatosend) > 0
 	
-	def send(self, data = None):
+	def getBytesToSend(self):
+		return self.bytestosend
+	
+	def handleOrSend(self):
+		# wait until the socket can read or write
+		read, write, exp = select.select([self.sock], [self.sock], [])
+		
+		if read:
+			# it will block by default so force
+			# it to not block/wait
+			self.HandleMessages(0, None)
+		if write:
+			# dump some of the buffers if any
+			self.send()
+	
+	def send(self, data = None, timeout = 0):
 		if data is not None:
 			self.datatosend.append(data)
+			self.bytestosend = self.bytestosend + len(data)
 		
-		self.sock.settimeout(0)
+		self.sock.settimeout(timeout)
+		
 		# check there is data to send
 		while len(self.datatosend) > 0:
 			# pop from the beginning of the queue
@@ -441,13 +466,15 @@ class Client:
 					# of returning zero bytes sent it seems
 					self.datatosend.insert(0, data[totalsent:])
 					return False
-					
+				
 				if sent == 0:
 					# place remaining data back at front of queue and
 					# we will try to send it next time
 					self.datatosend.insert(0, data[totalsent:])
 					return False
+				#print('@sent', sent)
 				totalsent = totalsent + sent
+			self.bytestosend = self.bytestosend - totalsent
 		return True
 	
 	'''
@@ -542,51 +569,43 @@ class Client:
 		
 		return bytes(out)
 		
-	def DirList(self, dir, block = True, discard = False):
+	def DirList(self, dir, mode, callback = None):
 		dir = self.GetServerPathForm(dir)
-		return self.WriteMessage(struct.pack('>B', ClientType.DirList) + dir, block, discard)
-	def FileRead(self, fid, offset, length, block = True, discard = False):
+		return self.WriteMessage(struct.pack('>B', ClientType.DirList) + dir, mode, callback)
+	def FileRead(self, fid, offset, length, mode, callback = None):
 		dir = self.GetServerPathForm(fid)
-		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + fid, block, discard)
-	def FileWrite(self, fid, offset, data, block = True, discard = False):
+		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + fid, mode, callback)
+	def FileWrite(self, fid, offset, data, mode, callback = None):
 		if self.bz2compression > 0:
 			data = zlib.compress(data, self.bz2compression)
 		fid = self.GetServerPathForm(fid)
-		return self.WriteMessage(struct.pack('>BQHB', ClientType.FileWrite, offset, len(fid), self.bz2compression) + fid + data, block, discard)
-	def FileSize(self, fid, block = True, discard = False):
+		return self.WriteMessage(struct.pack('>BQHB', ClientType.FileWrite, offset, len(fid), self.bz2compression) + fid + data, mode, callback)
+	def FileSetTime(self, fid, atime, mtime, mode, callback = None):
 		fid = self.GetServerPathForm(fid)
-		return self.WriteMessage(struct.pack('>B', ClientType.FileSize) + fid, block, discard)
-	def FileTrun(self, fid, newsize, block = True, discard = False):
+		return self.WriteMessage(struct.pack('>Bdd', ClientType.FileSetTime, atime, mtime) + fid, mode, callback)
+	def FileSize(self, fid, mode, callback = None):
 		fid = self.GetServerPathForm(fid)
-		return self.WriteMessage(struct.pack('>BQ', ClientType.FileTrun, newsize) + fid, block, discard)
-	def FileDel(self, fid, block = True, discard = False):
+		return self.WriteMessage(struct.pack('>B', ClientType.FileSize) + fid, mode, callback)
+	def FileTrun(self, fid, newsize, mode, callback = None):
 		fid = self.GetServerPathForm(fid)
-		return self.WriteMessage(struct.pack('>B', ClientType.FileDel) + fid, block, discard)
-	def FileCopy(self, srcfid, dstfid, block = True, discard = False):
+		return self.WriteMessage(struct.pack('>BQ', ClientType.FileTrun, newsize) + fid, mode, callback)
+	def FileDel(self, fid, mode, callback = None):
+		fid = self.GetServerPathForm(fid)
+		return self.WriteMessage(struct.pack('>B', ClientType.FileDel) + fid, mode, callback)
+	def FileCopy(self, srcfid, dstfid, mode, callback = None):
 		srcfid = self.GetServerPathForm(srcfid)
 		dstfid = self.GetServerPathForm(dstfid)
-		return self.WriteMessage(struct.pack('>BH', ClientType.FileCopy, len(srcfid)) + srcfid + dstfid, block, discard)
-	def FileMove(self, srcfid, dstfid, block = True, discard = False):
+		return self.WriteMessage(struct.pack('>BH', ClientType.FileCopy, len(srcfid)) + srcfid + dstfid, mode, callback)
+	def FileMove(self, srcfid, dstfid, mode, callback = None):
 		srcfid = self.GetServerPathForm(srcfid)
 		dstfid = self.GetServerPathForm(dstfid)
-		return self.WriteMessage(struct.pack('>BH', ClientType.FileMove, len(srcfid)) + srcfid + dstfid, block, discard)
-	def FileHash(self, fid, offset, length, block = True, discard = False):
+		return self.WriteMessage(struct.pack('>BH', ClientType.FileMove, len(srcfid)) + srcfid + dstfid, mode, callback)
+	def FileHash(self, fid, offset, length, mode, callback = None):
 		fid = self.GetServerPathForm(fid)
-		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileHash, offset, length) + fid, block, discard)
-	def FileStash(self, fid, block = True, discard = False):
+		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileHash, offset, length) + fid, mode, callback)
+	def FileTime(self, fid, mode, callback = None):
 		fid = self.GetServerPathForm(fid)
-		return self.WriteMessage(struct.pack('>B', ClientType.FileStash) + fid[0])
-	def FileGetStashes(self, fid, block = True, discard = False):
-		# this was going to be implemented server side, and i might still do it but
-		# at the moment i am thinking about implementing it client side and having
-		# the client do all the heavy CPU work of decoding and breaking off the stash
-		# as this also removes the server and makes it easier for the client to 
-		# implement it's own stashing format
-		raise Exception('Not Implemented')
-		#return self.WriteMessage(struct.pack('>BH', ClientType.FileGetStashes, fid[1]) + fid[0])
-	def FileTime(self, fid, block = True, discard = False):
-		fid = self.GetServerPathForm(fid)
-		return self.WriteMessage(struct.pack('>B', ClientType.FileTime) + fid, block, discard)
+		return self.WriteMessage(struct.pack('>B', ClientType.FileTime) + fid, mode, callback)
 
 class Client2(Client):
 	def __init__(self, rhost, rport, aid, maxthread = 128):

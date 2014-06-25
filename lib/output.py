@@ -128,12 +128,14 @@ class TCPServer:
 	'''
 	def Entry(self):
 		global lock
+		global title
 	
 		while True:
 			# block on select
 			input = [self.sock]
 			# add clients
 			inputs = input + self.socks
+			title['sockcount'] = len(self.socks)
 			# block until something happens
 			readable, writable, exc = select.select(input, [], input)
 			
@@ -155,18 +157,17 @@ class TCPServer:
 					self.socks.append(nsock)
 				except Exception as e:
 					# just ignore it and the client sock gets silently dropped
-					pass
+					nsock.close()
 			
 			for sock in readable:
 				# discard data
 				data = sock.read()
-				if not data:
-					socks.remove(sock)
-					sock.close()
+				self.socks.remove(sock)
+				sock.close()
 
 			for sock in exc:
 				# drop client
-				socks.remove(sock)
+				self.socks.remove(sock)
 				sock.close()
 			continue
 

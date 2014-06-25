@@ -251,18 +251,27 @@ class QTargetAndStatusView(QtGui.QFrame):
 			if guid not in uidtorow:
 				row = self.stable.AddRow()
 				uidtorow[guid] = row
-				print('new row')
+				print('new row', guid)
 			else:
 				row = uidtorow[guid]
-				print('old row')
+				print('old row', guid)
 			
-			for k in title:
-				row.SetCol(k, title[k])
+			try:
+				for k in title:
+					row.SetCol(k, title[k])
+			except:
+				# work-around to hard to track down bug
+				del uidtorow[guid]
+				continue
 			row.Ready()
 		
 		# look for services that have not updated recently
 		toremove = []
 		for guid in self.lastuidupdate:
+			print('GOTGUID', guid)
+			if guid not in self.uidtorow:
+				toremove.append(guid)
+				continue
 			row = self.uidtorow[guid]
 			delta = time.time() - self.lastuidupdate[guid]
 			if delta > 60 * 0.5:
@@ -275,9 +284,11 @@ class QTargetAndStatusView(QtGui.QFrame):
 				row.Drop()
 				row.Update()
 				toremove.append(guid)
+				print('REMOVING', guid)
 		
 		for guid in toremove:
 			del self.lastuidupdate[guid]
+			print('REMOVED', guid)
 		# <end-of-function>
 		
 	def PeriodicScanThreadEntry(self):

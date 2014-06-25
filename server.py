@@ -148,6 +148,14 @@ class ServerClient:
 		self.fdcache = None
 		self.__fdcache = None
 	
+	def CloseFileDescriptor(self, fpath):
+		if fpath in self.fdcache:
+			ci = self.fdcache[fpath]
+			ci[1].close()
+			del self.fdcache[fpath]
+			self.__fdcache.remove(fpath)
+			return
+			
 	def GetFileDescriptor(self, fpath, mode):
 		if len(self.fdcache) > 100:
 			# we need to close one.. we will close the oldest
@@ -305,6 +313,27 @@ class ServerClient:
 		# be logged into the system
 		if self.info is None:
 			self.WriteMessage(struct.pack('>B', ServerType.LoginRequired), vector)
+			return
+		
+		if type == ClientType.FileSetTime:
+			atime, mtime = struct.unpack_from('>dd', msg)
+			fname = self.SanitizePath(msg[8 * 2:]).decode('utf8', 'ignore')
+
+			# get path parts
+			fbase, fname = self.GetPathParts(fname)
+			
+			# build full path to file (including revision)
+			fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)
+			if os.path.exists(fpath) is False:
+				# oops.. no such file (lets tell them it failed)
+				self.WriteMessage(struct.pack('>BB', ServerType.FileSetTime, 0), vector)
+				return
+
+			self.CloseFileDescriptor(fpath)
+			
+			os.utime(fpath, (atime, mtime))
+			
+			self.WriteMessage(struct.pack('>BB', ServerType.FileSetTime, 1), vector)
 			return
 			
 		# return a list of nodes in directory
@@ -470,7 +499,7 @@ class ServerClient:
 		
 		fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)
 		
-		if os.path.exists(fpath) is False:
+		if os.path.exists(fpath) is False or os.path.isdir(fpath) is True:
 			self.WriteMessage(struct.pack('>BBQ', ServerType.FileSize, 0, 0), vector)
 			return
 		
@@ -554,6 +583,8 @@ class ServerClient:
 		#print('fd:%s newsize:%s' % (fd, newsize))
 		os.ftruncate(fd, newsize)
 		os.close(fd)
+		# make it look like it has never been updated
+		os.utime(fpath, (0, 0))
 		# add new size back onto used quota
 		self.info['disk-used'] = self.info['disk-used'] + newsize
 		# save account information
@@ -582,6 +613,8 @@ class ServerClient:
 			return
 		
 		fd = self.GetFileDescriptor(fpath, 'r+b')
+		# set accessed and modified time to zero (so it is not considered up to date)
+		os.utime(fpath, (0, 0))
 		
 		fd.seek(0, 2)
 		max = fd.tell()
@@ -760,6 +793,7 @@ class Server:
 			# accept incoming connections (weak encryption connections)
 			if self.sock in readable:
 				nsock, caddr = self.sock.accept()
+				nsock.settimeout(0)
 				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self)
 				self.sc[caddr] = nsc
 				self.socktosc[nsock] = nsc
@@ -773,6 +807,7 @@ class Server:
 				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self, essl = True)
 				# the SSL will change the sock
 				nsock = nsc.GetSock()
+				nsock.settimeout(0)
 				self.sc[caddr] = nsc
 				self.socktosc[nsock] = nsc
 				readable.remove(self.sslsock)
