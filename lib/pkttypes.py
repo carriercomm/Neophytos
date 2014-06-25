@@ -16,6 +16,7 @@ class ClientType:
 	Login			= 14
 	FileTime		= 15
 	FileSetTime		= 16
+	Echo		 	= 17
 	
 class ServerType:
 	DirList 			= 0
@@ -38,3 +39,4 @@ class ServerType:
 	FileTime			= 17
 	SetCompressionLevel = 18
 	FileSetTime			= 19
+	Echo				= 20

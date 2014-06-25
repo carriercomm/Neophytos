@@ -314,7 +314,10 @@ class ServerClient:
 		if self.info is None:
 			self.WriteMessage(struct.pack('>B', ServerType.LoginRequired), vector)
 			return
-		
+		# used to ensure elements have been processed preceding this
+		if type == ClientType.Echo:
+			self.WriteMessage(struct.pack('>B', ServerType.Echo), vector)
+			return
 		if type == ClientType.FileSetTime:
 			atime, mtime = struct.unpack_from('>dd', msg)
 			fname = self.SanitizePath(msg[8 * 2:]).decode('utf8', 'ignore')
@@ -545,7 +548,9 @@ class ServerClient:
 		#print('newsize:%s' % newsize)
 		# make directories
 		dirpath = fpath[0:fpath.rfind('/')]
+		#print('trun', dirpath)
 		if os.path.exists(dirpath) is False:
+			#print('making dirs', dirpath)
 			os.makedirs(dirpath)
 		# make file if needed
 		if os.path.exists(fpath) is False:

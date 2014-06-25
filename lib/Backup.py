@@ -515,6 +515,9 @@ class Backup:
 		
 		jobDirEnum.append(lpath)
 
+		echo = { 'echo': False }
+		sentEcho = False
+		
 		'''
 			These turn the async polling model into a async callback model, at
 			least to some extent. We still poll but we do not poll individual
@@ -524,12 +527,41 @@ class Backup:
 			jobGetRemoteSize.append((pkg, result))
 		def __eventFileTime(pkg, result, vector):
 			jobGetModifiedDate.append((pkg, result)) 
+		def __eventEcho(pkg, result, vector):
+			pkg['echo'] = True
+			print('GOT ECHO')
 		
+		# statistics
 		databytesout = 0
-		# push starting directory into dirwait
-		while len(jobDirEnum) + len(jobGetRemoteSize) + len(jobGetModifiedDate) + len(jobPatch) + len(jobUpload) > 0:
+		stat_uptodate = 0
+		stat_uploaded = 0
+		stat_patched = 0
+		stat_checked = 0
+		
+		dd = time.time()
+		
+		# keep going until we get the echo 
+		while echo['echo'] is False:
 			# read any messages
 			c.HandleMessages(0, None)
+			
+			#if time.time() - dd > 20:
+			#	c.dbgdump()
+			#	exit()
+			
+			# do this after handle messages because there may be some added; if quecount
+			# is zero it means no pending operations
+			quecount = len(jobDirEnum) + len(jobGetRemoteSize) + len(jobGetModifiedDate) + len(jobPatch) + len(jobUpload)
+			
+			output.SetTitle('WaitingVectors', c.waitCount())
+			# if we are not waiting on anything from the client then we could close
+			# the connection *except* it might cause the remote to drop packets that
+			# are not waiting on a result from.. so since we can determine that we
+			# will never generate any more packets we can send an echo which will
+			# get a reply and once that happens we can shut down the connection
+			if quecount == 0 and c.waitCount() == 0 and sentEcho is False:
+				sentEcho = True
+				c.Echo(Client.IOMode.Callback, (__eventEcho, echo))
 			
 			# i do this after handle messages because it will be calling
 			# the callbacks which will update the job lists and if we call
@@ -545,9 +577,13 @@ class Backup:
 			output.SetTitle('Jobs[GetModDate]', len(jobGetModifiedDate))
 			output.SetTitle('Jobs[Patch]', len(jobPatch))
 			output.SetTitle('Jobs[Upload]', len(jobUpload))
+			output.SetTitle('UpToDate', stat_uptodate)
+			output.SetTitle('Uploaded', stat_uploaded)
+			output.SetTitle('Checked', stat_checked)
+			output.SetTitle('Patched', stat_patched)
 			
 			# send if can send
-			boutbuf = c.getBytesToSend()			
+			boutbuf = c.getBytesToSend()
 			# just hold here until we get the buffer down; this
 			# is mainly going to be caused by upload operations
 			# throwing megabytes of data into the buffer
@@ -601,7 +637,7 @@ class Backup:
 						#print('<getting-size>:%s' % _rpath)
 						if _lsize > 1024 * 1024 * 200:
 							continue
-							
+						stat_checked = stat_checked + 1
 						pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
 						c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
 					
@@ -631,6 +667,8 @@ class Backup:
 				# if file does not exist go trun/upload route.. if it does
 				# exist and the size is the same then check the file modified
 				# date and go from there
+				if _lsize != _rsize:
+					print('[size] file:%s local:%s remote:%s' % (_lpath, _lsize, _rsize))
 				if _lsize == _rsize and _result[0] == 1:
 					# need to check modified date
 					#print('<getting-time>:%s' % _lpath)
@@ -673,7 +711,7 @@ class Backup:
 				else:
 					# just drop it since its either up to date or newer
 					#print('<up-to-date>:%s' % _lpath)
-					pass
+					stat_uptodate = stat_uptodate + 1
 				continue
 			jobGetModifiedDate = []
 			
@@ -711,7 +749,9 @@ class Backup:
 				_rpath = uj[0]
 				c.FileSetTime(_rpath, ct, ct, Client.IOMode.Discard)
 				jobUpload.remove(uj)
+				stat_uploaded = stat_uploaded + 1
 			continue
+		c.close()
 	'''
 		I originally started with an recursive model which was slow because of the
 		net latency between the client and server where i waited for each reply to

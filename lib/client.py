@@ -72,6 +72,9 @@ class Client:
 	def Shutdown(self):
 		self.sock.close()
 	
+	def close(self):
+		self.sock.close()
+	
 	def Connect(self, essl = False):
 		# try to establish a connection
 		if essl:
@@ -87,32 +90,22 @@ class Client:
 		
 		if not self.ssl:
 			# get public key
-			#print('requesting public key')
-			self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), Client.IOMode.Async)
-			# wait for packet
-			s, v, pubkey = self.ReadMessage()
+			vector = self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), Client.IOMode.Async)
+			s, v, pubkey = self.HandleMessages(lookfor = vector)
 			type, esz = struct.unpack_from('>BH', pubkey)
-			#print('esz:%s' % (esz))
 			e = pubkey[3:3 + esz]
 			p = pubkey[3 + esz:]
 			self.pubkey = (e, p)
-			#print(self.pubkey)
-			# setup encryption (NOT USED)
+			# kinda been disabled... but still left in
 			key = IDGen.gen(10)
-			#print('key:%s' % key)
 			self.crypter = SymCrypt(key)
-			self.WriteMessage(struct.pack('>B', ClientType.SetupCrypt) + key, Client.IOMode.Async)
-			# wait for reply
-			#print('waiting for setup crypt reply')
-			self.ReadMessage()
-			#print('logging into the system')
+			self.WriteMessage(struct.pack('>B', ClientType.SetupCrypt) + key, Client.IOMode.Discard)
 
-		# do this even with SSL
 		data = struct.pack('>B', ClientType.Login) + self.aid
-		#print('writing-message:[%s]' % data)
-		self.WriteMessage(data, Client.IOMode.Async)
-		#print('waiting for login reply')
-		result = self.ProcessMessage(0, 0, self.ReadMessage()[2])
+		vector = self.WriteMessage(data, Client.IOMode.Async)
+		result = self.HandleMessages(lookfor = vector)
+		#result = self.ProcessMessage(0, 0, self.ReadMessage()[2])
+		
 		# initialize the time we starting recording the number of bytes sent
 		self.bytesoutst = time.time()
 		if result:
@@ -130,7 +123,16 @@ class Client:
 				del self.keepresult[vector]
 				return ret
 		return None
-			
+	
+	def waitCount(self):
+		return len(self.keepresult) + len(self.callback)
+
+	def dbgdump(self):
+		for v in self.keepresult:
+			print('keepresult:%s' % v)
+		for v in self.callback:
+			print('callback:%s' % v)
+	
 	# processes any incoming messages and exits after specified time
 	def HandleMessages(self, timeout = None, lookfor = None):
 		# while we wait for the lock keep an eye out for
@@ -182,7 +184,9 @@ class Client:
 				self.keepresult[v] = msg
 			# check for callback
 			if v in self.callback:
-				self.callback[v][0](self.callback[v][1], msg, v)
+				cb = self.callback[v]
+				del self.callback[v]
+				cb[0](cb[1], msg, v)
 			continue
 		self.socklockread.release()
 		return
@@ -276,6 +280,8 @@ class Client:
 			return (struct.unpack_from('>B', data)[0], data[1:])
 		if type == ServerType.FileStash:
 			return struct.unpack_from('>B', data)[0]
+		if type == ServerType.Echo:
+			return True
 		if type == ServerType.FileSetTime:
 			return struct.unpack_from('>B', data)[0]
 		if type == ServerType.FileGetStashes:
@@ -589,6 +595,8 @@ class Client:
 	def FileTrun(self, fid, newsize, mode, callback = None):
 		fid = self.GetServerPathForm(fid)
 		return self.WriteMessage(struct.pack('>BQ', ClientType.FileTrun, newsize) + fid, mode, callback)
+	def Echo(self, mode, callback = None):
+		return self.WriteMessage(struct.pack('>B', ClientType.Echo), mode, callback)
 	def FileDel(self, fid, mode, callback = None):
 		fid = self.GetServerPathForm(fid)
 		return self.WriteMessage(struct.pack('>B', ClientType.FileDel) + fid, mode, callback)

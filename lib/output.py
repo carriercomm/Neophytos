@@ -130,6 +130,8 @@ class TCPServer:
 		global lock
 		global title
 	
+		lastdatatime = {}
+	
 		while True:
 			# block on select
 			input = [self.sock]
@@ -139,12 +141,32 @@ class TCPServer:
 			# block until something happens
 			readable, writable, exc = select.select(input, [], input)
 			
+			# remove any last data not in self.socks; inefficent but
+			# i need a quick solution to solve this
+			tr = []
+			for sock in lastdatatime:
+				if sock not in self.socks:
+					tr.append(sock)
+			for sock in tr:
+				del lastdatatime[sock]
+			
+			# drop sockets with no data sent recently
+			ct = time.time()
+			for sock in lastdatatime:
+				if ct - lastdatatime[sock] > 3:
+					tr.append(sock)
+					self.socks.remove(sock)
+					sock.close()
+			for sock in tr:
+				del lastdatatime[sock]
+				
 			# lock so nothing tries to send stuff while we are busy
 			# dropping clients or anything
 			if self.sock in readable:
 				# accept new connection
 				readable.remove(self.sock)
 				nsock, naddr = self.sock.accept()
+				lastdatatime[nsock] = time.time()
 				try:
 					# we lock because we dont want to be trying
 					# to read any lists, objects, or dicts while
