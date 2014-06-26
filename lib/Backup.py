@@ -487,12 +487,165 @@ class Backup:
 			self.syncdel_async(self.accountname, target, stash = stash)
 	
 	'''
+	'''
+	def dopull_async(self, account, target, lpath = None, rpath = None):
+		cfg = LoadConfig(account = account)
+		tcfg = cfg['paths'][target]
+		rhost = cfg['remote-host']
+		rport = cfg['remote-port']
+		sac = bytes(cfg['storage-auth-code'], 'utf8')
+		c = Client2(rhost, rport, sac)
+		c.Connect(essl = cfg['ssl'])
+		# produce remote and local paths
+		if lpath is None:
+			lpath = tcfg['disk-path']
+		if rpath is None:
+			rpath = bytes(target, 'utf8')
+		else:
+			rpath = bytes(target, 'utf8') + b'/' + rpath
+		rpbsz = len(rpath)
+		
+		jobFileTime = []
+		jobFileSize = []
+		jobDownload = []
+		
+		'''
+			Transform each node into it's full remote path, then
+			place it into the master node list for processing.
+		'''
+		def __eventDirEnum(pkg, result, vector):
+			rpath = pkg[0]
+			nodes = pkg[1]
+			print('direnum-result', rpath)
+			for node in result:
+				name = node[0]
+				
+				rev = name[0:name.find(b'.')].decode('utf8')
+				if int(rev) != 0:
+					continue
+				
+				name = name[name.find(b'.') + 1:]
+				name = rpath + b'/' + name
+				
+				nodes.append((name, node[1]))
+		def __eventFileTime(pkg, result, vector):
+			jobFileTime.append((pkg, result))
+		
+		def __eventFileSize(pkg, result, vector):
+			jobFileSize.append((pkg, result))
+		
+		def __eventFileRead(pkg, result, vector):
+			success = result[0]
+			if success == 0:
+				return
+			data = result[1]
+			_lpath = pkg[0]
+			_off = pkg[1]
+			print('write:%s:%x' % (_lpath, _off))
+			#fd = open(_lpath, 'r+b')
+			#fd.seek(_off)
+			#fd.write(data)
+			#fd.close()
+		
+		# first enumerate the remote directory
+		_nodes = c.DirList(rpath, Client.IOMode.Block)
+		
+		nodes = []
+		__eventDirEnum((rpath, nodes), _nodes, 0)
+		
+		while True:
+			c.HandleMessages(0, None)
+			
+			# iterate through files
+			for x in range(0, min(100, len(nodes))):
+				# might be faste to pop from end of list
+				# but this will ensure more expected order
+				# of operations..
+				node = nodes.pop(0)
+				
+				_rpath = node[0]
+				_lpath = '%s/%s' % (lpath,node[0][rpbsz:].decode('utf8'))
+				# if directory issue enumerate call
+				if node[1] == 1:
+					print('requestingdirenum', _rpath)
+					pkg = (_rpath, nodes)
+					c.DirList(_rpath, Client.IOMode.Callback, (__eventDirEnum, pkg))
+					continue
+				# if file issue time check
+				pkg = (_rpath, _lpath)
+				c.FileTime(_rpath, Client.IOMode.Callback, (__eventFileTime, pkg))
+			
+			# iterate time responses
+			for job in jobFileTime:
+				_rpath = job[0][0]
+				_lpath = job[0][1]
+				_rmtime = job[1]
+				if os.path.exists(_lpath):
+					stat = os.stat(_lpath)
+					_lsize = stat.st_size
+					_lmtime = stat.st_mtime
+				else:
+					_lsize = 0
+					_lmtime = 0
+					# create the local file (0 sized)
+				# if newer then get file size so we can
+				# truncate the local file
+				if _rmtime > _lmtime:
+					pkg = (_rpath, _lpath, _lsize)
+					c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
+			jobFileTime = []
+			
+			# iterate size responses
+			for job in jobFileSize:
+				_rpath = job[0][0]
+				_lpath = job[0][1]
+				_lsize = job[0][2]
+				_rsize = job[1]
+				# if size different truncate local file to match
+				if _rsize[0] != 1:
+					raise Exception('_rsize for %s failed' % _rpath)
+				_rsize = _rsize[1]
+				if _lsize != _rsize:
+					# truncate local file
+					print('trun', _lpath)
+					pass
+				# queue a download operation
+				pkg = [_rpath, _lpath, _rsize, 0]
+				jobDownload.append(pkg)
+			jobFileSize = []
+			
+			# iterate download operations
+			tr = []
+			chunksize = 4096
+			for job in jobDownload:
+				_rpath = job[0]
+				_lpath = job[1]
+				_rsize = job[2]
+				_curoff = job[3]
+				# determine amount we can read and choose maximum
+				_rem = _rsize - _curoff
+				if _rem > chunksize:
+					_rem = chunksize
+				#print('read', _lpath, _rem, _curoff, _rsize)
+				pkg = (_lpath, _curoff)
+				c.FileRead(_rpath, _curoff, chunksize, Client.IOMode.Callback, (__eventFileRead, pkg))
+				if _curoff + _rem >= _rsize:
+					tr.append(job)
+					print('finish', _lpath)
+				job[3] = _curoff + _rem
+			# remove completed jobs
+			for t in tr:
+				jobDownload.remove(t)
+			# <end-of-loop>
+				
+	'''
 		I originally started with a threaded model because of the complexity of the entire
-		process per file. There has to be a size check and time check then a decision is
-		made to upload or hash the remote file and then patch the remote file. The syncdel
-		was easily implemented asynchronously because of its simplistic nature. It simply
-		had to issue one request and recieve one reply. This function has to multiplex many
-		different individually chained steps.
+		process per file. This gave me a straight forward way to write code and further my
+		prototype. Next, after noticing the overhead of threads I decided to do an asynchronous
+		polling model. This yielded improved performance but was still eating a lot of CPU. The
+		final design here is partially polling (much LESS than before), and it is quite efficient.
+		
+		I use callbacks to prevent polling for many of the operations.
 	'''
 	def dopush_async(self, account, target):
 		cfg = LoadConfig(account = account)
@@ -529,7 +682,6 @@ class Backup:
 			jobGetModifiedDate.append((pkg, result)) 
 		def __eventEcho(pkg, result, vector):
 			pkg['echo'] = True
-			print('GOT ECHO')
 		
 		# statistics
 		databytesout = 0
@@ -539,6 +691,9 @@ class Backup:
 		stat_checked = 0
 		
 		dd = time.time()
+		
+		# the soft limit for application level buffer size
+		buflimit = 1024 * 1024 * 4
 		
 		# keep going until we get the echo 
 		while echo['echo'] is False:
@@ -581,13 +736,13 @@ class Backup:
 			output.SetTitle('Uploaded', stat_uploaded)
 			output.SetTitle('Checked', stat_checked)
 			output.SetTitle('Patched', stat_patched)
-			
+
 			# send if can send
 			boutbuf = c.getBytesToSend()
 			# just hold here until we get the buffer down; this
 			# is mainly going to be caused by upload operations
 			# throwing megabytes of data into the buffer
-			if boutbuf > 1024 * 25:
+			if boutbuf > buflimit:
 				print('emptying outbound buffer..')
 				# just empty the out going buffer completely.. then of course
 				# fill it up again; having the buffer fill up is not actually
@@ -667,8 +822,8 @@ class Backup:
 				# if file does not exist go trun/upload route.. if it does
 				# exist and the size is the same then check the file modified
 				# date and go from there
-				if _lsize != _rsize:
-					print('[size] file:%s local:%s remote:%s' % (_lpath, _lsize, _rsize))
+				#if _lsize != _rsize:
+				#	print('[size] file:%s local:%s remote:%s' % (_lpath, _lsize, _rsize))
 				if _lsize == _rsize and _result[0] == 1:
 					# need to check modified date
 					#print('<getting-time>:%s' % _lpath)
@@ -717,6 +872,7 @@ class Backup:
 			
 			# 
 			tr = []
+			cjc = 0
 			for uj in jobUpload:
 				_rpath = uj[0]
 				_lpath = uj[1]
@@ -739,8 +895,16 @@ class Backup:
 				c.FileWrite(_rpath, _curoff, _data, Client.IOMode.Discard)
 				# help track statistics for data out in bytes (non-control data)
 				databytesout = databytesout + _rem
+				if c.getBytesToSend() > buflimit:
+					break
+				# just a kinda safe upper limit in the case something
+				# happens and we have tons of super small files i dont
+				# want that the overload memory
+				if cjc > 10000:
+					break
 				# advance our current offset
 				uj[4] = _curoff + _rem
+				cjc = cjc + 1
 			# remove finished jobs
 			ct = time.time()
 			for uj in tr:
@@ -948,19 +1112,15 @@ class Backup:
 			# like 100% CPU *maybe* so lets delay a bit in
 			#time.sleep(0.01)
 					
-	def __cmd_pull_target(self, cfg, name, target, rpath = None, lpath = None, dry = True):
-		print('pulling [%s]' % name)
+	def __cmd_pull_target(self, account, target, lpath = None, rpath = None):
+		print('pulling [%s] of [%s]' % (target, account))
 		
-		output.SetTitle('operation', 'pulling %s:%s' % (name, target))
+		output.SetTitle('operation', 'pulling')
 		
-		dpath = target['disk-path']
-		filter = target['filter']
-		
-		rhost = cfg['remote-host']
-		rport = cfg['remote-port']
-		sac = cfg['storage-auth-code']
 		#def dopull(name, rhost, rport, sac, cfg, rpath, lpath, filter, base = None, c = None, erpath = None, dry = True):
-		return self.dopull(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, rpath = rpath, lpath = lpath, filter = filter, dry = dry)
+		#return self.dopull(name = name, rhost = rhost, rport = rport, sac = sac, cfg = cfg, rpath = rpath, lpath = lpath, filter = filter, dry = dry)
+		#def dopull_async(self, account, target, lpath = None):
+		self.dopull_async(account, target, lpath, rpath)
 	
 	def __enumfilesandreport_remote(self, client, base, lastreport = 0, initial = True):
 		nodes = client.DirList(base, Client.IOMode.Block)
@@ -1092,7 +1252,7 @@ class Backup:
 
 		# check for and remove any arguments
 		lpath = None
-		rpath = '/'
+		rpath = None
 		_args = args
 		args = []
 		for arg in _args:
@@ -1112,17 +1272,16 @@ class Backup:
 			print('the path to restore to!')
 			return
 		
+		dotargets = []
 		if len(args) > 0:
-			# treat as list of targets to run (run them even if they are disabled)
 			for target in args:
-				if target not in cfg['paths']:
-					print('    target by name [%s] not found' % target)
-				else:
-					self.__cmd_pull_target(cfg, target, cfg['paths'][target], rpath = rpath, lpath = '%s/%s' % (lpath, target), dry = dry)
-			return
-		# run all that are enabled
-		for k in cfg['paths']:
-			self.__cmd_pull_target(cfg, k, cfg['paths'][k], rpath = rpath, lpath = lpath, dry = dry)	
+				dotargets.append(target)
+		else:
+			for target in cfg['paths']:
+				dotargets.append(target)
+				
+		for target in dotargets:
+			self.__cmd_pull_target(self.accountname, target, lpath = '%s/%s' % (lpath, target), rpath = rpath)
 		
 	def __cmd_chksize_target(self, cfg, name, target):
 		dpath = target['disk-path']

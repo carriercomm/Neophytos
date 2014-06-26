@@ -10,6 +10,7 @@ import zlib
 import ssl
 import base64
 import traceback
+import collections
 
 from io import BytesIO
 
@@ -81,6 +82,9 @@ class ServerClient:
 		self.aid = None
 		
 		self.ssl = essl
+		
+		self.bytestosend = 0
+		self.datatosend = collections.deque()
 		
 		if essl:
 			#ciphers = ('AES25-SHA', 'TLSv1/SSLv3', 256)
@@ -189,10 +193,10 @@ class ServerClient:
 		return self.sock
 		
 	def HandleData(self, data):
-		bst = time.time()
+		#bst = time.time()
 		# process data for a message
 		while True:
-			rst = time.time()
+			#rst = time.time()
 			# the second and so forth time this is called
 			# we pass in None for data and just check for
 			# additional messages in the buffer
@@ -212,20 +216,20 @@ class ServerClient:
 			# track the times on the past requests, this might
 			# show were a single client is using a lot of CPU
 			# time which could be effecting other clients
-			ret = time.time()
-			rdt = ret - rst
-			if len(self.times_request) > 40:
-				self.times_request.pop(0)
-			self.times_request.append(rdt)
+			#ret = time.time()
+			#rdt = ret - rst
+			#if len(self.times_request) > 40:
+			#	self.times_request.pop(0)
+			#self.times_request.append(rdt)
 			
-		bet = time.time()
-		bdt = bet - bst
+		#bet = time.time()
+		#bdt = bet - bst
 		
 		# implement a queue (not a stack)
-		if len(self.times_buffer) > 40:
-			# keep 40 previous times (essentially 40 previous network packets)
-			self.times_buffer.pop(0)
-		self.times_buffer.append(bdt)
+		#if len(self.times_buffer) > 40:
+		#	# keep 40 previous times (essentially 40 previous network packets)
+		#	self.times_buffer.pop(0)
+		#self.times_buffer.append(bdt)
 	
 	'''
 		This ensures the path does not reference outside the root directory.
@@ -645,12 +649,66 @@ class ServerClient:
 		for e in self.times_buffer:
 			ae = ae + e
 			ac = ac + 1
-		load = ae / ac
+		if ac == 0:
+			load = 0
+		else:
+			load = ae / ac
 	
 		text = '%.02f/%.02f/%.02f' %  (in_bps / 1024 / 1024, out_bps / 1024 / 1024, load)
 	
-		output.SetCurrentStatus(self, text)
+		#output.SetCurrentStatus(self, text)
+	
+	def canSend(self):
+		return self.bytestosend
+	
+	# non-blocking dump of data buffers
+	def send(self, data = None, timeout = 0):
+		if data is not None:
+			#self.datatosend.append(data)
+			self.datatosend.append(data)
+			self.bytestosend = self.bytestosend + len(data)
 		
+		self.sock.settimeout(timeout)
+		
+		# check there is data to send
+		while len(self.datatosend) > 0:
+			# pop from the beginning of the queue
+			#data = self.datatosend.pop(0)
+			# grab from beginning of the queue
+			data = self.datatosend.popleft()
+			
+			# try to send it
+			totalsent = 0
+			while totalsent < len(data):
+				sent = 0
+				try:
+					sent = self.sock.send(data[totalsent:])
+				except socket.error:
+					# non-ssl socket likes to throw this exception instead
+					# of returning zero bytes sent it seems
+					#self.datatosend.insert(0, data[totalsent:])
+					# place remaining back
+					self.datatosend.appendleft(data[totalsent:])
+					self.bytestosend = self.bytestosend - (totalsent + sent)
+					return False
+				
+				if sent == 0:
+					# place remaining data back at front of queue and
+					# we will try to send it next time
+					#self.datatosend.insert(0, data[totalsent:])
+					# place remaining back
+					self.datatosend.appendleft(data[totalsent:])
+					self.bytestosend = self.bytestosend - (totalsent + sent)
+					return False
+				#print('@sent', sent)
+				totalsent = totalsent + sent
+			
+			# we are done with it.. remove it (expensive operation)
+			#self.datatosend.pop(0)
+			
+			self.bytestosend = self.bytestosend - totalsent
+		return True
+	
 	def WriteMessage(self, data, vector):		
 		# get type
 		type = data[0]
@@ -667,11 +725,10 @@ class ServerClient:
 				data = bytes((ServerType.Encrypted,)) + data
 		# at the moment i do not use server-vector
 		# so it is hard coded as zero
-		self.sock.settimeout(None)
-		self.sock.sendall(struct.pack('>IQQ', len(data), 0, vector))
-		self.sock.sendall(data)
+		self.send(struct.pack('>IQQ', len(data), 0, vector))
+		self.send(data)
 		self.bytes_out_total = self.bytes_out_total + 4 + 8 * 2 + len(data)
-		self.UpdateStatus()
+		#self.UpdateStatus()
 		return
 	
 	def GetBufferSize(self):
@@ -722,7 +779,7 @@ class ServerClient:
 		self.data = ndata
 		
 		self.bytes_in_total = self.bytes_in_total + 8 + 4 + len(_ret)
-		self.UpdateStatus()
+		#self.UpdateStatus()
 		
 		# return the message and vector
 		self.wsz = None
@@ -755,17 +812,71 @@ class Server:
 		
 		while True:
 			input = [self.sock, self.sslsock]
+			winput = []
 			for scaddr in self.sc:
-				tsc = self.sc[scaddr]
-				input.append(tsc.GetSock())
-				#print('appending client:%s sock' % (scaddr,))
+				sc = self.sc[scaddr]
+				# place client that have pending output data in their
+				# application level buffer into the writable check
+				if sc.canSend() > 0:
+					winput.append(sc.GetSock())
+				# place all client sockets to be check for readability
+				input.append(sc.GetSock())
 		
-			readable, writable, exc = select.select(input, [], input)
+			readable, writable, exc = select.select(input, winput, input)
 			
+			# [ACCEPT] incoming connections (weak encryption connections)
+			if self.sock in readable:
+				nsock, caddr = self.sock.accept()
+				nsock.settimeout(0)
+				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self)
+				self.sc[caddr] = nsc
+				self.socktosc[nsock] = nsc
+				readable.remove(self.sock)
+				#output.AddWorkingItem(nsc)
+				
+			# [ACCEPT] incoming connections (SSL encryption connections)
+			if self.sslsock in readable:
+				print('ACCEPTING SSL CONNECTION')
+				nsock, caddr = self.sslsock.accept()
+				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self, essl = True)
+				# the SSL will change the sock
+				nsock = nsc.GetSock()
+				nsock.settimeout(0)
+				self.sc[caddr] = nsc
+				self.socktosc[nsock] = nsc
+				readable.remove(self.sslsock)
+				#output.AddWorkingItem(nsc)
+			
+			# try to push some data out that has been stored in
+			# our application level buffer, the next check below
+			# will remove the socket from reading any data if
+			# we do not get it lower if it is too high
+			for sock in writable:
+				sc = self.socktosc[sock]
+				# if must have had data to have been placed for
+				# a writable check
+				sc.send()
+			
+			# this will keep us from reading in more data only to
+			# be unable to process it because our output buffers
+			# are too full; so anything with a buffer that is too
+			# large is just skipped out of the readable list by
+			# creating a new list
+			_readable = []
+			for sock in readable:
+				sc = self.socktosc[sock]
+				# if the out going application level buffers are too
+				# full then we will refuse to read anything from the
+				# socket until they are lower
+				if sc.canSend() < 1024 * 1024 * 10:
+					_readable.append(sock)
+			readable = _readable
+					
 			# every minute dump client statistics, this was mainly intended
 			# to give the server administrator a way to diagnose misbehaving
 			# clients by seeing how much CPU they are eating up compared to
 			# other clients
+			'''
 			ddet = time.time()
 			if ddet - ddst > 60:
 				fd = open('clientdiag', 'w')
@@ -794,71 +905,47 @@ class Server:
 						fd.write('    [%02i]: %s\n' % (x, t))
 						x = x + 1
 				fd.close()
-			
-			# accept incoming connections (weak encryption connections)
-			if self.sock in readable:
-				nsock, caddr = self.sock.accept()
-				nsock.settimeout(0)
-				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self)
-				self.sc[caddr] = nsc
-				self.socktosc[nsock] = nsc
-				readable.remove(self.sock)
-				output.AddWorkingItem(nsc)
-				
-			# accept incoming connections (SSL encryption connections)
-			if self.sslsock in readable:
-				print('ACCEPTING SSL CONNECTION')
-				nsock, caddr = self.sslsock.accept()
-				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self, essl = True)
-				# the SSL will change the sock
-				nsock = nsc.GetSock()
-				nsock.settimeout(0)
-				self.sc[caddr] = nsc
-				self.socktosc[nsock] = nsc
-				readable.remove(self.sslsock)
-				output.AddWorkingItem(nsc)
-			
+			'''
 			# read any pending data (and process it)
 			for sock in readable:
 				sc = self.socktosc[sock]
-				if sc.GetBufferSize() < self.maxclientbuffer:
+				try:
+					data = sock.recv(self.maxclientbuffer - sc.GetBufferSize())
+				except ssl.SSLError as e:
+					# just ignore it
+					continue
+				except Exception as e:
+					#print(e)
+					#raise e
+					traceback.print_exc(file = sys.stdout)
+					data = None
+					
+				if not data:
+					# connection closed, drop it
+					print('dropped connection %s' % (sc.GetAddr(),))
+					sc.Cleanup()
+					del self.sc[sc.GetAddr()]
+					del self.socktosc[sock]
+					#output.RemWorkingItem(sc)
+				else:
+					# for production this should be enabled to
+					# keep the server from die-ing a horrible
+					# death due to one client problem, for now
+					# i am leaving it commented so i can easily
+					# find problems by crashing the server
 					try:
-						data = sock.recv(self.maxclientbuffer - sc.GetBufferSize())
-					except ssl.SSLError as e:
-						# just ignore it
-						continue
+						sc.HandleData(data)
 					except Exception as e:
-						#print(e)
-						#raise e
 						traceback.print_exc(file = sys.stdout)
-						data = None
-						
-					if not data:
-						# connection closed, drop it
-						print('dropped connection %s' % (sc.GetAddr(),))
+						#raise e
+						# to keep from killing the server and
+						# any other clients just kill the client
+						# and keep going
 						sc.Cleanup()
 						del self.sc[sc.GetAddr()]
-						del self.socktosc[sock]
-						output.RemWorkingItem(sc)
-					else:
-						# for production this should be enabled to
-						# keep the server from die-ing a horrible
-						# death due to one client problem, for now
-						# i am leaving it commented so i can easily
-						# find problems by crashing the server
-						try:
-							sc.HandleData(data)
-						except Exception as e:
-							traceback.print_exc(file = sys.stdout)
-							#raise e
-							# to keep from killing the server and
-							# any other clients just kill the client
-							# and keep going
-							sc.Cleanup()
-							del self.sc[sc.GetAddr()]
-							del self.socktosc[sc.GetSock()]
-							sc.GetSock().close()
-							output.RemWorkingItem(sc)
+						del self.socktosc[sc.GetSock()]
+						sc.GetSock().close()
+						#output.RemWorkingItem(sc)
 
 			# handle any exceptions
 			for sock in exc:
@@ -866,13 +953,28 @@ class Server:
 				sc = self.socktosc[sock]
 				del self.sc[sc.GetAddr()]
 				del self.socktosc[sock]
-				output.RemWorkingItem(sc)
+				#output.RemWorkingItem(sc)
 				
 			# continue main loop
 			continue
 
+import cProfile
+import time
+
+
+#print "Wall time:"
+#p = cProfile.Profile()
+#p.runcall(target)
+#p.print_stats()
+
+#print "CPU time:"
+			
 def main():
 	server = Server()
 	server.HandleMessages()
 	
-main()
+p = cProfile.Profile(time.clock)
+try:
+	p.runcall(main)
+except:
+	p.print_stats()

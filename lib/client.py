@@ -26,6 +26,9 @@ class QuotaLimitReachedException(Exception):
 	
 class ConnectionDeadException(Exception):
 	pass
+	
+class BadLoginException(Exception):
+	pass
 		
 class Client:
 	class IOMode:
@@ -78,7 +81,7 @@ class Client:
 	def Connect(self, essl = False):
 		# try to establish a connection
 		if essl:
-			self.sock = ssl.wrap_socket(self.sock)
+			self.sock = ssl.wrap_socket(self.sock, ciphers = 'RC4')
 		
 		if essl:
 			self.sock.connect((self.rhost, self.rport + 1))
@@ -104,17 +107,13 @@ class Client:
 		data = struct.pack('>B', ClientType.Login) + self.aid
 		vector = self.WriteMessage(data, Client.IOMode.Async)
 		result = self.HandleMessages(lookfor = vector)
-		#result = self.ProcessMessage(0, 0, self.ReadMessage()[2])
 		
 		# initialize the time we starting recording the number of bytes sent
 		self.bytesoutst = time.time()
 		if result:
-			print('login good')
 			return True
 		else:
-			print('login bad')
-			exit() 
-			return False
+			raise BadLoginException()
 
 	def GetStoredMessage(self, vector):
 		with self.socklockread:
