@@ -536,16 +536,23 @@ class Backup:
 		
 		def __eventFileRead(pkg, result, vector):
 			success = result[0]
-			if success == 0:
+			if success != 1:
+				print('FALSE', result[0])
+				exit()
 				return
 			data = result[1]
 			_lpath = pkg[0]
 			_off = pkg[1]
 			print('write:%s:%x' % (_lpath, _off))
-			#fd = open(_lpath, 'r+b')
-			#fd.seek(_off)
-			#fd.write(data)
-			#fd.close()
+			fd = open(_lpath, 'r+b')
+			fd.seek(_off)
+			fd.write(data)
+			fd.close()
+			
+		echo = { 'echo': False }
+			
+		def __eventEcho(pkg, result, vector):
+			pkg['echo'] = True
 		
 		# first enumerate the remote directory
 		_nodes = c.DirList(rpath, Client.IOMode.Block)
@@ -553,8 +560,14 @@ class Backup:
 		nodes = []
 		__eventDirEnum((rpath, nodes), _nodes, 0)
 		
-		while True:
+		sentEcho = False
+		while echo['echo'] is False:
 			c.HandleMessages(0, None)
+
+			quecount = len(nodes) + len(jobFileTime) + len(jobFileSize) + len(jobDownload)
+			if quecount == 0 and c.waitCount() == 0 and sentEcho is False:
+				sentEcho = True
+				c.Echo(Client.IOMode.Callback, (__eventEcho, echo))
 			
 			# iterate through files
 			for x in range(0, min(100, len(nodes))):
@@ -607,8 +620,7 @@ class Backup:
 				_rsize = _rsize[1]
 				if _lsize != _rsize:
 					# truncate local file
-					print('trun', _lpath)
-					pass
+					self.truncateFile(_lpath, _rsize)
 				# queue a download operation
 				pkg = [_rpath, _lpath, _rsize, 0]
 				jobDownload.append(pkg)
@@ -616,7 +628,7 @@ class Backup:
 			
 			# iterate download operations
 			tr = []
-			chunksize = 4096
+			chunksize = 1024 * 1024 * 4
 			for job in jobDownload:
 				_rpath = job[0]
 				_lpath = job[1]
@@ -626,7 +638,7 @@ class Backup:
 				_rem = _rsize - _curoff
 				if _rem > chunksize:
 					_rem = chunksize
-				#print('read', _lpath, _rem, _curoff, _rsize)
+				print('read', _rpath, _rem, _curoff, _rsize)
 				pkg = (_lpath, _curoff)
 				c.FileRead(_rpath, _curoff, chunksize, Client.IOMode.Callback, (__eventFileRead, pkg))
 				if _curoff + _rem >= _rsize:
@@ -637,7 +649,19 @@ class Backup:
 			for t in tr:
 				jobDownload.remove(t)
 			# <end-of-loop>
-				
+	
+	def truncateFile(self, lpath, size):
+		if os.path.exists(lpath) is False:
+			# get base path and ensure directory structure is created
+			base = lpath[0:lpath.rfind('/')]
+			if os.path.exists(base) is False:
+				os.makedirs(base)
+			
+			fd = os.open(lpath, os.O_CREAT)
+			os.close(fd)
+		fd = os.open(lpath, os.O_RDWR)
+		os.ftruncate(fd, size)
+		os.close(fd)
 	'''
 		I originally started with a threaded model because of the complexity of the entire
 		process per file. This gave me a straight forward way to write code and further my

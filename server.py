@@ -382,7 +382,7 @@ class ServerClient:
 			return self.FileTrun(msg, vector)
 		if type == ClientType.FileRead:
 			offset, length = struct.unpack_from('>QQ', msg)
-			fname = self.SanitizePath(msg[2 + 8 + 8:]).decode('utf8', 'ignore')
+			fname = self.SanitizePath(msg[8 + 8:]).decode('utf8', 'ignore')
 			
 			# maximum read length default is 1MB (anything bigger must be split into separate requests)
 			# OR.. we could spawn a special thread that would lock this client and perform the work
@@ -398,6 +398,7 @@ class ServerClient:
 			fpath = '%s/%s/%s' % (self.info['disk-path'], fbase, fname)
 			if os.path.exists(fpath) is False:
 				# oops.. no such file (lets tell them it failed)
+				print('badpath', fpath)
 				self.WriteMessage(struct.pack('>BB', ServerType.FileRead, 0), vector)
 				return
 			# okay open the file and read from it
@@ -972,9 +973,11 @@ import time
 def main():
 	server = Server()
 	server.HandleMessages()
+
+main()
 	
-p = cProfile.Profile(time.clock)
-try:
-	p.runcall(main)
-except:
-	p.print_stats()
+#p = cProfile.Profile(time.clock)
+#try:
+#	p.runcall(main)
+#except:
+#	p.print_stats()

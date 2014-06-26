@@ -578,8 +578,9 @@ class Client:
 		dir = self.GetServerPathForm(dir)
 		return self.WriteMessage(struct.pack('>B', ClientType.DirList) + dir, mode, callback)
 	def FileRead(self, fid, offset, length, mode, callback = None):
-		dir = self.GetServerPathForm(fid)
-		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + fid, mode, callback)
+		_fid = self.GetServerPathForm(fid)
+		print('@@', _fid, fid)
+		return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + _fid, mode, callback)
 	def FileWrite(self, fid, offset, data, mode, callback = None):
 		if self.bz2compression > 0:
 			data = zlib.compress(data, self.bz2compression)
