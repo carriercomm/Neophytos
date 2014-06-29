@@ -110,7 +110,8 @@ class Client:
 		
 		# initialize the time we starting recording the number of bytes sent
 		self.bytesoutst = time.time()
-		if result:
+		print('login-result', result)
+		if result == 'y':
 			return True
 		else:
 			raise BadLoginException()
@@ -195,6 +196,8 @@ class Client:
 		type = data[0]
 		
 		#print('got type %s' % type)
+
+		print('e-type', type)
 		
 		# only process encrypted messages
 		if type != ServerType.Encrypted:
@@ -212,6 +215,8 @@ class Client:
 		type = data[0]
 		data = data[1:]
 		
+		print('u-type', type)
+
 		# set compression level (can be sent by server at any time
 		# and client does not *have* to respect it, but the server
 		# could kick the client off if it did not)
@@ -220,7 +225,7 @@ class Client:
 			return
 		# process message based on type
 		if type == ServerType.LoginResult:
-			#print('login result data:[%s]' % data)
+			print('login result data:[%s]' % data)
 			if data[0] == ord('y'):
 				return True
 			return False
@@ -298,7 +303,7 @@ class Client:
 	
 	def recv(self, sz):
 		data = self.data
-				
+
 		#self.sock.settimeout(0)
 		
 		# keep track of if we have enough data in our buffer
@@ -312,6 +317,7 @@ class Client:
 				# i am using select because settimeout does not
 				# seem to work for the recv method.. so this is
 				# a workaround to force it to work
+				print('waiting for %s more bytes' % (sz - data.tell()))
 				ready = select.select([self.sock], [], [], self.sock.gettimeout())
 				if ready[0]:
 					_data = self.sock.recv(sz)
@@ -339,13 +345,15 @@ class Client:
 		# check if connection is dead
 		#self.ifDead()
 		
-		# create a new buffer
-		self.data = BytesIO()
-		
-		# read out the data
-		data.seek(0)
-		data = data.read()
-		return data
+		# only return with data if its of the specified length
+		if data.tell() >= sz:
+			# read out the data
+			data.seek(0)
+			_data = data.read(sz)
+			self.data = BytesIO()
+			self.data.write(data.read())
+			return _data
+		return None
 	
 	# read a single message from the stream and exits after specified time
 	def ReadMessage(self, timeout = None):
@@ -371,6 +379,8 @@ class Client:
 		# ensure the next reads tries to get the header
 		self.datasz = None
 		
+		print('got message', self.datasv, self.datav, data)
+
 		# return the data
 		return self.datasv, self.datav, data
 		
