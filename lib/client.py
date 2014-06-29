@@ -111,7 +111,7 @@ class Client:
 		# initialize the time we starting recording the number of bytes sent
 		self.bytesoutst = time.time()
 		print('login-result', result)
-		if result == 'y':
+		if result:
 			return True
 		else:
 			raise BadLoginException()
