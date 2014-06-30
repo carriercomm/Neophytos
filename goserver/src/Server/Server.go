@@ -11,6 +11,7 @@ import			"bytes"
 import			"strconv"
 import			"os"
 import pprof 	"runtime/pprof"
+import			"strings"
 //import			"time"
 //import			"runtime"
 
@@ -216,6 +217,18 @@ func (self *ServerClient) MsgEnd() {
 	self.conn.Write(out)
 }
 
+func Read16MSB(buf []byte, off uint32) (uint16) {
+	return 	uint16(buf[off + 0]) << 8 | uint16(buf[off + 1])
+}
+
+func Read32MSB(buf []byte, off uint32) (uint32) {
+	return uint32(Read16MSB(buf, off + 0) << 16) | uint32(Read16MSB(buf, off + 2))
+}
+
+func Read64MSB(buf []byte, off uint32) (uint64) {
+	return uint64(Read32MSB(buf, off + 0) << 16) | uint64(Read32MSB(buf, off + 4))	
+}
+
 func (self *ServerClient) MsgWrite8(v uint8) {
 	self.msgbuf.Write([]byte {v})
 }
@@ -324,21 +337,73 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 			self.MsgWrite8(CmdServerEcho)
 			self.MsgEnd()
 		case CmdClientFileRead:
+			
 		case CmdClientFileWrite:
 		case CmdClientFileSize:
 			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg))
 			stat, err := os.Stat(path)
+			self.MsgStart(vector)
+			self.MsgWrite8(CmdServerFileSize)	// reply
 			if err != nil || stat == nil {
 				// path is not accessible for whatever reason
+				self.MsgWrite8(0)					// failure code
+				self.MsgWrite64MSB(0)				// size
+				self.MsgEnd()
 				break
 			}
-
+			// return the file size in a reply message
+			self.MsgWrite8(1)
+			self.MsgWrite64MSB(uint64(stat.Size()))
+			self.MsgEnd()
 		case CmdClientFileTrun:
+			sz := Read64MSB(msg, 0)
+			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[8:]))
+			err = os.Truncate(path, int64(sz))
+			self.MsgStart(vector)
+			self.MsgWrite8(CmdServerFileTrun)
+			if err != nil {
+				self.MsgWrite8(0)			// failure code
+				self.MsgEnd()
+				break
+			}
+			self.MsgWrite8(1)
+			self.MsgEnd()
 		case CmdClientFileDel:
+			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg))
+			err := os.RemoveAll(path)
+			self.MsgStart(vector)
+			self.MsgWrite8(CmdServerFileDel)
+			if err != nil {
+				self.MsgWrite8(0)
+				self.MsgEnd()
+				break
+			}
+			// the removal was a success now see if the directory
+			// that contained this file or directory is empty and
+			// if so let us delete the base directory
+			base := path[0:strings.Index(path, "/")]
+			nodes, err := ioutil.ReadDir(base)
+			if len(nodes) < 1 {
+				// just ignore any error for now
+				os.RemoveAll(base)
+			}
+			self.MsgWrite8(1)
+			self.MsgEnd()
 		case CmdClientFileCopy:
 		case CmdClientFileMove:
 		case CmdClientFileHash:
 		case CmdClientFileTime: 
+			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg))
+			self.MsgStart(vector)
+			self.MsgWrite8(CmdServerFileTime)
+			stat, err := os.Stat(path)
+			if err != nil {
+				self.MsgWrite64MSB(0)
+				self.MsgEnd()
+				break
+			}
+			self.MsgWrite64MSB(uint64(stat.ModTime().Unix()))
+			self.MsgEnd()
 		case CmdClientFileSetTime: 
 	}
 	
@@ -539,8 +604,6 @@ func (self *Server) ServerEntry(psignal chan uint32) {
 
 	self.accountConfigsLock = &sync.Mutex{}
 	self.accountConfigs = make(map[string]*AccountConfig)
-	self.LoadAccountConfig("pl45JeXm3")
-	self.LoadAccountConfig("xp45JeXm3")
 
 	fmt.Printf("loading certificate\n")
 	cert, err := tls.LoadX509KeyPair("cert.pem", "cert.pem")
