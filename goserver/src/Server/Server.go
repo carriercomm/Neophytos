@@ -9,6 +9,10 @@ import			"sync"
 import ioutil	"io/ioutil"
 import			"bytes"
 import			"strconv"
+import			"os"
+import pprof 	"runtime/pprof"
+//import			"time"
+//import			"runtime"
 
 const (
 	CmdClientDirList				= 0
@@ -41,6 +45,7 @@ const (
 	CmdServerSetupCrypt				= 12
 	CmdServerEncrypted				= 13
 	CmdServerLogin					= 14
+	CmdServerLoginResult			= 16
 	CmdServerFileTime				= 17
 	CmdServerSetCompressionLevel	= 18
 	CmdServerFileSetTime			= 19
@@ -99,6 +104,7 @@ type ServerClient struct {
 	conn 				net.Conn  			// connection object for client
 	vector				uint64				// current valid vector
 	msgbuf				*bytes.Buffer		// byte buffer
+	msgin				[]byte				// try to reuse message buffers when possible
 }
 
 // server state object
@@ -127,9 +133,10 @@ func read64MSB(buf []byte, off uint32) (uint64) {
 }
 
 // read message from buffer and remove it from the buffer
-func getMessageFromBuffer(buf []byte, top uint32, maxsz uint32) (v uint64, msg []byte, btop uint32, err error) {
+func (self *ServerClient) getMessageFromBuffer(buf []byte, top uint32, maxsz uint32) (v uint64, msg []byte, btop uint32, err error) {
 	var sz			uint32
-	
+
+
 	// read message length
 	if top < (4 + 8) {
 		return 0, nil, top, nil
@@ -150,12 +157,27 @@ func getMessageFromBuffer(buf []byte, top uint32, maxsz uint32) (v uint64, msg [
 	
 	v = read64MSB(buf, 4)
 	
-	// copy message into new buffer (since primary buffer may be modified soon)
-	msg = make([]byte, sz)
-	copy(msg[0:], buf[4 + 8:4 + 8 + sz])
+	// resize our main message buffer to hold the contents of this message
+	// if it is too small or never been allocated; we do this to keep from
+	// allocating new message buffers each time but the problem is you cant
+	// use the message buffer across calls to this function because you will
+	// get overwritten - this showed a significant decrease in cpu burn and
+	// i suspect that was from the GC collecting all the short lived message
+	// buffers
+	if sz > uint32(len(self.msgin)) {
+		fmt.Printf("expanding internal msg buffer\n")
+		self.msgin = make([]byte, sz)
+	}
+
+	// get a slice of our main buffer (points into main buffer)
+	msg = self.msgin[0:sz]
+
+	// copy message into buffer
+	copy(msg, buf[4 + 8:4 + 8 + sz])
 	
-	// shift all data down in buffer
-	copy(buf, buf[4 + 8 + sz:])
+	// shift all data down in incoming buffer
+	copy(buf, buf[4 + 8 + sz:top])
+	// reset buffer top
 	btop = top - (4 + 8 + sz)
 	return v, msg, btop, nil
 }
@@ -167,11 +189,25 @@ func (self *ServerClient) MsgStart(rvector uint64) {
 	self.MsgWrite64MSB(self.vector)		// write server vector
 	self.vector = self.vector + 1		// increment server vector
 	self.MsgWrite64MSB(rvector)			// write reply vector
+	/*
+		I feel that I need to explain this. Back in the old days I did not
+		use SSL and instead any packet that was encrypted and needed to be
+		decrypted was prefixed with this. Many of the commands were required
+		to be encrypted. The current build of the client does not do any 
+		encrypted outside of SSL. So this is just left from those old days. I do
+		not remove it because I might want employ some extra encryption one day and
+		all the code is still in place (just disabled)..
+
+		I could one day make it where commands are not forced to be encrypted and
+		in that case I could leave this prefix off. -- kmcguire
+	*/
+	self.MsgWrite8(CmdServerEncrypted)	// prefix encrypted command (doesnt really do anything)
 }
 
 // sends message to remote
 func (self *ServerClient) MsgEnd() {
-	l := self.msgbuf.Len()
+	// length does not consider the two vector fields
+	l := self.msgbuf.Len() - (8 * 2)
 	out := self.msgbuf.Bytes()
 
 	hdr := []byte {byte(l >> 24), byte(l >> 16), byte(l >> 8), byte(l)} 
@@ -180,7 +216,7 @@ func (self *ServerClient) MsgEnd() {
 	self.conn.Write(out)
 }
 
-func (self *ServerClient) MsgWrite8MSB(v uint8) {
+func (self *ServerClient) MsgWrite8(v uint8) {
 	self.msgbuf.Write([]byte {v})
 }
 
@@ -201,11 +237,13 @@ func (self *ServerClient) MsgWrite(b []byte) {
 	self.msgbuf.Write(b)
 }
 
+func (self *ServerClient) MsgWriteString(b string) {
+	self.msgbuf.WriteString(b)
+}
+
 // process a message by executing what it commands under the ServerClient context
 func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) {
 	var cmd			byte
-	
-	fmt.Printf("processing messages..\n")
 
 	cmd = msg[0]
 	
@@ -234,7 +272,13 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 		self.config = self.server.LoadAccountConfig(string(msg))
 		fmt.Printf("config:%p account:%s\n", self.config, string(msg))
 		self.MsgStart(vector)
-		//self.MsgWrite()
+		self.MsgWrite8(CmdServerLoginResult)
+		if self.config == nil {
+			self.MsgWrite8('n')
+			return
+		}
+		self.MsgWrite8('y')
+		self.MsgEnd()
 	}
 
 	if self.config == nil {
@@ -247,19 +291,48 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 	switch (cmd) {
 		case CmdClientDirList:
 			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg))
+			//fmt.Printf("DirList:%s\n", path)
 			nodes, err := ioutil.ReadDir(path)
-			if err != nil {
-				panic("DirList: path specified did not exist")
-			}
+
 			self.MsgStart(vector)
-			for _, n := range nodes {
-				fmt.Printf("node:%s\n", n)
+			self.MsgWrite8(CmdServerDirList)
+			if err != nil {
+				// could not access directory because it does not exist.. or other things..
+				self.MsgWrite8(0)
+				self.MsgEnd()
+				break
 			}
 
-			
+			self.MsgWrite8(1)
+			for _, n := range nodes {
+				// write length of name
+				self.MsgWrite16MSB(uint16(len(n.Name())))
+				// write if directory or not
+				if n.IsDir() {
+					self.MsgWrite8(1)
+				} else {
+					self.MsgWrite8(0)
+				}
+				// write name
+				//self.MsgWrite([]byte(n.Name()))
+				self.MsgWriteString(n.Name())
+			}
+			// send message to remote
+			self.MsgEnd()
+		case CmdClientEcho:
+			self.MsgStart(vector)
+			self.MsgWrite8(CmdServerEcho)
+			self.MsgEnd()
 		case CmdClientFileRead:
 		case CmdClientFileWrite:
 		case CmdClientFileSize:
+			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg))
+			stat, err := os.Stat(path)
+			if err != nil || stat == nil {
+				// path is not accessible for whatever reason
+				break
+			}
+
 		case CmdClientFileTrun:
 		case CmdClientFileDel:
 		case CmdClientFileCopy:
@@ -267,7 +340,6 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 		case CmdClientFileHash:
 		case CmdClientFileTime: 
 		case CmdClientFileSetTime: 
-		case CmdClientEcho: 	
 	}
 	
 	return nil
@@ -293,6 +365,10 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
 	
 	defer self.Finalize()
 
+	f, _ := os.Create("prof")
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
+
 	self.conn = conn
 
 	// message buffer
@@ -312,9 +388,9 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
 		btop = btop + uint32(count)
 		
 		// message fetch loop
-		for vector, msg, btop, err = getMessageFromBuffer(buf, btop, maxmsgsz); 
+		for vector, msg, btop, err = self.getMessageFromBuffer(buf, btop, maxmsgsz); 
 			msg != nil && err == nil; 
-			vector, msg, btop, err = getMessageFromBuffer(buf, btop, maxmsgsz) {
+			vector, msg, btop, err = self.getMessageFromBuffer(buf, btop, maxmsgsz) {
 			// process message
 			self.ProcessMessage(vector, msg)
 		}

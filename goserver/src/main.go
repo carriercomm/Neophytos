@@ -1,7 +1,7 @@
 package main
 
-import "fmt"
-import "Server"
+import 			"fmt"
+import 			"Server"
 
 /*
 */
@@ -52,8 +52,7 @@ func main() {
 	
 	//fmt.Print("buf")
 	//fmt.Println(c)
-	
+
 	go server.ServerEntry(signal)
-	
 	<- signal
 }

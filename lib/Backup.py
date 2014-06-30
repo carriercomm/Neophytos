@@ -516,7 +516,8 @@ class Backup:
 		def __eventDirEnum(pkg, result, vector):
 			rpath = pkg[0]
 			nodes = pkg[1]
-			print('direnum-result', rpath)
+			if result is None:
+				return
 			for node in result:
 				name = node[0]
 				
@@ -537,17 +538,23 @@ class Backup:
 		def __eventFileRead(pkg, result, vector):
 			success = result[0]
 			if success != 1:
-				print('FALSE', result[0])
-				exit()
+				# for now.. just let someone know shit screwed up.. if they
+				# really need it to work they can come edit the code and skip
+				# this and continue onward..
+				raise Exception('Error On Read From Remote For [%s] At Offset [%x]' % (_lpath, _off))
 				return
 			data = result[1]
 			_lpath = pkg[0]
 			_off = pkg[1]
 			print('write:%s:%x' % (_lpath, _off))
-			fd = open(_lpath, 'r+b')
-			fd.seek(_off)
-			fd.write(data)
-			fd.close()
+			# hey.. just keep on moving..
+			try:
+				fd = open(_lpath, 'r+b')
+				fd.seek(_off)
+				fd.write(data)
+				fd.close()
+			except:
+				pass
 			
 		echo = { 'echo': False }
 			
@@ -638,12 +645,12 @@ class Backup:
 				_rem = _rsize - _curoff
 				if _rem > chunksize:
 					_rem = chunksize
-				print('read', _rpath, _rem, _curoff, _rsize)
+				#print('read', _rpath, _rem, _curoff, _rsize)
 				pkg = (_lpath, _curoff)
 				c.FileRead(_rpath, _curoff, chunksize, Client.IOMode.Callback, (__eventFileRead, pkg))
 				if _curoff + _rem >= _rsize:
 					tr.append(job)
-					print('finish', _lpath)
+					print('finish:%s' % (_lpath))
 				job[3] = _curoff + _rem
 			# remove completed jobs
 			for t in tr:

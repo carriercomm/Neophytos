@@ -110,7 +110,6 @@ class Client:
 		
 		# initialize the time we starting recording the number of bytes sent
 		self.bytesoutst = time.time()
-		print('login-result', result)
 		if result:
 			return True
 		else:
@@ -196,8 +195,6 @@ class Client:
 		type = data[0]
 		
 		#print('got type %s' % type)
-
-		print('e-type', type)
 		
 		# only process encrypted messages
 		if type != ServerType.Encrypted:
@@ -214,8 +211,6 @@ class Client:
 			
 		type = data[0]
 		data = data[1:]
-		
-		print('u-type', type)
 
 		# set compression level (can be sent by server at any time
 		# and client does not *have* to respect it, but the server
@@ -225,7 +220,6 @@ class Client:
 			return
 		# process message based on type
 		if type == ServerType.LoginResult:
-			print('login result data:[%s]' % data)
 			if data[0] == ord('y'):
 				return True
 			return False
@@ -238,7 +232,7 @@ class Client:
 				return None
 			
 			data = data[1:]
-			
+
 			list = []
 			while len(data) > 0:
 				# parse header
@@ -305,7 +299,6 @@ class Client:
 		data = self.data
 
 		#self.sock.settimeout(0)
-		
 		# keep track of if we have enough data in our buffer
 		while data.tell() < sz:
 			# calculate how long we can wait
@@ -314,12 +307,11 @@ class Client:
 			#if twait < 0:
 			#	raise ConnectionDeadException()
 			try:
-				# i am using select because settimeout does not
-				# seem to work for the recv method.. so this is
-				# a workaround to force it to work
-				print('waiting for %s more bytes' % (sz - data.tell()))
-				ready = select.select([self.sock], [], [], self.sock.gettimeout())
-				if ready[0]:
+				# i just turned this into a 1 sec blocking operation because
+				# of a bug where data is in buffer but this just continually
+				# blocks instead of releasing with sock in the read set
+				ready = select.select([self.sock], [], [], 1)
+				if len(ready) > 0:
 					_data = self.sock.recv(sz)
 					if _data is not None and len(_data) > 0:
 						self.lastactivity = time.time()
@@ -378,8 +370,6 @@ class Client:
 		
 		# ensure the next reads tries to get the header
 		self.datasz = None
-		
-		print('got message', self.datasv, self.datav, data)
 
 		# return the data
 		return self.datasv, self.datav, data
