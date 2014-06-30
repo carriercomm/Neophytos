@@ -553,8 +553,10 @@ class Backup:
 				fd.seek(_off)
 				fd.write(data)
 				fd.close()
-			except:
-				pass
+			except Exception as e:
+				print('exception writing to %s' % (_lpath))
+				print(e)
+				exit()
 			
 		echo = { 'echo': False }
 			
@@ -605,12 +607,13 @@ class Backup:
 					_lsize = stat.st_size
 					_lmtime = stat.st_mtime
 				else:
-					_lsize = 0
+					_lsize = -1
 					_lmtime = 0
 					# create the local file (0 sized)
 				# if newer then get file size so we can
 				# truncate the local file
-				if _rmtime > _lmtime:
+				if _rmtime >= _lmtime:
+					print('date failed for %s with local:%s remote:%s' % (_lpath, _lmtime, _rmtime))
 					pkg = (_rpath, _lpath, _lsize)
 					c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
 			jobFileTime = []
@@ -624,6 +627,7 @@ class Backup:
 				# if size different truncate local file to match
 				if _rsize[0] != 1:
 					raise Exception('_rsize for %s failed' % _rpath)
+				print('[size] %s lsize:%s rsize:%s' % (_lpath, _lsize, _rsize))
 				_rsize = _rsize[1]
 				if _lsize != _rsize:
 					# truncate local file
@@ -669,6 +673,7 @@ class Backup:
 		fd = os.open(lpath, os.O_RDWR)
 		os.ftruncate(fd, size)
 		os.close(fd)
+		print('<trun>:%s' % lpath)
 	'''
 		I originally started with a threaded model because of the complexity of the entire
 		process per file. This gave me a straight forward way to write code and further my
