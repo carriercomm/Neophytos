@@ -12,7 +12,9 @@ import			"strconv"
 import			"os"
 import pprof 	"runtime/pprof"
 import			"strings"
-//import			"time"
+//import			"math"
+import			"time"
+//import			"zlib"
 //import			"runtime"
 
 const (
@@ -51,6 +53,8 @@ const (
 	CmdServerSetCompressionLevel	= 18
 	CmdServerFileSetTime			= 19
 	CmdServerEcho					= 20
+	////////////////////////////////////
+	FileHeaderReserve				= 32
 )
 
 // account configuration structure
@@ -218,15 +222,15 @@ func (self *ServerClient) MsgEnd() {
 }
 
 func Read16MSB(buf []byte, off uint32) (uint16) {
-	return 	uint16(buf[off + 0]) << 8 | uint16(buf[off + 1])
+	return 	(uint16(buf[off + 0]) << 8) | uint16(buf[off + 1])
 }
 
 func Read32MSB(buf []byte, off uint32) (uint32) {
-	return uint32(Read16MSB(buf, off + 0) << 16) | uint32(Read16MSB(buf, off + 2))
+	return (uint32(Read16MSB(buf, off + 0)) << 16) | uint32(Read16MSB(buf, off + 2))
 }
 
 func Read64MSB(buf []byte, off uint32) (uint64) {
-	return uint64(Read32MSB(buf, off + 0) << 16) | uint64(Read32MSB(buf, off + 4))	
+	return (uint64(Read32MSB(buf, off + 0)) << 32) | uint64(Read32MSB(buf, off + 4))	
 }
 
 func (self *ServerClient) MsgWrite8(v uint8) {
@@ -337,8 +341,86 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 			self.MsgWrite8(CmdServerEcho)
 			self.MsgEnd()
 		case CmdClientFileRead:
-			
+			off := Read64MSB(msg, 0)
+			rsz := Read64MSB(msg, 8)
+			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[16:]))
+			if true {
+				break
+			}
+			fo, err := os.OpenFile(path, os.O_RDWR, 0)
+			if err != nil {
+				self.MsgWrite8(0)
+				self.MsgEnd()
+				break
+			}
+			// TODO: might want to look at reusing the buffer
+			//       to prevent loading the GC with garbage 
+			//       that it will have to collect
+			buf := make([]byte, rsz)
+			_, err = fo.ReadAt(buf, int64(off))
+			self.MsgStart(vector)
+			self.MsgWrite8(CmdServerFileRead)
+			if err != nil {
+				self.MsgWrite8(0)
+				self.MsgEnd()
+				break
+			}
+			self.MsgWrite8(1)
+			self.MsgWrite(buf)
+			fo.Close()
 		case CmdClientFileWrite:
+			off := Read64MSB(msg, 0)
+			fnamesz := Read16MSB(msg, 8)
+			compression := byte(msg[10])
+			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[11:11 + fnamesz]))
+			fmt.Printf("write:%s\n", path)
+			self.MsgStart(vector)
+			self.MsgWrite8(CmdServerFileWrite)
+			if compression > 0 {
+				panic("compression not implemented")
+				//breader := bytes.NewReader(msg[11 + fnamesz:])
+				//zreader, err := zlib.NewReader(breader)
+				//if err != nil {
+				//	self.MsgWrite8(0)
+				//	self.MsgEnd()
+				//	break
+				//}
+				// set msg to output
+				//zreader.Read(msg)
+			} else {
+				// create slice
+				msg = msg[11 + fnamesz:]
+			}
+			if _, _err := os.Stat(path); _err != nil {
+				// CmdClientFileTrun should be used to create
+				// a new file of a certain size
+				///// create new file
+				///// fo, err := os.OpenFile(path, os.O_TRUNC, 0)
+				panic("write to non-existant file")
+				self.MsgWrite8(0)
+				self.MsgEnd()
+			}
+
+			fo, err := os.OpenFile(path, os.O_RDWR, 0700)
+			if err != nil {
+				panic("error opening file for RDWR")
+				self.MsgWrite8(0)
+				self.MsgEnd()
+				break
+			}
+			fo.WriteAt(msg, int64(off))
+			fo.Close()
+			// just reset the file so its the oldest of the old, this
+			// protects the file from having a recent timestamp but not
+			// actually being fully updated.. if a file is left with
+			// this time it is because the client bugged out or crashed
+			// and could not finish the job so the next pass the client
+			// makes will consider this file old and update it either by
+			// uploading or patching (client's decision); i really hate
+			// how this might cost a lot of CPU time maybe..
+			os.Chtimes(path, time.Unix(0, 0), time.Unix(0, 0))
+			self.MsgWrite8(1)
+			self.MsgEnd()
 		case CmdClientFileSize:
 			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg))
 			stat, err := os.Stat(path)
@@ -358,6 +440,17 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 		case CmdClientFileTrun:
 			sz := Read64MSB(msg, 0)
 			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[8:]))
+			fmt.Printf("trun:(%d):%s\n", sz, path)
+			if _, _err := os.Stat(path); _err != nil {
+				// try to make the directory path just to be sure
+				os.MkdirAll(path[0:strings.LastIndex(path, "/")], 0700)
+				// create the file
+				fo, err := os.OpenFile(path, os.O_RDWR | os.O_CREATE, 0700)
+				if err != nil {
+					panic(err)
+				}
+				fo.Close()
+			}
 			err = os.Truncate(path, int64(sz))
 			self.MsgStart(vector)
 			self.MsgWrite8(CmdServerFileTrun)
@@ -390,8 +483,11 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 			self.MsgWrite8(1)
 			self.MsgEnd()
 		case CmdClientFileCopy:
+			panic("CmdClientFileCopy Not Implemented")
 		case CmdClientFileMove:
+			panic("CmdClientFileMove Not Implemented")
 		case CmdClientFileHash:
+			panic("CmdClientFileHash Not Implemented")
 		case CmdClientFileTime: 
 			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg))
 			self.MsgStart(vector)
@@ -405,6 +501,33 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 			self.MsgWrite64MSB(uint64(stat.ModTime().Unix()))
 			self.MsgEnd()
 		case CmdClientFileSetTime: 
+			atime := Read64MSB(msg, 0)
+			mtime := Read64MSB(msg, 8)
+			path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[16:]))
+
+			//if atime > 0.0 || mtime > 0.0 {
+			//	fmt.Printf("GREATER THAN ZERO\n")
+			//}
+			//fmt.Printf("path:%s tmp:%d atime:%f mtime:%f\n", path, tmp, atime, mtime)
+
+			fmt.Printf("path:%s atime:%d mtime:%d", path, atime, mtime)
+
+			//atimesec := math.Floor(atime)
+			//atimens := (atime - atimesec) * 1000000000.0
+			//mtimesec := math.Floor(mtime)
+			//mtimens := (mtime - mtimesec) * 1000000000.0
+
+			err := os.Chtimes(path, time.Unix(int64(atime), 0), time.Unix(int64(mtime), 0))
+			self.MsgStart(vector)
+			self.MsgWrite8(CmdServerFileSetTime)
+			if err != nil {
+				panic("set time failed")
+				self.MsgWrite8(0)
+				self.MsgEnd()
+				break
+			}
+			self.MsgWrite8(1)
+			self.MsgEnd()
 	}
 	
 	return nil
@@ -449,6 +572,7 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
 			fmt.Printf("client connection dropped")
 			return
 		}
+		//fmt.Printf("read bytes (%d)\n", count)
 		
 		btop = btop + uint32(count)
 		

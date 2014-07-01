@@ -10,6 +10,7 @@ import re
 import lib.output as output
 import threading
 import time
+import math
 
 from lib.client import Client2
 from lib.client import Client
@@ -858,8 +859,8 @@ class Backup:
 				# if file does not exist go trun/upload route.. if it does
 				# exist and the size is the same then check the file modified
 				# date and go from there
-				#if _lsize != _rsize:
-				#	print('[size] file:%s local:%s remote:%s' % (_lpath, _lsize, _rsize))
+				if _lsize != _rsize:
+					print('[size] file:%s local:%s remote:%s' % (_lpath, _lsize, _rsize))
 				if _lsize == _rsize and _result[0] == 1:
 					# need to check modified date
 					#print('<getting-time>:%s' % _lpath)
@@ -870,7 +871,7 @@ class Backup:
 					#print('<trun>:%s' % _lpath)
 					c.FileTrun(_rpath, _lsize, Client.IOMode.Discard)
 					# need to decide if we want to upload or patch
-					if True or math.min(_rsize, _lsize) / math.max(_rsize, _lsize) < 0.5:
+					if True or (math.min(_rsize, _lsize) / math.max(_rsize, _lsize) < 0.5):
 						# make upload job
 						print('<upload>:%s' % _lpath)
 						jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
@@ -947,7 +948,7 @@ class Backup:
 				# set the modified time on the file to the current
 				# time to represent it is up to date
 				_rpath = uj[0]
-				c.FileSetTime(_rpath, ct, ct, Client.IOMode.Discard)
+				c.FileSetTime(_rpath, int(ct), int(ct), Client.IOMode.Discard)
 				jobUpload.remove(uj)
 				stat_uploaded = stat_uploaded + 1
 			continue
