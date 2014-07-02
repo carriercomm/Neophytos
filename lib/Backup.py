@@ -697,24 +697,27 @@ class Backup:
         lpbsz = len(lpath)
         rpath = bytes(target, 'utf8')
         
-        jobDirEnum = []                # stage 1
-        jobGetRemoteSize = []        # stage 2
-        jobGetModifiedDate = []        # stage 3 (optional)
-        jobPatch = []                # stage 4.A
-        jobUpload = []                # stage 4.B
+        jobDirEnum = []              # to be enumerated
+        jobPendingFiles = []         # files pending processing
+        jobGetRemoteSize = []        # 
+        jobGetModifiedDate = []      #
+        jobPatch = []                # patch jobs 
+        jobPatchQueryDelayed = []    # delayed patch hash requests
+        jobUpload = []               # upload jobs
         
         jobDirEnum.append(lpath)
 
         echo = { 'echo': False }
         sentEcho = False
-        
+
+        def getQueCount():
+            return c.waitCount() + len(jobGetRemoteSize) + len(jobGetModifiedDate) + len(jobPatch) + len(jobUpload)
         '''
             These turn the async polling model into a async callback model, at
             least to some extent. We still poll but we do not poll individual
             objects which reduces polling time (CPU burn)..
         '''
         def __eventFileSize(pkg, result, vector):
-            print('remote size reply')
             jobGetRemoteSize.append((pkg, result))
         def __eventFileTime(pkg, result, vector):
             jobGetModifiedDate.append((pkg, result)) 
@@ -725,16 +728,19 @@ class Backup:
             # hash local file now and compare
             _success = result[0]
             _rhash = result[1]
-            _rpath = pkt[0]
+            _rpath = pkg[0]
             _lpath = pkg[1]
             _size = pkg[3]
             _offset = pkg[4]
-            _size = pkt[5]
+            _size = pkg[5]
+            _osize = pkg[6]
+            _depth = pkg[7]
             fd = open(_lpath, 'rb')
             fd.seek(_offset)
             _data = fd.read(_size)
             _lhash = c.HashKmc(_data, 128)
             fd.close()
+
             # if the hashes are the same do nothing
             if _lhash != _rhash:
                 # this section of the remote file is different so,
@@ -743,13 +749,15 @@ class Backup:
                 # we find where it differs -- we could end up spending
                 # more bandwidth on 
                 #
-                # .. for now im just going to quit at a certain size
-                if _size < 1024 * 1024:
+
+                # limit the minimum size of a hash
+                if _size > 1024 * 1024:
                     _nsz = int(_size / 2)
                     if _size % 2 == 0:
                         _aoff = int(_offset + _nsz)
                         _alen = _nsz
                         _boff = _offset
+                        _blen = _nsz
                     else:
                         _aoff = int(_offset + _nsz)
                         _alen = _nsz
@@ -757,17 +765,25 @@ class Backup:
                         # adjust by one since we had odd number of bytes
                         _blen = _nsz + 1
                     # start the queries
-                    print('patching-split:%s:%x:%x' % (_lpath, _offset, _size))
-                    subjob = [_rpath, _lpath, _rsize, _lsize, _aoff, _alen]
-                    c.FileHash(_rpath, _aoff, _alen, (__eventHashReply, subjob))
-                    subjob = [_rpath, _lpath, _rsize, _lsize, _boff, _blen]
-                    c.FileHash(_rpath, _boff, _blen, (__eventHashReply, subjob))
+                    print('patching-split:%s:%x:%x (a:%x:%x) (b:%x:%x)' % (_lpath, _offset, _size, _aoff, _alen, _boff, _blen))
+                    # either execute it or delay it
+                    subjob = [_rpath, _lpath, _rsize, _lsize, _aoff, _alen, _osize, _depth + 1]
+                    if getQueCount() > 100:
+                        jobPatchQueryDelayed.append((_rpath, _aoff, _alen, subjob))
+                    else:
+                        c.FileHash(_rpath, _aoff, _alen, (__eventHashReply, subjob))
+                    # either execute it or delay it
+                    subjob = [_rpath, _lpath, _rsize, _lsize, _boff, _blen, _osize, _depth + 1]
+                    if getQueCount() > 100:
+                        jobPatchQueryDelayed.append((_rpath, _boff, _blen, subjob))
+                    else:
+                        c.FileHash(_rpath, _boff, _blen, (__eventHashReply, subjob))
                     return
                 print('patching-section:%s:%x:%x' % (_lpath, _offset, _size))
                 # just upload this section..
                 c.FileWrite(_rpath, _offset, _data, Client.IOMode.Discard)
                 return
-            print('patching-match:%s:%x:%x' % (_lfile, _offset, _size))
+            print('patching-match:%s:%x:%x' % (_lpath, _offset, _size))
         
         # statistics
         databytesout = 0
@@ -800,7 +816,7 @@ class Backup:
             # are not waiting on a result from.. so since we can determine that we
             # will never generate any more packets we can send an echo which will
             # get a reply and once that happens we can shut down the connection
-            if quecount == 0 and c.waitCount() == 0 and sentEcho is False:
+            if len(jobDirEnum) + len(jobPendingFiles) + getQueCount() == 0 and sentEcho is False:
                 print('sending echo')
                 sentEcho = True
                 c.Echo(Client.IOMode.Callback, (__eventEcho, echo))
@@ -856,23 +872,55 @@ class Backup:
                 # just send what we can right now
                 c.send()
 
-            # enum directories and create tadjobs
-            quecount = c.waitCount() + len(jobGetRemoteSize) + len(jobGetModifiedDate) + len(jobPatch) + len(jobUpload)
-            # just an effort to keep from eating too much memory with jobs, if we are here
-            # we are likely way ahead of the network in terms of throughput so just wait a
-            # bit before adding more jobs..
-            if quecount < 50:
+            #
+        
+
+            # do not produce too many - limit to limit memory usage; the
+            # alternative is to let it run free.. which could in certain
+            # situations consume massive amounts of memory
+            if len(jobPendingFiles) < 5000:
                 for x in range(0, min(100, len(jobDirEnum))):
                     dej = jobDirEnum[x]
+                    output.SetTitle('LastDir', dej)
                     #print('<enuming-dir>:%s' % dej)
                     nodes = os.listdir(dej)
+
                     for node in nodes:
                         _lpath = '%s/%s' % (dej, node)
                         if os.path.isdir(_lpath):
                             # delay this..
                             jobDirEnum.append(_lpath)
-                            print('[enum]:%s' % _lpath)
+                            #print('[enum]:%s' % _lpath)
                             continue
+                        jobPendingFiles.append(_lpath)
+                # drop what we completed
+                jobDirEnum = jobDirEnum[x + 1:]
+
+            #
+            # this comes before jobPendingFiles because otherwise 
+            # we would never finish our current pending jobs
+            #
+            # this is delayed hash requests; they were likely delayed
+            # because there was too many out standing jobs and requests
+            if getQueCount() < 100:
+                dbg = False
+                for x in range(0, min(100, len(jobPatchQueryDelayed))):
+                    dbg = True
+                    job = jobPatchQueryDelayed[x]
+                    _rpath = job[0]
+                    _off = job[1]
+                    _size = job[2]
+                    subjob = job[3]
+                    print('pending-hash:%s:%x:%x' % (_rpath, _off, _size))
+                    c.FileHash(_rpath, _off, _size, Client.IOMode.Callback, (__eventHashReply, subjob))
+                # drop the ones we executed
+                jobPatchQueryDelayed = jobPatchQueryDelayed[x + 1:]
+
+            # iterate through and push files into the pump but
+            # do not push too many at once or overall
+            if getQueCount() < 100:
+                for x in range(0, min(100, len(jobPendingFiles))):
+                        _lpath = jobPendingFiles[x]
                         stat = os.stat(_lpath)
                         # send request and create job entry
                         _lsize = stat.st_size
@@ -882,16 +930,14 @@ class Backup:
                             continue
                         stat_checked = stat_checked + 1
                         pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
-                        print('[size]:%s' % _rpath)
+                        #print('[size]:%s' % _rpath)
                         c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
-                    
-                    # just do one directory each time; want this to
-                    # stay as a loop so it can be adjusted; also remove
-                    # it so it is not done over and over..
-                    output.SetTitle('LastDir', dej)
-                # drop the ones we processed
-                jobDirEnum = jobDirEnum[x:]
-                print('jobDirEnum-Remaining:%s' % len(jobDirEnum))
+                # drop what we completed
+                jobPendingFiles = jobPendingFiles[x + 1:]
+
+            ########################################################
+            ############## NO LIMIT SECTIONS BELOW #################
+            ########################################################
 
             # look for replies on remote sizes and create next job
             tr = []
@@ -908,12 +954,12 @@ class Backup:
                 # if file does not exist go trun/upload route.. if it does
                 # exist and the size is the same then check the file modified
                 # date and go from there
-                if _lsize != _rsize:
-                    print('[size] file:%s local:%s remote:%s' % (_lpath, _lsize, _rsize))
+                #if _lsize != _rsize:
+                    #print('[size] file:%s local:%s remote:%s' % (_lpath, _lsize, _rsize))
                 if _lsize == _rsize and _result[0] == 1:
                     # need to check modified date
                     #print('<getting-time>:%s' % _lpath)
-                    print('<gettime>:%s' % _lpath)
+                    #print('<gettime>:%s' % _lpath)
                     pkg = (_rpath, _lpath, _rsize, _lsize, _vector, _lmtime)
                     c.FileTime(_rpath, Client.IOMode.Callback, (__eventFileTime, pkg))
                 else:
@@ -927,7 +973,7 @@ class Backup:
                         jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
                     else:
                         # make patch job
-                        print('<make-patch-job>:%s' % _lpath)
+                        #print('<make-patch-job>:%s' % _lpath)
                         jobPatch.append([_rpath, _lpath, _rsize, _lsize])
             jobGetRemoteSize = []
 
@@ -943,7 +989,7 @@ class Backup:
                 _vector = pkg[4]
                 _lmtime = pkg[5]
 
-                print('<handling-time-reply>:%s' % _lpath)
+                #print('<handling-time-reply>:%s' % _lpath)
 
                 if _rmtime < _lmtime:
                     # need to decide if we want to upload or patch
@@ -952,7 +998,7 @@ class Backup:
                         print('<upload>:%s' % _lpath)
                         jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
                     else:
-                        print('<make-patch>:%s' % _lpath)
+                        #print('<make-patch>:%s' % _lpath)
                         # make patch job
                         jobPatch.append([_rpath, _lpath, _rsize, _lsize])
                 else:
@@ -961,16 +1007,17 @@ class Backup:
                     stat_uptodate = stat_uptodate + 1
                 continue
             jobGetModifiedDate = []
-            
+
             for job in jobPatch:
                 _rpath = job[0]
                 _lpath = job[1]
                 _rsize = job[2]
                 _lsize = job[3]
-                # create sub job (remote should be truncated to local size)
-                subjob = [_rpath, _lpath, _rsize, _lsize, 0, _lsize]
-                # transmit queries
-                print("[patch-start]:%s" % _lpath)
+                # we have to be careful because the server is going to
+                # limit the maximum data length for a hash in order to
+                # prevent it from exhausting memory; so we need to break
+                # large files into multiple starting queries
+                subjob = [_rpath, _lpath, _rsize, _lsize, 0, _lsize, _lsize, 0]
                 c.FileHash(_rpath, 0, _lsize, Client.IOMode.Callback, (__eventHashReply, subjob))
             jobPatch = []
 
@@ -978,8 +1025,6 @@ class Backup:
             tr = []
             cjc = 0
             for uj in jobUpload:
-                print('upload job!!')
-                exit()
                 _rpath = uj[0]
                 _lpath = uj[1]
                 _rsize = uj[2]

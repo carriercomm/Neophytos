@@ -280,7 +280,7 @@ func FileCopy(dst string, src string, move bool) error {
 }
 
 func HashKmc(data []byte, max int) ([]byte) {
-    var    x      int
+    var x      int
     var sz     int
     var seed   byte
     var c      byte
@@ -291,7 +291,7 @@ func HashKmc(data []byte, max int) ([]byte) {
         c = 0
         for x = 0; x * 2 < sz; x++ {
             if x * 2 + 1 < sz {
-                c = byte((int(data[x * 2]) + int(data[x * 2 + 1])) + x + int(c) + int(seed))
+                c = byte((int(data[x * 2]) + int(data[x * 2 + 1])) + (x * 2) + int(c) + int(seed))
                 data[x] = c
             } else {
                 seed = data[x]
@@ -659,8 +659,9 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
     defer self.Finalize()
 
     f, _ := os.Create("prof")
-    pprof.StartCPUProfile(f)
-    defer pprof.StopCPUProfile()
+   	//pprof.StartCPUProfile(f)
+    //defer pprof.StopCPUProfile()
+    defer pprof.WriteHeapProfile(f)
 
     self.conn = conn
 
@@ -706,8 +707,6 @@ func (self *Server) LoadAccountConfig(account string) (*AccountConfig) {
     // check if it is already loaded
     //ioutil.ReadFile(filename) ([]byte, error)
     var config            *AccountConfig
-
-    fmt.Printf("@@@@@@@@@@@@@@\n")
 
     // make sure it is unlocked on function exit or panic
     defer self.accountConfigsLock.Unlock()
@@ -829,7 +828,14 @@ func (self *Server) ServerEntry(psignal chan uint32) {
     // signal caller we are ending
     defer func () { psignal <- 0 } ()
 
-    //func (self *Server) LoadAccountConfig(account string) (*AccountConfig) {
+
+	//buf := HashKmc([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, 4)
+	//for x := 0; x < len(buf); x++ {
+	//	fmt.Printf("%d ", buf[x])
+	//}
+	//fmt.Printf("\n")
+	//return
+    
 
     self.accountConfigsLock = &sync.Mutex{}
     self.accountConfigs = make(map[string]*AccountConfig)

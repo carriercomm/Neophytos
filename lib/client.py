@@ -441,8 +441,10 @@ class Client:
     
     def handleOrSend(self):
         # wait until the socket can read or write
+        print('!handling or sending')
         read, write, exp = select.select([self.sock], [self.sock], [])
-        
+        print('     read:%s write:%s' % (read, write))
+
         if read:
             # it will block by default so force
             # it to not block/wait
@@ -615,8 +617,12 @@ class Client:
     def FileTime(self, fid, mode, callback = None):
         fid = self.GetServerPathForm(fid)
         return self.WriteMessage(struct.pack('>B', ClientType.FileTime) + fid, mode, callback)
-    def HashKmc(data, max):
-        data = list(data)
+    def HashKmc(self, data, max):
+        try:
+            data = list(data)
+        except MemoryError as e:
+            print('memory-error:%s' % len(data))
+            raise e
 
         seed = 0
         sz = len(data)
@@ -639,7 +645,7 @@ class Client:
                     seed = data[x]
                 x = x + 1
             sz = x
-        return data[0:sz]
+        return bytes(data[0:sz])
 
 
 class Client2(Client):
