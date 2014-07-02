@@ -69,7 +69,12 @@ class NodeTypeUnknownException(Exception):
 
 class DataBufferOverflowException(Exception):
 	pass 
-	
+
+# ABCDEFGHIJK
+
+
+# 0
+
 class ServerClient:
 	def GetName(self):
 		return '%s:%s' % (self.addr[0], self.addr[1])
@@ -435,13 +440,6 @@ class ServerClient:
 				# handles copy across different file systems
 				shutil.copyfile(fsrcpath, fdstpath)
 				self.WriteMessage(struct.pack('>BB', ServerType.FileCopy, 1), vector)
-
-			if os.path.exists(fdstpath) is True:
-				if type == ClientType.FileCopy:
-					self.WriteMessage(struct.pack('>BB', ServerType.FileCopy, 0), vector)
-				else:
-					self.WriteMessage(struct.pack('>BB', ServerType.FileMove, 0), vector)
-				return
 			return
 			
 		if type == ClientType.FileDel:
