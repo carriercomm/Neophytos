@@ -12,6 +12,7 @@ import base64
 import select
 
 from io import BytesIO
+from ctypes import *
 
 from lib import output
 from lib import pubcrypt
@@ -59,6 +60,29 @@ class Client:
         self.lasttitleupdated = 0
         self.workerpool = None
         self.workpool = None
+
+        # determine if we are running in 32-bit or 64-bit mode
+        is64 = sys.maxsize > 2 ** 32
+
+        # load library appropriate for the operating system, if the
+        # system is not supported we will use our Python implemented
+        # although it is *much* slower..
+        if sys.platform.find('linux') > -1:
+            self.hentry = None
+            # linux supports two architectures the x86 and x86_64
+            if is64:
+                libpath = './lib/hasher/hasher64.so'
+            else:
+                libpath = './lib/hasher/hasher32.so'
+
+            if os.path.exists(libpath):
+                try:
+                    self.hdll = cdll.LoadLibrary(libpath)
+                    self.hentry = CFUNCTYPE(c_int)(('hash', self.hdll))
+                except:
+                    print('WARNING: FAILED LOADING SHARED LIBRARY')
+        else:
+            print('WARNING: NATIVE HASH LIBRARY NOT SUPPORTED (EXPECT SLOW HASHING)')
         
         self.lastpushedlfile = ''
         
@@ -441,9 +465,7 @@ class Client:
     
     def handleOrSend(self):
         # wait until the socket can read or write
-        print('!handling or sending')
         read, write, exp = select.select([self.sock], [self.sock], [])
-        print('     read:%s write:%s' % (read, write))
 
         if read:
             # it will block by default so force
@@ -618,11 +640,12 @@ class Client:
         fid = self.GetServerPathForm(fid)
         return self.WriteMessage(struct.pack('>B', ClientType.FileTime) + fid, mode, callback)
     def HashKmc(self, data, max):
-        try:
-            data = list(data)
-        except MemoryError as e:
-            print('memory-error:%s' % len(data))
-            raise e
+        #out = create_string_buffer(w * h * 2)
+        if self.hentry is not None:
+            sz = self.hentry(c_char_p(data), c_uint(len(data)), max)
+            return data[0:sz]
+
+        data = list(data)
 
         seed = 0
         sz = len(data)

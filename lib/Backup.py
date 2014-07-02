@@ -867,6 +867,7 @@ class Backup:
                     output.SetTitle('DataOutMB', outdata)
                     output.SetTitle('ControlOutMB', outcontrol)
                     output.SetTitle('OutBuffer', c.getBytesToSend())
+                    time.sleep(0.05)
                 #print('continuing..')
             else:
                 # just send what we can right now
@@ -916,8 +917,38 @@ class Backup:
                 # drop the ones we executed
                 jobPatchQueryDelayed = jobPatchQueryDelayed[x + 1:]
 
-            # iterate through and push files into the pump but
-            # do not push too many at once or overall
+            # DESCRIPTION:
+            #       this will issue new hash requests which starting the patching
+            #       process only if the queue is below a certain number of items
+            #       which helps keep the memory consumption limited because these
+            #       can get out of hand fast if you have a multi-GB file or even
+            #       a TB can create one million requests which is a lot
+            # LOCATION:
+            #       this happens before any new files are placed into the queues
+            #       so we can finish our patch jobs before moving on the to next
+            #       file
+            mcnt = max(0, 200 - getQueCount())
+            tr = []
+            for x in range(0, min(mcnt, len(jobPatch))):
+                job = jobPatch[x]
+                _rpath = job[0]
+                _lpath = job[1]
+                _rsize = job[2]
+                _lsize = job[3]
+                _curoff = job[4]
+                _off = 0
+                csz = 1024 * 1024
+                _tsz = min(csz, _lsize - _off)
+                subjob = [_rpath, _lpath, _rsize, _lsize, _off, _tsz, _lsize, 0]
+                c.FileHash(_rpath, _off, _tsz, Client.IOMode.Callback, (__eventHashReply, subjob))
+                job[4] = job[4] + csz
+                if job[4] >= _lsize:
+                    tr.append(job)
+            for t in tr:
+                jobPatch.remove(t)
+
+            # DESCRIPTION:
+            #     
             if getQueCount() < 100:
                 for x in range(0, min(100, len(jobPendingFiles))):
                         _lpath = jobPendingFiles[x]
@@ -974,7 +1005,7 @@ class Backup:
                     else:
                         # make patch job
                         #print('<make-patch-job>:%s' % _lpath)
-                        jobPatch.append([_rpath, _lpath, _rsize, _lsize])
+                        jobPatch.append([_rpath, _lpath, _rsize, _lsize, 0])
             jobGetRemoteSize = []
 
             # iterate
@@ -1000,26 +1031,13 @@ class Backup:
                     else:
                         #print('<make-patch>:%s' % _lpath)
                         # make patch job
-                        jobPatch.append([_rpath, _lpath, _rsize, _lsize])
+                        jobPatch.append([_rpath, _lpath, _rsize, _lsize, 0])
                 else:
                     # just drop it since its either up to date or newer
                     #print('<up-to-date>:%s' % _lpath)
                     stat_uptodate = stat_uptodate + 1
-                continue
-            jobGetModifiedDate = []
-
-            for job in jobPatch:
-                _rpath = job[0]
-                _lpath = job[1]
-                _rsize = job[2]
-                _lsize = job[3]
-                # we have to be careful because the server is going to
-                # limit the maximum data length for a hash in order to
-                # prevent it from exhausting memory; so we need to break
-                # large files into multiple starting queries
-                subjob = [_rpath, _lpath, _rsize, _lsize, 0, _lsize, _lsize, 0]
-                c.FileHash(_rpath, 0, _lsize, Client.IOMode.Callback, (__eventHashReply, subjob))
-            jobPatch = []
+                    continue
+            jobGetModifiedDate = [] 
 
             # 
             tr = []

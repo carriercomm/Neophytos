@@ -492,7 +492,8 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[8:]))
             fmt.Printf("trun:(%d):%s\n", sz, path)
             stat, err := os.Stat(path)
-            if _err != nil {
+            fmt.Printf("stat:%p err:%p", stat, err)
+            if err != nil {
                 base := path[0:strings.LastIndex(path, "/")]
                 // try to make the directory path just to be sure
                 os.MkdirAll(base, 0700)
@@ -514,9 +515,11 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 return nil
             }
            	// decrement the amount of space used by old size
-            self.config.SpaceUsed(-stat.Size())
+            if stat != nil {
+                self.config.SpaceUsed(-stat.Size())
+            }
             // increment the amount of space used by new size
-            self.config.SpaceUsed(sz)
+            self.config.SpaceUsed(int64(sz))
             self.MsgWrite8(1)
             self.MsgEnd()
             return nil
@@ -530,7 +533,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 				self.MsgEnd()
 				return nil
 			}
-            err := os.RemoveAll(path)
+            err = os.RemoveAll(path)
             if err != nil {
                 self.MsgWrite8(0)
                 self.MsgEnd()
@@ -554,7 +557,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             srclen := Read16MSB(msg, 0)
             src := string(msg[2:2 + srclen])
             dst := string(msg[2 + srclen:])
-            stat, err := os.Stat(path)
+            stat, err := os.Stat(src)
             self.MsgStart(vector)
             self.MsgWrite8(CmdServerFileCopy)
             if err != nil {
@@ -562,7 +565,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             	self.MsgEnd()
             	return nil
             }
-            err := FileCopy(dst, src, false)
+            err = FileCopy(dst, src, false)
             if err != nil {
             	self.MsgWrite8(0)
             	self.MsgEnd()
