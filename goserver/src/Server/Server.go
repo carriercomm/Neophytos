@@ -20,54 +20,54 @@ import            "io"
 
 const (
     CmdClientDirList                = 0
-    CmdClientFileRead                = 1
-    CmdClientFileWrite                = 2
-    CmdClientFileSize                = 3
-    CmdClientFileTrun                = 4
+    CmdClientFileRead               = 1
+    CmdClientFileWrite              = 2
+    CmdClientFileSize               = 3
+    CmdClientFileTrun               = 4
     CmdClientFileDel                = 5
-    CmdClientFileCopy                = 6
-    CmdClientFileMove                = 7
-    CmdClientFileHash                = 8
-    CmdClientGetPublicKey            = 11
-    CmdClientSetupCrypt                = 12
-    CmdClientEncrypted                = 13
-    CmdClientLogin                    = 14
-    CmdClientFileTime                = 15
+    CmdClientFileCopy               = 6
+    CmdClientFileMove               = 7
+    CmdClientFileHash               = 8
+    CmdClientGetPublicKey           = 11
+    CmdClientSetupCrypt             = 12
+    CmdClientEncrypted              = 13
+    CmdClientLogin                  = 14
+    CmdClientFileTime               = 15
     CmdClientFileSetTime            = 16
-    CmdClientEcho                    = 17
+    CmdClientEcho                   = 17
     ////////////////////////////////////
     CmdServerDirList                = 0
-    CmdServerFileRead                = 1
-    CmdServerFileWrite                = 2
-    CmdServerFileSize                = 3
-    CmdServerFileTrun                = 4
+    CmdServerFileRead               = 1
+    CmdServerFileWrite              = 2
+    CmdServerFileSize               = 3
+    CmdServerFileTrun               = 4
     CmdServerFileDel                = 5
-    CmdServerFileCopy                = 6
-    CmdServerFileMove                = 7
-    CmdServerFileHash                = 8
-    CmdServerPublicKey                 = 11
-    CmdServerSetupCrypt                = 12
-    CmdServerEncrypted                = 13
-    CmdServerLogin                    = 14
+    CmdServerFileCopy               = 6
+    CmdServerFileMove               = 7
+    CmdServerFileHash               = 8
+    CmdServerPublicKey              = 11
+    CmdServerSetupCrypt             = 12
+    CmdServerEncrypted              = 13
+    CmdServerLogin                  = 14
     CmdServerLoginResult            = 16
-    CmdServerFileTime                = 17
+    CmdServerFileTime               = 17
     CmdServerSetCompressionLevel    = 18
     CmdServerFileSetTime            = 19
-    CmdServerEcho                    = 20
+    CmdServerEcho                   = 20
     ////////////////////////////////////
-    FileHeaderReserve                = 32
+    FileHeaderReserve               = 32
 )
 
 // account configuration structure
 type AccountConfig struct {
-    lock                *sync.Mutex            // protects structure access
-    spaceQuota            int64                // maximum bytes that can be used
-    spaceUsed            int64                // bytes used in total file data
-    spacePerFile        int64                // bytes consumed for file creation
-    spacePerDir            int64                // bytes consumed for each directory created
+    lock                *sync.Mutex           // protects structure access
+    spaceQuota          int64                 // maximum bytes that can be used
+    spaceUsed           int64                 // bytes used in total file data
+    spacePerFile        int64                 // bytes consumed for file creation
+    spacePerDir         int64                 // bytes consumed for each directory created
     DiskPath            string                // the base disk path for this account
-    RefCount            int16                // once at zero it can be flushed to disk
-    AccountName            string                // name of account
+    RefCount            int16                 // once at zero it can be flushed to disk
+    AccountName         string                // name of account
 }
 
 // lock protected object member access; will add mod to current value and return new value
@@ -491,7 +491,8 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             sz := Read64MSB(msg, 0)
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[8:]))
             fmt.Printf("trun:(%d):%s\n", sz, path)
-            if _, _err := os.Stat(path); _err != nil {
+            stat, err := os.Stat(path)
+            if _err != nil {
                 base := path[0:strings.LastIndex(path, "/")]
                 // try to make the directory path just to be sure
                 os.MkdirAll(base, 0700)
@@ -505,20 +506,31 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             err = os.Truncate(path, int64(sz))
             self.MsgStart(vector)
             self.MsgWrite8(CmdServerFileTrun)
+            // check for error condition first
             if err != nil {
                 panic(fmt.Sprintf("truncate: failed on %s", path))
                 self.MsgWrite8(0)            // failure code
                 self.MsgEnd()
                 return nil
             }
+           	// decrement the amount of space used by old size
+            self.config.SpaceUsed(-stat.Size())
+            // increment the amount of space used by new size
+            self.config.SpaceUsed(sz)
             self.MsgWrite8(1)
             self.MsgEnd()
             return nil
         case CmdClientFileDel:
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg))
-            err := os.RemoveAll(path)
             self.MsgStart(vector)
             self.MsgWrite8(CmdServerFileDel)
+			stat, err := os.Stat(path)
+			if err != nil {
+				self.MsgWrite8(0)
+				self.MsgEnd()
+				return nil
+			}
+            err := os.RemoveAll(path)
             if err != nil {
                 self.MsgWrite8(0)
                 self.MsgEnd()
@@ -533,6 +545,8 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 // just ignore any error for now
                 os.RemoveAll(base)
             }
+            // adjust space used to account for deleted file
+            self.config.SpaceUsed(-stat.Size())
             self.MsgWrite8(1)
             self.MsgEnd()
             return nil
@@ -540,10 +554,21 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             srclen := Read16MSB(msg, 0)
             src := string(msg[2:2 + srclen])
             dst := string(msg[2 + srclen:])
-
-            FileCopy(dst, src, false)
-
+            stat, err := os.Stat(path)
             self.MsgStart(vector)
+            self.MsgWrite8(CmdServerFileCopy)
+            if err != nil {
+            	self.MsgWrite8(0)
+            	self.MsgEnd()
+            	return nil
+            }
+            err := FileCopy(dst, src, false)
+            if err != nil {
+            	self.MsgWrite8(0)
+            	self.MsgEnd()
+            	return nil
+            }
+            self.config.SpaceUsed(stat.Size())
             self.MsgWrite8(1)
             self.MsgEnd()
             return nil
@@ -552,7 +577,12 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             src := string(msg[2:2 + srclen])
             dst := string(msg[2 + srclen:])
 
-            FileCopy(dst, src, true)
+            err := FileCopy(dst, src, true)
+            if err != nil {
+            	self.MsgWrite8(0)
+            	self.MsgEnd()
+            	return nil
+            }
 
             self.MsgStart(vector)
             self.MsgWrite8(1)
@@ -609,17 +639,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             mtime := Read64MSB(msg, 8)
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[16:]))
 
-            //if atime > 0.0 || mtime > 0.0 {
-            //    fmt.Printf("GREATER THAN ZERO\n")
-            //}
-            //fmt.Printf("path:%s tmp:%d atime:%f mtime:%f\n", path, tmp, atime, mtime)
-
             fmt.Printf("path:%s atime:%d mtime:%d", path, atime, mtime)
-
-            //atimesec := math.Floor(atime)
-            //atimens := (atime - atimesec) * 1000000000.0
-            //mtimesec := math.Floor(mtime)
-            //mtimens := (mtime - mtimesec) * 1000000000.0
 
             err := os.Chtimes(path, time.Unix(int64(atime), 0), time.Unix(int64(mtime), 0))
             self.MsgStart(vector)
@@ -828,14 +848,12 @@ func (self *Server) ServerEntry(psignal chan uint32) {
     // signal caller we are ending
     defer func () { psignal <- 0 } ()
 
-
 	//buf := HashKmc([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, 4)
 	//for x := 0; x < len(buf); x++ {
 	//	fmt.Printf("%d ", buf[x])
 	//}
 	//fmt.Printf("\n")
 	//return
-    
 
     self.accountConfigsLock = &sync.Mutex{}
     self.accountConfigs = make(map[string]*AccountConfig)
