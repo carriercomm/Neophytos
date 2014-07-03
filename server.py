@@ -835,7 +835,6 @@ class Server:
 				
 			# [ACCEPT] incoming connections (SSL encryption connections)
 			if self.sslsock in readable:
-				print('ACCEPTING SSL CONNECTION')
 				nsock, caddr = self.sslsock.accept()
 				nsc = ServerClient(nsock, caddr, self.keypub, self.keypri, self, essl = True)
 				# the SSL will change the sock

@@ -40,7 +40,7 @@ class Client:
         Callback     = 3        # Execute callback on arrival.
         Discard        = 4        # Async, but do not keep results.
         
-    def __init__(self, rhost, rport, aid):
+    def __init__(self, rhost, rport, aid, sformat):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.keepresult = {}
         self.callback = {}
@@ -60,6 +60,9 @@ class Client:
         self.lasttitleupdated = 0
         self.workerpool = None
         self.workpool = None
+
+        # enable or disable stash/revision format
+        self.revformat = sformat
 
         # determine if we are running in 32-bit or 64-bit mode
         is64 = sys.maxsize > 2 ** 32
@@ -98,6 +101,9 @@ class Client:
         self.dbgv = 0
         self.dbgc = 0
     
+    def SetRevFormat(self, b):
+        self.revformat = b
+
     def Shutdown(self):
         self.sock.close()
     
@@ -527,6 +533,9 @@ class Client:
         # remove duplicate path separators
         while path.find(b'//') > -1:
             path = path.replace(b'//', b'/')
+        # if not using revision format then dont 
+        if not self.revformat:
+            return path
         # 2. convert entries into stash format
         parts = path.split(b'/')
         _parts = []
@@ -670,39 +679,6 @@ class Client:
             sz = x
         return bytes(data[0:sz])
 
-
 class Client2(Client):
-    def __init__(self, rhost, rport, aid, maxthread = 128):
-        Client.__init__(self, rhost, rport, aid)
-        
-def main():
-    client = Client2('localhost', 4322, b'Kdje493FMncSxZs')
-    #print('setup connection')
-    client.Connect()
-    #print('    setup connection done')
-    
-    '''
-    print('requesting directory list')
-    list = client.DirList(b'/')
-    
-    print('truncating file')
-    result = client.FileTrun((b'test', 0), 1024)
-    print('FileTrun.result:%s' % result)
-    
-    result = client.FileWrite((b'test', 0), 0, b'hello world')
-    print('FileWrite.result:%s' % result)
-    
-    result = client.FileRead((b'test', 0), 0, 11)
-    print('FileRead.result:%s' % (result,))
-    
-    result = client.FileHash((b'test', 0), 0, 11)
-    print('SZ', len(result[1]))
-    '''
-    
-    #result = client.FilePatch((b'sample', 0), './sample')
-    
-    while True:
-        continue
-
-if __name__ == '__main__':
-    main()
+    def __init__(self, rhost, rport, aid, sformat):
+        Client.__init__(self, rhost, rport, aid, sformat)
