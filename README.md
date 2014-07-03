@@ -46,12 +46,12 @@ Current State
 =====
 The software is currently in development. It is not officially released as stable. It is not completely usable because it does lack some features described above. It however is very close to being finished. This is a list of things and their progress.
 
-* client command line interface (85% complete; _usable_)
+* client command line interface (95% complete; _usable_)
 * file stashing (50% complete; implemented server side but not used client side)
 * file encryption (0% complete; implemented server side but client does not provide this functionality yet)
 * encrypted communication between client and server over the internet (SSL and XORMIX) (100% complete)
 * delta uploading/downloading (100% complete; client side needs more testing and tweaking)
-* graphical front-end (0% complete; will provide a graphical front end for X11 and Windows)
+* graphical front-end (20% complete; will provide a graphical front end for X11 and Windows)
 * filter system (100% complete; might need reworking to be easier to use..)
 
 Client Tutorial
@@ -60,98 +60,8 @@ To run the client use:
 
     python3 backup.py
 	
-This should display a help screen. You will first need to create an account configuration. This does _NOT_ create an account on the server
-but rather creates the configuration for the account.
-
-    python3 backup.py add default localhost
-
-Now, we need to add an authorization code (username/password combination). We will use the code created in the server tutorial (next section).
-
-    python3 backup.py default config hdk392Ej  
-
-That code is your username and password. It should be a lot longer! But, we are using a short one for an example.
-
-Now, we need to add a path to backup:
-
-    python3 backup.py default add home /home/kmcguire
-	
-I created a target called _home_ under the account called _default_ using the path _/home/kmcguire_.
-
-To push files to the server use:
-
-    python3 backup.py default push
-	
-This will push (backup) the files specified in the path under each target in the default account. For example:
-
-    python3 backup.py default add projects /home/projects
-	
-This would add another target. So when you did push it would push both targets. To push individual targets you can use:
-
-    python3 backup.py default push projects <... another ...>
-
-To set rules with regular expressions on what files to push you can do:
-
-    python3 backup.py default filter home add true repattern "^\."
-	
-This will cause all hidden files and directories (under Linux) or any file which starts with a period to be omitted from the backup. The
-filter is checked against directory names and file names. It only uses the directory name or file name not the entire absolute path when
-checking for matches. The _true_ means this is an inversion filter meaning when it matches it excludes the file or directory. You could
-do the following to include only hidden directories and files.
-
-    python3 backup.py default filter home clear
-    python3 backup.py default filter home add false repattern "^\."       <--- accepts anything starting with .
-	python3 backup.py default filter home add true repattern "^."         <--- rejects anything
-	
-You actually do not need the last command as a filter by default if it has no matches will reject a directory or file. I just
-added the last line for more clarity. It is actually redundant as it would have been rejected anyway. The filter entries are
-appended to the end of the list. The filter list is moved through starting from the first.
-
-By doing:
-
-    python3 backup.py default filter home list
-
-You will see the filter items listed. The top one at _00_ is executed first. If it matches then it does not check the
-rest of the entries. If it does not match it continues to the next item _01_ and so forth. If it runs out of entries it
-will by default reject/ignore the directory or file. 
-
-There may be a situation where you add a filter item and you need to move it to a different position on the list. There are
-multiple ways to move it. For example if you needed to move it to the top of the list and when you did the add it was placed
-at index _09_. To move it to the top you can do:
-
-    python3 backup.py default filter home move 9 0
-
-This would move entry at index _09_ to index _00_ which would push everything down. Now what was at _00_ is at _01_ and what
-was at _01_ is at _02_ and so forth. 
-
-You can also swap by doing:
-
-    python3 backup.py default filter home move swap 9 0
-	
-This would swap index _09_ with index _00_. This is likely to be useful when you wish to replace something as you can then do:
-
-    python3 backup.py default filter home del 9
-	
-Which would delete the old entry you swapped it out for. To find out all the commands you can do:
-
-    python3 backup.py default filter
-    python3 backup.py default filter home add
-    python3 backup.py default filter home move
-
-Just replace _home_ with your target if you use something different. The _move_ command actually supports quite a few variations
-such as:
-
-    python3 backup.py default filter home move 4 +1    <-- move index 4 up one spot
-    python3 backup.py default filter home move 4 +3    <-- move index 4 up three spots
-    python3 backup.py default filter home move 4 -3    <-- move index 4 down three spots
-    python3 backup.py default filter home move 4 down  <-- move index 4 down one spot
-    python3 backup.py default filter home move 4 up    <-- move index 4 up one spot
-    python3 backup.py default filter home move 4 1     <-- move index 4 to index 1
-
-And, remember to see your filter list use:
-
-    python3 backup.py default filter home list
-    python3 backup.py default filter projects list
-    python3 backup.py default filter <target-name-here> list
+_I have to rewrite this tutorial for the client because I made a major change in the command line
+interface to faciliate a more simple approach to using it. The old design just become too complicated._
 	
 Server Tutorial
 =====
