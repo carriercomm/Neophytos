@@ -21,7 +21,7 @@ def TruncateFile(lpath, size):
     fd = os.open(lpath, os.O_RDWR)
     os.ftruncate(fd, size)
     os.close(fd)
-    print('<trun>:%s' % lpath)
+    logger.debug('<trun>:%s', lpath)
 
 def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True):
     if rpath is None:
@@ -432,42 +432,45 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         #       this happens before any new files are placed into the queues
         #       so we can finish our patch jobs before moving on the to next
         #       file
-        mcnt = max(0, 200 - getQueCount())
-        tr = []
-        for x in range(0, min(mcnt, len(jobPatch))):
+        _max = min(max(0, 200 - getQueCount()), len(jobPatch))
+        x = 0
+        while x < _max:
             job = jobPatch[x]
             _rpath = job[0]
             _lpath = job[1]
             _rsize = job[2]
             _lsize = job[3]
             _curoff = job[4]
-            _off = 0
-            csz = 1024 * 1024
-            _tsz = min(csz, _lsize - _off)
-            subjob = [_rpath, _lpath, _rsize, _lsize, _off, _tsz, _lsize, 0]
-            c.FileHash(_rpath, _off, _tsz, Client.IOMode.Callback, (__eventHashReply, subjob))
-            job[4] = job[4] + csz
+            # hash 32MB chunks (server is threaded so it should be okay)
+            csz = 1024 * 1024 * 32
+            _tsz = min(csz, _lsize - _curoff)
+            print('hash', _lpath, _curoff, _tsz)
+            subjob = [_rpath, _lpath, _rsize, _lsize, _curoff, _tsz, _lsize, 0]
+            c.FileHash(_rpath, _curoff, _tsz, Client.IOMode.Callback, (__eventHashReply, subjob))
+            job[4] = job[4] + _tsz
             if job[4] >= _lsize:
-                tr.append(job)
-        for t in tr:
-            jobPatch.remove(t)
+                # do not increment x after removing it
+                print('removing:%s' % _lpath)
+                del jobPatch[x]
+                _max = _max - 1
+                continue
+            # increment x since we did not remove anything
+            x = x = 1
 
         # DESCRIPTION:
         #     
         if getQueCount() < 100:
             for x in range(0, min(100, len(jobPendingFiles))):
-                    _lpath = jobPendingFiles[x]
-                    stat = os.stat(_lpath)
-                    # send request and create job entry
-                    _lsize = stat.st_size
-                    _rpath = rpath + bytes(_lpath[lpbsz:], 'utf8')
-                    #print('<getting-size>:%s' % _rpath)
-                    if _lsize > 1024 * 1024 * 200:
-                        continue
-                    stat_checked = stat_checked + 1
-                    pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
-                    #print('[size]:%s' % _rpath)
-                    c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
+                _lpath = jobPendingFiles[x]
+                stat = os.stat(_lpath)
+                # send request and create job entry
+                _lsize = stat.st_size
+                _rpath = rpath + bytes(_lpath[lpbsz:], 'utf8')
+                #print('<getting-size>:%s' % _rpath)
+                stat_checked = stat_checked + 1
+                pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
+                #print('[size]:%s' % _rpath)
+                c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
             # drop what we completed
             jobPendingFiles = jobPendingFiles[x + 1:]
 
@@ -476,7 +479,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         ########################################################
 
         # look for replies on remote sizes and create next job
-        tr = []
         for rsj in jobGetRemoteSize:
             pkg = rsj[0]
             _result = rsj[1]
@@ -514,7 +516,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         jobGetRemoteSize = []
 
         # iterate
-        tr = []
         for rtj in jobGetModifiedDate:
             pkg = rtj[0]
             _rmtime = rtj[1]
