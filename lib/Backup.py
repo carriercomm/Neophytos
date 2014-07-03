@@ -14,6 +14,7 @@ import math
 
 from lib.client import Client2
 from lib.client import Client
+
 import lib.buops
 
 def DoFilter(filters, fpath, allownonexistant = False):
@@ -168,7 +169,6 @@ class Backup:
                     val = arg[len(_opt):]
                     if len(val)> 0 and val[0] == '=':
                         val = val[1:] 
-                    print('got', opt)
                     setopts[opt] = val
 
         # fill in any missing arguments 
@@ -237,5 +237,3 @@ class Backup:
         if 'sync-ldel' in setopts:
             raise Exception('not implemented')
         return
-
-

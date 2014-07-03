@@ -9,6 +9,34 @@ from lib import output
 from lib.client import Client
 from lib.client import Client2
 
+import lib.flycatcher as flycatcher
+
+logger = flycatcher.getLogger('BuOps')
+
+class StatusTick:
+    HashReply       = 1
+    SizeReply       = 2
+    DateReply       = 3
+    WriteChunk      = 4
+    Process         = 5
+    Finish          = 6
+
+
+def SendStatusTick(tick):
+    if tick == StatusTick.Process:
+        print('@', end = '')
+    if tick == StatusTick.Finish:
+        print('^', end = '')
+    if tick == StatusTick.HashReply:
+        print('#', end = '')
+    if tick == StatusTick.SizeReply:
+        print('$', end = '')
+    if tick == StatusTick.DateReply:
+        print('?', end = '')
+    if tick == StatusTick.WriteChunk:
+        print('+', end = '')
+    sys.stdout.flush()
+
 def TruncateFile(lpath, size):
     if os.path.exists(lpath) is False:
         # get base path and ensure directory structure is created
@@ -21,11 +49,13 @@ def TruncateFile(lpath, size):
     fd = os.open(lpath, os.O_RDWR)
     os.ftruncate(fd, size)
     os.close(fd)
-    logger.debug('<trun>:%s', lpath)
+    logger.debug('<trun>:%s' % lpath)
 
 def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True):
     if rpath is None:
         rpath = b'/'
+
+    output.SetTitle('user', os.getlogin())
 
     sac = bytes(sac, 'utf8')
     c = Client2(rhost, rport, sac, sformat)
@@ -75,7 +105,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         data = result[1]
         _lpath = pkg[0]
         _off = pkg[1]
-        print('write:%s:%x' % (_lpath, _off))
+        logger.debug('write:%s:%x' % (_lpath, _off))
         # hey.. just keep on moving..
         try:
             fd = open(_lpath, 'r+b')
@@ -115,10 +145,10 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             node = nodes.pop(0)
             
             _rpath = node[0]
-            _lpath = '%s/%s' % (lpath,node[0][rpbsz:].decode('utf8'))
+            _lpath = '%s/%s' % (lpath, node[0][rpbsz:].decode('utf8'))
             # if directory issue enumerate call
             if node[1] == 1:
-                print('requestingdirenum', _rpath)
+                logger.debug('requestingdirenum:%s' % _rpath)
                 pkg = (_rpath, nodes)
                 c.DirList(_rpath, Client.IOMode.Callback, (__eventDirEnum, pkg))
                 continue
@@ -142,8 +172,9 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             # if newer then get file size so we can
             # truncate the local file
             if _rmtime >= _lmtime:
-                print('date failed for %s with local:%s remote:%s' % (_lpath, _lmtime, _rmtime))
+                logger.debug('date failed for %s with local:%s remote:%s' % (_lpath, _lmtime, _rmtime))
                 pkg = (_rpath, _lpath, _lsize)
+                print('<request-time>:%s' % _lpath)
                 c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
         jobFileTime = []
         
@@ -156,7 +187,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             # if size different truncate local file to match
             if _rsize[0] != 1:
                 raise Exception('_rsize for %s failed' % _rpath)
-            print('[size] %s lsize:%s rsize:%s' % (_lpath, _lsize, _rsize))
+            logger.debug('[size] %s lsize:%s rsize:%s' % (_lpath, _lsize, _rsize))
             _rsize = _rsize[1]
             if _lsize != _rsize:
                 # truncate local file
@@ -178,12 +209,11 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _rem = _rsize - _curoff
             if _rem > chunksize:
                 _rem = chunksize
-            #print('read', _rpath, _rem, _curoff, _rsize)
             pkg = (_lpath, _curoff)
             c.FileRead(_rpath, _curoff, chunksize, Client.IOMode.Callback, (__eventFileRead, pkg))
             if _curoff + _rem >= _rsize:
                 tr.append(job)
-                print('finish:%s' % (_lpath))
+                logger.debug('finish:%s' % (_lpath))
             job[3] = _curoff + _rem
         # remove completed jobs
         for t in tr:
@@ -195,6 +225,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         rpath = b'/'
     else:
         rpath = bytes(rpath, 'utf8')
+
+    output.SetTitle('user', os.getlogin())
 
     sac = bytes(sac, 'utf8')
     c = Client2(rhost, rport, sac, sformat)
@@ -212,6 +244,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     
     jobDirEnum.append(lpath)
 
+    maxque = 500
+
     echo = { 'echo': False }
     sentEcho = False
 
@@ -223,13 +257,16 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         objects which reduces polling time (CPU burn)..
     '''
     def __eventFileSize(pkg, result, vector):
+        SendStatusTick(StatusTick.SizeReply)
         jobGetRemoteSize.append((pkg, result))
     def __eventFileTime(pkg, result, vector):
+        SendStatusTick(StatusTick.DateReply)
         jobGetModifiedDate.append((pkg, result)) 
     def __eventEcho(pkg, result, vector):
-        print('ECHO ECHO')
+        logger.debug('ECHO')
         pkg['echo'] = True
     def __eventHashReply(pkg, result, vector):
+        SendStatusTick(StatusTick.HashReply)
         # hash local file now and compare
         _success = result[0]
         _rhash = result[1]
@@ -270,7 +307,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                     # adjust by one since we had odd number of bytes
                     _blen = _nsz + 1
                 # start the queries
-                print('patching-split:%s:%x:%x (a:%x:%x) (b:%x:%x)' % (_lpath, _offset, _size, _aoff, _alen, _boff, _blen))
+                logger.debug('patching-split:%s:%x:%x (a:%x:%x) (b:%x:%x)' % (_lpath, _offset, _size, _aoff, _alen, _boff, _blen))
                 # either execute it or delay it
                 subjob = [_rpath, _lpath, _rsize, _lsize, _aoff, _alen, _osize, _depth + 1]
                 if getQueCount() > 100:
@@ -284,11 +321,12 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 else:
                     c.FileHash(_rpath, _boff, _blen, (__eventHashReply, subjob))
                 return
-            print('patching-section:%s:%x:%x' % (_lpath, _offset, _size))
+            logger.debug('patching-section:%s:%x:%x' % (_lpath, _offset, _size))
             # just upload this section..
+            SendStatusTick(StatusTick.WriteChunk)
             c.FileWrite(_rpath, _offset, _data, Client.IOMode.Discard)
             return
-        print('patching-match:%s:%x:%x' % (_lpath, _offset, _size))
+        logger.debug('patching-match:%s:%x:%x' % (_lpath, _offset, _size))
     
     # statistics
     databytesout = 0
@@ -304,35 +342,21 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     
     # keep going until we get the echo 
     while echo['echo'] is False:
+        print('waitcount', c.waitCount())
         # read any messages
-        c.HandleMessages(0, None)
+        c.handleOrSend()
         
-        #if time.time() - dd > 20:
-        #    c.dbgdump()
-        #    exit()
-        
-        # do this after handle messages because there may be some added; if quecount
-        # is zero it means no pending operations
-        quecount = len(jobDirEnum) + len(jobGetRemoteSize) + len(jobGetModifiedDate) + len(jobPatch) + len(jobUpload)
-        
-        output.SetTitle('WaitingVectors', c.waitCount())
-        # if we are not waiting on anything from the client then we could close
-        # the connection *except* it might cause the remote to drop packets that
-        # are not waiting on a result from.. so since we can determine that we
-        # will never generate any more packets we can send an echo which will
-        # get a reply and once that happens we can shut down the connection
-        if len(jobDirEnum) + len(jobPendingFiles) + getQueCount() == 0 and sentEcho is False:
-            print('sending echo')
+        # if we are not waiting on anything and have no pending jobs
+        if c.getBytesToSend() == 0 and len(jobDirEnum) + len(jobPendingFiles) + getQueCount() == 0 and sentEcho is False:
+            logger.debug('sending echo')
             sentEcho = True
             c.Echo(Client.IOMode.Callback, (__eventEcho, echo))
-        
-        # i do this after handle messages because it will be calling
-        # the callbacks which will update the job lists and if we call
-        # it before only jobUpload and jobPatch will likely be over zero
-        # because the other jobs execute right as they are received
+
+        # 
         dt = time.time() - c.bytesoutst
         outdata = '%.03f' % (databytesout / 1024 / 1024 / dt)
         outcontrol = '%.03f' % ((c.allbytesout - databytesout) / 1024 / 1024 / dt)
+        output.SetTitle('WaitingVectors', c.waitCount())
         output.SetTitle('DataOutMB', outdata)
         output.SetTitle('ControlOutMB', outcontrol)
         output.SetTitle('Jobs[DirEnum]', len(jobDirEnum))
@@ -345,25 +369,19 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         output.SetTitle('Checked', stat_checked)
         output.SetTitle('Patched', stat_patched)
 
-        # send if can send
+        
+        # if we let this continue to grow it could eventually consume all
+        # physical memory so we limit it and once it reaches that soft
+        # limit it will empty our buffers completely
         boutbuf = c.getBytesToSend()
-        # just hold here until we get the buffer down; this
-        # is mainly going to be caused by upload operations
-        # throwing megabytes of data into the buffer
         if boutbuf > buflimit:
-            print('emptying outbound buffer..')
-            # just empty the out going buffer completely.. then of course
-            # fill it up again; having the buffer fill up is not actually
-            # a bad thing as it means we are exceeding the network throughput
-            # which is good because our CPU wont be running wide open
-            while c.getBytesToSend() > 0:
-                # pull data out of network driver buffers into our own buffers or
-                # process it if it has callbacks and essentially place it into
-                # our own buffers just processed <humor intended> ...
-                # OR/AND
-                # flush data from our buffers
+            logger.debug('emptying outbound buffer..')
+            while c.getBytesToSend() > 1024 * 1024:
+                print('emptying buffer')
+                # this will still cause callbacks to be fired and async results
+                # to be stored at the same time it will send any data from our
+                # application level buffers
                 c.handleOrSend()
-                #print('left:%s' % c.getBytesToSend())
                 
                 # keep the status updated
                 dt = time.time() - c.bytesoutst
@@ -372,18 +390,16 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 output.SetTitle('DataOutMB', outdata)
                 output.SetTitle('ControlOutMB', outcontrol)
                 output.SetTitle('OutBuffer', c.getBytesToSend())
-                time.sleep(0.05)
-            #print('continuing..')
+                time.sleep(0.01)
+            print('continuing..')
         else:
             # just send what we can right now
             c.send()
 
-        #
-    
-
-        # do not produce too many - limit to limit memory usage; the
-        # alternative is to let it run free.. which could in certain
-        # situations consume massive amounts of memory
+        # DESCRIPTION:
+        #       this fills the pending files list; we limit it because if
+        #       we do not it could overwhelm physical memory on the machine
+        #       so we only produce more when there is room to do so
         if len(jobPendingFiles) < 5000:
             for x in range(0, min(100, len(jobDirEnum))):
                 dej = jobDirEnum[x]
@@ -402,13 +418,16 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             # drop what we completed
             jobDirEnum = jobDirEnum[x + 1:]
 
-        #
-        # this comes before jobPendingFiles because otherwise 
-        # we would never finish our current pending jobs
-        #
-        # this is delayed hash requests; they were likely delayed
-        # because there was too many out standing jobs and requests
-        if getQueCount() < 100:
+        # DESCRIPTION:
+        #       this happens first because while we wish to work on multiple
+        #       files at once we also wish to finish up in progress operations
+        #       so in order to do that we first service pending hash requests
+        #       which come from hash operations that get delayed because there
+        #       was too many outstanding requests; our code path for hashing
+        #       can cause physical memory to be overwhelmed if not limited and
+        #       thus that is what this is doing - holding patch operations until
+        #       our queue count is under the limit.
+        if c.waitCount() < maxque:
             dbg = False
             for x in range(0, min(100, len(jobPatchQueryDelayed))):
                 dbg = True
@@ -417,7 +436,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 _off = job[1]
                 _size = job[2]
                 subjob = job[3]
-                print('pending-hash:%s:%x:%x' % (_rpath, _off, _size))
+                logger.debug('pending-hash:%s:%x:%x' % (_rpath, _off, _size))
+                logger.debug('<delay-hash-send>:%s' % _rpath)
                 c.FileHash(_rpath, _off, _size, Client.IOMode.Callback, (__eventHashReply, subjob))
             # drop the ones we executed
             jobPatchQueryDelayed = jobPatchQueryDelayed[x + 1:]
@@ -432,9 +452,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         #       this happens before any new files are placed into the queues
         #       so we can finish our patch jobs before moving on the to next
         #       file
-        _max = min(max(0, 200 - getQueCount()), len(jobPatch))
+        _max = min(max(0, 200 - c.waitCount()), len(jobPatch))
         x = 0
         while x < _max:
+            SendStatusTick(StatusTick.Process)
             job = jobPatch[x]
             _rpath = job[0]
             _lpath = job[1]
@@ -444,13 +465,13 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             # hash 32MB chunks (server is threaded so it should be okay)
             csz = 1024 * 1024 * 32
             _tsz = min(csz, _lsize - _curoff)
-            print('hash', _lpath, _curoff, _tsz)
+            logger.debug('hash:%s:%x:%x' % (_lpath, _curoff, _tsz))
             subjob = [_rpath, _lpath, _rsize, _lsize, _curoff, _tsz, _lsize, 0]
             c.FileHash(_rpath, _curoff, _tsz, Client.IOMode.Callback, (__eventHashReply, subjob))
             job[4] = job[4] + _tsz
             if job[4] >= _lsize:
                 # do not increment x after removing it
-                print('removing:%s' % _lpath)
+                logger.debug('removing:%s' % _lpath)
                 del jobPatch[x]
                 _max = _max - 1
                 continue
@@ -458,18 +479,21 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             x = x = 1
 
         # DESCRIPTION:
-        #     
-        if getQueCount() < 100:
+        #       This takes pending files created by enumeration of local directories,
+        #       and starts processin by first issuing a file size request to determine
+        #       if the file exist and if it is the correct size.
+        if c.waitCount() < maxque:
             for x in range(0, min(100, len(jobPendingFiles))):
                 _lpath = jobPendingFiles[x]
                 stat = os.stat(_lpath)
                 # send request and create job entry
                 _lsize = stat.st_size
+                if _lsize > 1024 * 1024 * 200:
+                    continue
                 _rpath = rpath + bytes(_lpath[lpbsz:], 'utf8')
-                #print('<getting-size>:%s' % _rpath)
                 stat_checked = stat_checked + 1
                 pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
-                #print('[size]:%s' % _rpath)
+                logger.debug('<request-size>:%s' % _lpath)
                 c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
             # drop what we completed
             jobPendingFiles = jobPendingFiles[x + 1:]
@@ -494,6 +518,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             # date and go from there
             #if _lsize != _rsize:
                 #print('[size] file:%s local:%s remote:%s' % (_lpath, _lsize, _rsize))
+            logger.debug('<got-size>:%s' % _lpath)
             if _lsize == _rsize and _result[0] == 1:
                 # need to check modified date
                 #print('<getting-time>:%s' % _lpath)
@@ -505,9 +530,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 #print('<trun>:%s' % _lpath)
                 c.FileTrun(_rpath, _lsize, Client.IOMode.Discard)
                 # need to decide if we want to upload or patch
-                if False and (min(_rsize, _lsize) / max(_rsize, _lsize) < 0.5):
+                if min(_rsize, _lsize) / max(_rsize, _lsize) < 0.5:
                     # make upload job
-                    print('<upload>:%s' % _lpath)
+                    logger.debug('<upload>:%s' % _lpath)
                     jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
                 else:
                     # make patch job
@@ -527,12 +552,12 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _lmtime = pkg[5]
 
             #print('<handling-time-reply>:%s' % _lpath)
-
+            logger.debug('<got-date>:%s' % _lpath)
             if _rmtime < _lmtime:
                 # need to decide if we want to upload or patch
-                if False and math.min(_rsize, _lsize) / math.max(_rsize, _lsize) < 0.5:
+                if min(_rsize, _lsize) / max(_rsize, _lsize) < 0.5:
                     # make upload job
-                    print('<upload>:%s' % _lpath)
+                    logger.debug('<upload>:%s' % _lpath)
                     jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
                 else:
                     #print('<make-patch>:%s' % _lpath)
@@ -540,7 +565,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                     jobPatch.append([_rpath, _lpath, _rsize, _lsize, 0])
             else:
                 # just drop it since its either up to date or newer
-                #print('<up-to-date>:%s' % _lpath)
+                logger.debug('<up-to-date>:%s' % _lpath)
+                SendStatusTick(StatusTick.Finish)
                 stat_uptodate = stat_uptodate + 1
                 continue
         jobGetModifiedDate = [] 
@@ -566,7 +592,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _fd.seek(_curoff)
             _data = _fd.read(_rem)
             _fd.close()
-            print('<wrote>:%s:%x' % (_lpath, _curoff))
+            logger.debug('<wrote>:%s:%x' % (_lpath, _curoff))
+            SendStatusTick(StatusTick.WriteChunk)
             c.FileWrite(_rpath, _curoff, _data, Client.IOMode.Discard)
             # help track statistics for data out in bytes (non-control data)
             databytesout = databytesout + _rem
@@ -583,6 +610,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         # remove finished jobs
         ct = time.time()
         for uj in tr:
+            SendStatusTick(StatusTick.Finish)
             # set the modified time on the file to the current
             # time to represent it is up to date
             _rpath = uj[0]
@@ -595,6 +623,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None, stash = True, ssl = True, sformat = True):
     if rpath is None:
         rpath = b'/'
+
+    output.SetTitle('user', os.getlogin())
 
     sac = bytes(cfg['storage-auth-code'], 'utf8')
     c = Client2(rhost, rport, sac, sformat)
@@ -717,7 +747,7 @@ def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None,
                 
                 # local exist and remote is a directory but local is a file
                 if lexist and risdir and not lisdir:
-                    print('[stashing remote directory]:%s' % local)
+                    logger.debug('[stashing remote directory]:%s' % local)
                     # stash remote directory, use time.time() as the stash id since it
                     # should be unique and also easily serves to identify the latest stashed
                     # remote since zero/0 is reserved for current working version
@@ -734,7 +764,7 @@ def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None,
                     
                 # local exist and remote is a file but local is a directory
                 if lexist and not risdir and lisdir:
-                    print('[stashing remote file]:%s' % local)
+                    logger.debug('[stashing remote file]:%s' % local)
                     # stash remote file
                     stashfilecount = stashfilecount + 1
                     #_newremote = b'%s/%s.%s' % (rpath, time.time(), nodename)
@@ -746,7 +776,7 @@ def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None,
                     
                 # local does not exist
                 if not lexist:
-                    print('[stashing deleted]:%s' % local)
+                    logger.debug('[stashing deleted]:%s' % local)
                     if risdir:
                         stashdircount = stashdircount + 1
                     else:

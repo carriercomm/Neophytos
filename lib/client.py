@@ -165,9 +165,8 @@ class Client:
             print('callback:%s' % v)
     
     # processes any incoming messages and exits after specified time
-    def HandleMessages(self, timeout = None, lookfor = None):
-        # while we wait for the lock keep an eye out for
-        # out response to arrive
+    def HandleMessages(self, lookfor = None):
+        # TODO: we are modifying a dictionary with out holding a lock for it...
         while not self.socklockread.acquire(False):
             # check if vector has arrived
             if lookfor in self.keepresult and self.keepresult[lookfor] is not None:
@@ -175,49 +174,48 @@ class Client:
                 ret = self.keepresult[lookfor]
                 # remove it
                 del self.keepresult[lookfor]
-                #print('GOTGOT')
                 return ret
+            # sleep for a bit then check again
             time.sleep(0.001)
-    
-        if timeout is not None:
-            st = time.time()
-            et = st + timeout
-        
-        once = False
-        while timeout is None or timeout < 0 or et - time.time() > 0 or once is False:
-            # at least loop once in the event timeout was too small
-            once = True
-            
-            if timeout is not None:
-                to = et - time.time()
-                if to < 0:
-                    to = 0
-            else:
-                to = None
-            #print('reading for message vector:%s' % lookfor)
-            sv, v, d = self.ReadMessage(to)
+
+        while True:
+            sv, v, d = self.ReadMessage()
+            # if no more messages..
             if sv is None:
-                # if we were reading using a time out this can happen
-                # which means there was no data to be read in the time
-                # specified to read, so lets just continue onward
+                # if not looking for a message..
+                if lookfor is None:
+                    break
+                # if looking for a specific reply then
+                # let us block and wait for a message
+                # to arrive or we can send anything out
+                # if needed
+                print('looking for.. blocking on select')
+                if self.getBytesToSend() > 0:
+                    w = [self.sock]
+                else:
+                    w = []
+                r, w, e = select.select([self.sock], w, [self.sock], 1)
+                print(r, w, e)
+                if w:
+                    # send any data while waiting if buffered up
+                    self.send()
                 continue
             msg = self.ProcessMessage(sv, v, d)
-            #print('got msg vector:%s' % v)
-            #print('processed message sc:%s v:%s lookfor:%s msg:%s' % (sv, v, lookfor, msg))
+            # BLOCK
             if lookfor == v:
-                #print('thread:%s FOUND MSG' % threading.currentThread())
                 if v in self.keepresult:
                     del self.keepresult[v]
                 self.socklockread.release()
                 return msg
-            # either store it or throw it away
+            # ASYNC
             if v in self.keepresult:
                 self.keepresult[v] = msg
-            # check for callback
+            # CALLBACK
             if v in self.callback:
                 cb = self.callback[v]
                 del self.callback[v]
                 cb[0](cb[1], msg, v)
+            # DISCARD (do nothing)
             continue
         self.socklockread.release()
         return
@@ -330,45 +328,16 @@ class Client:
     def recv(self, sz):
         data = self.data
 
-        #self.sock.settimeout(0)
-        # keep track of if we have enough data in our buffer
-        while data.tell() < sz:
-            # calculate how long we can wait
-            #tdelta = (time.time() - self.lastactivity)
-            #twait = self.conntimeout - tdelta
-            #if twait < 0:
-            #    raise ConnectionDeadException()
-            try:
-                # i just turned this into a 1 sec blocking operation because
-                # of a bug where data is in buffer but this just continually
-                # blocks instead of releasing with sock in the read set
-                ready = select.select([self.sock], [], [], 1)
-                if len(ready) > 0:
-                    _data = self.sock.recv(sz)
-                    if _data is not None and len(_data) > 0:
-                        self.lastactivity = time.time()
-                    else:
-                        # as far as i can tell if receive returns an empty
-                        # byte string after select signalled it for a read
-                        # then the connection has closed..
-                        raise ConnectionDeadException()
-                else:
-                    #self.ifDead()
-                    return None
-            except ssl.SSLError:
-                # check if dead..
-                #self.ifDead()
-                return None
-            except socket.error:
-                # check if dead..
-                #self.ifDead()
-                return None
-            # save data in buffer
+        self.sock.settimeout(0)
+        try:
+            _data = self.sock.recv(4096)
+            if not _data:
+                raise ConnectionDeadException()
             data.write(_data)
-    
-        # check if connection is dead
-        #self.ifDead()
-        
+        except Exception as e:
+            # TODO: improve this.. what if socket died?
+            pass
+
         # only return with data if its of the specified length
         if data.tell() >= sz:
             # read out the data
@@ -380,7 +349,7 @@ class Client:
         return None
     
     # read a single message from the stream and exits after specified time
-    def ReadMessage(self, timeout = None):
+    def ReadMessage(self, timeout = 0):
         self.sock.settimeout(timeout)
         
         # if no size set then we need to read the header
@@ -388,12 +357,11 @@ class Client:
             data = self.recv(4 + 8 + 8)
             if data is None:
                 return None, None, None
-            
             sz, svector, vector = struct.unpack('>IQQ', data)
             self.datasz = sz
             self.datasv = svector
             self.datav = vector
-            
+        
         # try to read the remaining data
         data = self.recv(self.datasz)
         if data is None:
@@ -403,6 +371,7 @@ class Client:
         # ensure the next reads tries to get the header
         self.datasz = None
 
+        print('M', end='')
         # return the data
         return self.datasv, self.datav, data
         
@@ -448,7 +417,8 @@ class Client:
                 self.callback[vector] = callback
             if mode == Client.IOMode.Async:
                 self.keepresult[vector] = None
-            
+         
+            print('S', end='')   
             self.send(struct.pack('>IQ', len(data), vector))
             self.send(data)
             # track the total bytes out
@@ -469,14 +439,14 @@ class Client:
     def getBytesToSend(self):
         return self.bytestosend
     
-    def handleOrSend(self):
+    def handleOrSend(self, lookfor = None):
         # wait until the socket can read or write
         read, write, exp = select.select([self.sock], [self.sock], [])
 
         if read:
             # it will block by default so force
             # it to not block/wait
-            self.HandleMessages(0, None)
+            self.HandleMessages(lookfor = lookfor)
         if write:
             # dump some of the buffers if any
             self.send()
