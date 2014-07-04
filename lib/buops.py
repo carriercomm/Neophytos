@@ -10,31 +10,26 @@ from lib.client import Client
 from lib.client import Client2
 
 import lib.flycatcher as flycatcher
-
 logger = flycatcher.getLogger('BuOps')
 
 class StatusTick:
-    HashReply       = 1
-    SizeReply       = 2
-    DateReply       = 3
-    WriteChunk      = 4
-    Process         = 5
-    Finish          = 6
+    HashReplyDifferent       = 1
+    SizeReply                = 2
+    DateReply                = 3
+    WriteChunk               = 4
+    Process                  = 5
+    Finish                   = 6
+    HashReplyMatch           = 7
 
 
 def SendStatusTick(tick):
-    if tick == StatusTick.Process:
-        print('@', end = '')
-    if tick == StatusTick.Finish:
-        print('^', end = '')
-    if tick == StatusTick.HashReply:
-        print('#', end = '')
-    if tick == StatusTick.SizeReply:
-        print('$', end = '')
-    if tick == StatusTick.DateReply:
-        print('?', end = '')
-    if tick == StatusTick.WriteChunk:
-        print('+', end = '')
+    if tick == StatusTick.Process:           print('@', end = '')
+    if tick == StatusTick.Finish:            print('^', end = '')
+    if tick == StatusTick.HashReplyDifferent:print('#', end = '')
+    if tick == StatusTick.HashReplyMatch:    print('Y', end = '')
+    if tick == StatusTick.SizeReply:         print('$', end = '')
+    if tick == StatusTick.DateReply:         print('?', end = '')
+    if tick == StatusTick.WriteChunk:        print('+', end = '')
     sys.stdout.flush()
 
 def TruncateFile(lpath, size):
@@ -50,6 +45,11 @@ def TruncateFile(lpath, size):
     os.ftruncate(fd, size)
     os.close(fd)
     logger.debug('<trun>:%s' % lpath)
+
+def CallCatch(catches, signal, *args):
+    if signal not in catches:
+        return
+    catches[signal](*args)
 
 def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True):
     if rpath is None:
@@ -220,7 +220,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             jobDownload.remove(t)
         # <end-of-loop>
 
-def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True):
+def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True, catches = {}):
     if rpath is None:
         rpath = b'/'
     else:
@@ -241,7 +241,22 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     jobPatch = []                # patch jobs 
     jobPatchQueryDelayed = []    # delayed patch hash requests
     jobUpload = []               # upload jobs
-    
+
+    '''
+        This is used to share state between the asynchronous sub-jobs
+        of a patch operation. When a patch is started one or more sub
+        jobs are created which then can at will end and create two more
+        jobs in their place. I need a way to share state to build statistics
+        and also better determine if they should split or continue.
+    '''
+    class PatchJobSharedState:
+        pass
+
+    def getJobCount():
+        return len(jobDirEnum) + len(jobPendingFiles) + len(jobGetRemoteSize) + \
+               len(jobGetModifiedDate) + len(jobPatch) + len(jobPatchQueryDelayed) + \
+               len(jobUpload)
+
     jobDirEnum.append(lpath)
 
     maxque = 500
@@ -249,8 +264,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     echo = { 'echo': False }
     sentEcho = False
 
-    def getQueCount():
-        return c.waitCount() + len(jobGetRemoteSize) + len(jobGetModifiedDate) + len(jobPatch) + len(jobUpload)
     '''
         These turn the async polling model into a async callback model, at
         least to some extent. We still poll but we do not poll individual
@@ -266,32 +279,49 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         logger.debug('ECHO')
         pkg['echo'] = True
     def __eventHashReply(pkg, result, vector):
-        SendStatusTick(StatusTick.HashReply)
         # hash local file now and compare
         _success = result[0]
         _rhash = result[1]
         _rpath = pkg[0]
         _lpath = pkg[1]
-        _size = pkg[3]
+        _rsize = pkg[2]
+        _lsize = pkg[3]
         _offset = pkg[4]
         _size = pkg[5]
-        _osize = pkg[6]
-        _depth = pkg[7]
+        _shrstate = pkg[6]
+
+        # produce local hash
         fd = open(_lpath, 'rb')
         fd.seek(_offset)
         _data = fd.read(_size)
         _lhash = c.HashKmc(_data, 128)
         fd.close()
 
+        # firstOffset, firstSize, bytesProtoUsed, bytesPatched
+        # subjob = [_rpath, _lpath, _rsize, _lsize, _curoff, _tsz, shrstate]
+
+        # if we have used more bytes than the file's actual size then we are
+        # basically just wasting bandwidth and should immediantly force all
+        # remaining operations to perform a write to turn this into an upload
+        if _shrstate.bytesProtoUsed - _shrstate.bytesPatched > _shrstate.firstSize - _shrstate.bytesPatched:
+            logger.debug('FORCEDPATCH:%s:%x:%x' % (_lpath, _offset, _size))
+            _shrstate.bytesPatched += len(_data)
+            c.FileWrite(_rpath, _offset, _data, Client.IOMode.Discard)
+            return
+
         # if the hashes are the same do nothing
         if _lhash != _rhash:
+            CallCatch(catches, 'HashBad', _rpath, _lpath, _offset, _size)
+            # let us decide if it is worth breaking down futher
+            # or we should just cut our loses and force a patch
+
             # this section of the remote file is different so,
             # now we must decide to either patch this section 
             # or continue breaking it down further in hopes that
             # we find where it differs -- we could end up spending
             # more bandwidth on 
             #
-
+            logger.debug('hash-bad:%s:%x:%x\n' % (_lpath, _offset, _size))
             # limit the minimum size of a hash
             if _size > 1024 * 1024:
                 _nsz = int(_size / 2)
@@ -309,23 +339,30 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 # start the queries
                 logger.debug('patching-split:%s:%x:%x (a:%x:%x) (b:%x:%x)' % (_lpath, _offset, _size, _aoff, _alen, _boff, _blen))
                 # either execute it or delay it
-                subjob = [_rpath, _lpath, _rsize, _lsize, _aoff, _alen, _osize, _depth + 1]
-                if getQueCount() > 100:
+                subjob = [_rpath, _lpath, _rsize, _lsize, _aoff, _alen, _shrstate]
+                if getJobCount() > maxque:
                     jobPatchQueryDelayed.append((_rpath, _aoff, _alen, subjob))
                 else:
                     c.FileHash(_rpath, _aoff, _alen, (__eventHashReply, subjob))
                 # either execute it or delay it
-                subjob = [_rpath, _lpath, _rsize, _lsize, _boff, _blen, _osize, _depth + 1]
-                if getQueCount() > 100:
+                subjob = [_rpath, _lpath, _rsize, _lsize, _boff, _blen, _shrstate]
+                if getJobCount() > maxque:
                     jobPatchQueryDelayed.append((_rpath, _boff, _blen, subjob))
                 else:
                     c.FileHash(_rpath, _boff, _blen, (__eventHashReply, subjob))
+
+                # just an estimate of how much we are about to use
+                _shrstate.bytesProtoUsed += 128 + (8 * 2 + 32) * 2
                 return
+            CallCatch(catches, 'HashBad', _rpath, _lpath, _offset, _size)
             logger.debug('patching-section:%s:%x:%x' % (_lpath, _offset, _size))
             # just upload this section..
             SendStatusTick(StatusTick.WriteChunk)
+            _shrstate.bytesPatched += len(_data)
             c.FileWrite(_rpath, _offset, _data, Client.IOMode.Discard)
             return
+        CallCatch(catches, 'HashGood', _rpath, _lpath, _offset, _size)
+        SendStatusTick(StatusTick.HashReplyMatch)
         logger.debug('patching-match:%s:%x:%x' % (_lpath, _offset, _size))
     
     # statistics
@@ -342,12 +379,13 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     
     # keep going until we get the echo 
     while echo['echo'] is False:
-        print('waitcount', c.waitCount())
+        logger.debug('waitcount:%s' % c.waitCount())
         # read any messages
         c.handleOrSend()
         
-        # if we are not waiting on anything and have no pending jobs
-        if c.getBytesToSend() == 0 and len(jobDirEnum) + len(jobPendingFiles) + getQueCount() == 0 and sentEcho is False:
+        # if our output buffer is empty, we have no jobs, and we are not 
+        # waiting on any requests
+        if c.getBytesToSend() < 1 and getJobCount() < 1 and c.waitCount() < 1 and sentEcho is False:
             logger.debug('sending echo')
             sentEcho = True
             c.Echo(Client.IOMode.Callback, (__eventEcho, echo))
@@ -376,11 +414,28 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         boutbuf = c.getBytesToSend()
         if boutbuf > buflimit:
             logger.debug('emptying outbound buffer..')
+            # i decided not to force the buffer to completely drain
+            # in hopes that if we didnt it would be easier to keep
+            # the server working - the more time the server is idle
+            # is lost work time
             while c.getBytesToSend() > 1024 * 1024:
                 print('emptying buffer')
+                logger.debug('  jobDirEnum:           %s' % len(jobDirEnum))
+                logger.debug('  jobPendingFiles:      %s' % len(jobPendingFiles))
+                logger.debug('  jobGetRemoteSize:     %s' % len(jobGetRemoteSize))
+                logger.debug('  jobGetModifiedDate:   %s' % len(jobGetModifiedDate))
+                logger.debug('  jobPatch:             %s' % len(jobPatch))
+                logger.debug('  jobPatchQueryDelayed: %s' % len(jobPatchQueryDelayed))
+                logger.debug('  jobUpload:            %s' % len(jobUpload))
+                logger.debug('  bytesOut:             %s' % c.getBytesToSend())
+
+                #              STALL/NET-DEADLOCK PREVENTION
                 # this will still cause callbacks to be fired and async results
                 # to be stored at the same time it will send any data from our
-                # application level buffers
+                # application level buffers, which is desired - if we only sent
+                # pending data and never read the server's outgoing buffer would
+                # fill up because our incoming would fill up these creating a 
+                # data lock because we could never send to lower our buffer
                 c.handleOrSend()
                 
                 # keep the status updated
@@ -391,7 +446,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 output.SetTitle('ControlOutMB', outcontrol)
                 output.SetTitle('OutBuffer', c.getBytesToSend())
                 time.sleep(0.01)
-            print('continuing..')
+            logger.debug('    continuing..')
         else:
             # just send what we can right now
             c.send()
@@ -455,18 +510,31 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         _max = min(max(0, 200 - c.waitCount()), len(jobPatch))
         x = 0
         while x < _max:
-            SendStatusTick(StatusTick.Process)
             job = jobPatch[x]
             _rpath = job[0]
             _lpath = job[1]
             _rsize = job[2]
             _lsize = job[3]
             _curoff = job[4]
+            # make sure to create the shared state container
+            if len(job) < 6:
+                shrstate = PatchJobSharedState()
+                shrstate.firstOffset = _curoff
+                shrstate.firstSize = _lsize
+                shrstate.bytesProtoUsed = 0
+                shrstate.bytesPatched = 0
+                job.append(shrstate)
+            else:
+                # get existing shared state container
+                shrstate = job[5]
+
             # hash 32MB chunks (server is threaded so it should be okay)
             csz = 1024 * 1024 * 32
             _tsz = min(csz, _lsize - _curoff)
+
             logger.debug('hash:%s:%x:%x' % (_lpath, _curoff, _tsz))
-            subjob = [_rpath, _lpath, _rsize, _lsize, _curoff, _tsz, _lsize, 0]
+
+            subjob = [_rpath, _lpath, _rsize, _lsize, _curoff, _tsz, shrstate]
             c.FileHash(_rpath, _curoff, _tsz, Client.IOMode.Callback, (__eventHashReply, subjob))
             job[4] = job[4] + _tsz
             if job[4] >= _lsize:
@@ -494,6 +562,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 stat_checked = stat_checked + 1
                 pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
                 logger.debug('<request-size>:%s' % _lpath)
+                CallCatch(catches, 'Start', _rpath, _lpath)
                 c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
             # drop what we completed
             jobPendingFiles = jobPendingFiles[x + 1:]
@@ -511,6 +580,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _lsize = pkg[2]
             _vector = pkg[3]
             _lmtime = pkg[4]
+
+            CallCatch(catches, 'SizeReply', _rpath, _lpath)
+
             # result[0] = success code is non-zero and result[1] = size (0 on failure code)
             _rsize = _result[1]
             # if file does not exist go trun/upload route.. if it does
@@ -550,6 +622,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _lsize = pkg[3]
             _vector = pkg[4]
             _lmtime = pkg[5]
+
+            CallCatch(catches, 'DateReply', _rpath, _lpath)
 
             #print('<handling-time-reply>:%s' % _lpath)
             logger.debug('<got-date>:%s' % _lpath)

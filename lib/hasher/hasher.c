@@ -28,7 +28,7 @@ int hash(void *_data, int length, int max) {
                 c = a + b + (x * 2) + c + seed;
                 data[x] = (uint8)c;
             } else {
-                seed = data[x];
+                seed = data[x * 2];
             }
             x++;
         }

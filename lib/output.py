@@ -1,19 +1,22 @@
 '''
-	This module provides a curses output on systems that support it. If not
-	it just places in a dummy proxy that does nothing. It could be extended
-	to support other things. I suppose, and hope, maybe I can use it for a
-	connection to a GUI front end.
-	
-	
-	There are a few different modes the application can execute under:
-		1. it does not use this module and outputs directly to the standard output
-		2. it uses this module in curses mode
-		3. it uses this module in standard output mode
-		4. it uses this module in socket mode
-		
-	The 4th mode can be used in conjunction with any of the other modes. It provides
-	a server socket that can accept connections and update the client on the status
-	and bring them up to status on some things.
+	Leonard Kevin McGuire Jr 2014 (kmcg3413@gmail.com)
+
+	Output
+
+	This module provides the ability for another application to monitor or
+	query the running status of the program using this module. It supports
+	setting global key and value pairs for the program status, and also
+	key and value pairs for individual work items.
+
+	It can dump to the standard console and TCP server, or neither. The 
+	support for standard console is for programs who run this program 
+	and wish to read standard output to determine the status. The TCP
+	server allows this program to run stand alone and be queried by another
+	process.
+
+	Your program must add and remove work items and/or set title keys. You
+	must also manage the work items being careful to remove ones that are
+	not needed anymore or they will forever consume memory.
 '''
 import math
 import os
@@ -24,35 +27,15 @@ import select
 import struct
 import time
 import uuid
-
-try:
-	import curses
-	supported = True
-except ImportError:
-	supported = False
 	
-class stdoutwindow:
-	def addstr(self, y, x, str):
-		pass
-	def getmaxyx(self):
-		return (5, 5)
-	def clrtoeol(self):
-		pass
-	def erase(self):
-		pass
-	def refresh(self):
-		pass
-class stdoutcurses:
-	def initscr():
-		return stdoutwindow()
-	
-mode = None
-title = {}
-win = None
-working = {}
-__working = []
-lock = threading.Lock()
-server = None
+# globals (bad.. bad.. and bad but.. but.. and but..)
+mode 		= None
+title 		= {}
+win 		= None
+working 	= {}
+__working 	= []
+lock 		= threading.Lock()
+server 		= None
 
 class TCPServer:
 	def __init__(self, nullsock = True):
@@ -130,6 +113,10 @@ class TCPServer:
 		global lock
 		global title
 	
+		# if null sock just exit
+		if self.sock is None:
+			return
+
 		lastdatatime = {}
 	
 		while True:
@@ -192,159 +179,31 @@ class TCPServer:
 				self.socks.remove(sock)
 				sock.close()
 			continue
-
-def Configure(tcpserver = False):
-	# find and modify sys.argv
-	mode = Mode.NoOutput
-	for arg in sys.argv:
-		if arg == '--curses':
-			mode = Mode.Curses
-			sys.argv.remove(arg)
-		if arg == '--std':
-			mode = Mode.StandardConsole
-			sys.argv.remove(arg)
-		if arg == '--no-tcpserver':
-			tcpserver = False
-		if arg == '--tcpserver':
-			tcpserver = True
-	Init(mode, tcpserver = tcpserver)
 	
 class Mode:
 	StandardConsole		= 1
-	Curses				= 2
-	NoOutput			= 0
+	TCPServer			= 2
 
 # os.devnull
-def Init(_mode, tcpserver = False, stdout = None, stderr = None):
+def Init(_mode):
 	global win
 	global mode
 	global server
 	
 	mode = _mode
 	
-	if tcpserver:
+	if mode & Mode.TCPServer:
 		# actually do the server
 		server = TCPServer(nullsock = False)
 	else:
 		# just pretend to work
 		server = TCPServer(nullsock = True)
 	
-	stdout = sys.stdout
-	stderr = sys.stderr
-	
-	if mode == Mode.Curses:
-		if stdout is None:
-			stdout = 'stdout'
-		else:
-			stdout = open(stdout, 'w')
-		if stderr is None:
-			stderr = 'stderr'
-		else:
-			stderr = open(stderr, 'w')
-	
-	# redirect to appropriate facility
-	sys.stdout = stdout
-	sys.stderr = stderr
-	
-	# initialize curses
-	if mode == Mode.Curses:
-		# use the real curses output
-		win = curses.initscr()
-	else:
-		# use the fake curses output
-		win = stdoutcurses.initscr()
-	
 	# set unique identifier for this session
 	SetTitle('uid', uuid.uuid4().hex)
 		
 class Working:
 	pass
-
-def __update():
-	global win
-	global working
-	global __working
-	global title
-	
-	if win is None:
-		return
-	
-	my, mx = win.getmaxyx()
-	
-	win.erase()
-	
-	_title = []
-	for key in title:
-		_title.append('%s:%s' % (key, title[key]))
-	_title = ' '.join(_title)
-	
-	win.addstr(0, 0, _title)
-	win.clrtoeol()
-	
-	row = 1
-	# draw items to screen
-	x = 0
-	while x < len(__working):
-		if row >= my:
-			break
-		name = __working[x]
-		x = x + 1
-		work = working[name]
-		if not work.old:
-			win.addstr(row, 0, '@')
-			if type(name) is str:
-				txt = name
-			else:
-				txt = name.GetName()
-
-			# if longer than 50 then grab start and end
-			# which makes it easier to see paths and 
-			# other things
-			if len(txt) > 50:
-				txt = '%s..%s' % (txt[0:24], txt[-24:])
-				
-			win.addstr(row, 1, txt[-50:])
-			win.addstr(row, 52, work.status[-20:])
-			# create progress bar
-			value = work.progress
-			#max = 20
-			#value = int(max * value)
-			#space = max - value
-			#bar = '[%s%s]' % ('#' * value, ' ' * space)
-			bar = '%s' % value
-			win.addstr(row, 52 + 20 + 5, bar)
-			row = row + 1
-	x = 0
-	while x < len(__working):
-		if row >= my:
-			break
-		name = __working[x]
-		x = x + 1
-		work = working[name]
-		if work.old:
-			win.addstr(row, 0, ' ')
-			if type(name) is str:
-				txt = name
-			else:
-				txt = name.GetName()
-
-			# if longer than 50 then grab start and end
-			# which makes it easier to see paths and 
-			# other things
-			if len(txt) > 50:
-				txt = '%s..%s' % (txt[0:24], txt[-24:])
-			win.addstr(row, 1, txt[-50:])
-			win.addstr(row, 52, work.status[-20:])
-			# create progress bar
-			value = work.progress
-			#max = 20
-			#value = int(max * value)
-			#space = max - value
-			#bar = '[%s%s]' % ('#' * value, ' ' * space)
-			bar = '%s' % value
-			win.addstr(row, 52 + 20 + 5, bar)
-			row = row + 1
-	win.refresh()
 		
 def SetTitle(key, value):
 	global lock
@@ -370,14 +229,8 @@ def AddWorkingItem(name):
 		working[name].old = False
 		
 		__working.insert(0, name)
-		
-		__update()
 
 		Prune()
-		
-def Update():
-	with lock:
-		__update()
 
 def SetCurrentStatus(name, status):
 	global working
@@ -387,7 +240,6 @@ def SetCurrentStatus(name, status):
 		if mode == Mode.StandardConsole:
 			print('[status]:%s:%s' % (status, name))
 		working[name].status = status
-		__update()
 	
 def SetWorkItem(name, key, value):
 	global working
@@ -406,7 +258,6 @@ def SetCurrentProgress(name, value):
 		if mode == Mode.StandardConsole:
 			print('[progress]:%s:%s' % (value, name))
 		working[name].progress = value
-		__update()
 	
 def Prune():
 	global __working
@@ -446,6 +297,5 @@ def RemWorkingItem(name):
 		if mode == Mode.StandardConsole:
 			print('[old]:%s' % name)
 		working[name].old = True
-		__update()
 		
 		Prune()

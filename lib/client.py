@@ -19,6 +19,9 @@ from lib import pubcrypt
 from lib.pkttypes import *
 from lib.misc import *
 
+import lib.flycatcher as flycatcher
+logger = flycatcher.getLogger('client')
+
 class UnknownMessageTypeException(Exception):
     pass
 
@@ -70,6 +73,7 @@ class Client:
         # load library appropriate for the operating system, if the
         # system is not supported we will use our Python implemented
         # although it is *much* slower..
+        self.hentry = None
         if sys.platform.find('linux') > -1:
             self.hentry = None
             # linux supports two architectures the x86 and x86_64
@@ -83,9 +87,9 @@ class Client:
                     self.hdll = cdll.LoadLibrary(libpath)
                     self.hentry = CFUNCTYPE(c_int)(('hash', self.hdll))
                 except:
-                    print('WARNING: FAILED LOADING SHARED LIBRARY')
+                    logger.warn('WARNING: FAILED LOADING SHARED LIBRARY')
         else:
-            print('WARNING: NATIVE HASH LIBRARY NOT SUPPORTED (EXPECT SLOW HASHING)')
+            logger.warn('WARNING: NATIVE HASH LIBRARY NOT SUPPORTED (EXPECT SLOW HASHING)')
         
         self.lastpushedlfile = ''
         
@@ -157,12 +161,6 @@ class Client:
     
     def waitCount(self):
         return len(self.keepresult) + len(self.callback)
-
-    def dbgdump(self):
-        for v in self.keepresult:
-            print('keepresult:%s' % v)
-        for v in self.callback:
-            print('callback:%s' % v)
     
     # processes any incoming messages and exits after specified time
     def HandleMessages(self, lookfor = None):
@@ -189,13 +187,13 @@ class Client:
                 # let us block and wait for a message
                 # to arrive or we can send anything out
                 # if needed
-                print('looking for.. blocking on select')
+                logger.debug('looking for.. blocking on select')
                 if self.getBytesToSend() > 0:
                     w = [self.sock]
                 else:
                     w = []
                 r, w, e = select.select([self.sock], w, [self.sock], 1)
-                print(r, w, e)
+                logger.debug('%s-%s-%s' % (r, w, e))
                 if w:
                     # send any data while waiting if buffered up
                     self.send()
@@ -295,7 +293,7 @@ class Client:
                 # end up silently happening and the users not noticing or
                 # the developer who modified the client accidentally ignoring
                 # it since it is an issue that needs to be addressed
-                print('WARNING: QUOTA LIMIT REACHED THROWING EXCEPTION')
+                logger.warn('WARNING: QUOTA LIMIT REACHED THROWING EXCEPTION')
                 raise QuotaLimitReachedException()
             return code
         if type == ServerType.FileDel:
@@ -371,7 +369,7 @@ class Client:
         # ensure the next reads tries to get the header
         self.datasz = None
 
-        print('M', end='')
+        logger.debugNEOL('M')
         # return the data
         return self.datasv, self.datav, data
         
@@ -418,7 +416,7 @@ class Client:
             if mode == Client.IOMode.Async:
                 self.keepresult[vector] = None
          
-            print('S', end='')   
+            logger.debugNEOL('S')   
             self.send(struct.pack('>IQ', len(data), vector))
             self.send(data)
             # track the total bytes out
@@ -468,11 +466,14 @@ class Client:
             while totalsent < len(data):
                 try:
                     sent = self.sock.send(data[totalsent:])
-                except socket.error:
+                except Exception as e:
+                    print(e)
+                    raise ConnectionDeadException()
+                    #print('socket.error', e)
                     # non-ssl socket likes to throw this exception instead
                     # of returning zero bytes sent it seems
-                    self.datatosend.insert(0, data[totalsent:])
-                    return False
+                    #self.datatosend.insert(0, data[totalsent:])
+                    #return False
                 
                 if sent == 0:
                     # place remaining data back at front of queue and
@@ -644,7 +645,7 @@ class Client:
                     data[x] = c & 0xff
                 else:
                     # save for new seed
-                    seed = data[x]
+                    seed = data[x * 2]
                 x = x + 1
             sz = x
         return bytes(data[0:sz])

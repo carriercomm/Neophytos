@@ -9,10 +9,90 @@ import time
 from lib import misc
 from lib import output
 
-import lib.buops                        # backup operations
+import lib.crossterm as crossterm
 import lib.flycatcher as flycatcher     # debugging tool
 
-def main(args):            
+'''
+    The fly filter has to be setup before modules are loaded, because
+    they may create a logger object during initialization. The logger
+    on creation assigns the global filter function to the logger. You
+    can set individual loggers with a filter if desired.
+'''
+def flyFilter(logger, mclass, group, module, caller, lineno, msg):
+    if msg.find('patching-match:') == 0:
+        return True
+    else:
+        return False
+
+    disableThese = (
+        '<request-size>:',
+        #'patching-section:',
+        '<got-size>:',
+        '<up-to-date>:',
+        '<got-date>:',
+        'hash:',
+        'removing:',
+        'patching-split:',
+        'patching-match:',
+        '<delay-hash-send>:',
+    )
+
+    for dt in disableThese:
+        if msg.find(dt) == 0:
+            return False
+    return True
+flycatcher.setFilterFunction(flyFilter)
+
+import lib.buops                        # backup operations
+
+class StatusWindow:
+    def __init__(self, ct):
+        self.ct = ct
+        # allocate boxes to be used to hold status elements
+        self.boxCurFile = ct.getBox(0, 0, 80, 1, 'CurFile:')
+        self.boxStartCount = ct.getBox(0, 1, 15, 1, 'Processed:')
+        self.boxFinishCount = ct.getBox(0, 2, 15, 1, 'Finished:')
+        self.boxHashGood = ct.getBox(0, 3, 15, 1, 'HashGood:')
+        self.boxHashBad = ct.getBox(0, 4, 15, 1, 'HashBad:')
+        self.boxDateReply = ct.getBox(0, 5, 15, 1, 'DateReply:')
+        self.boxSizeReply = ct.getBox(0, 6, 15, 1, 'SizeReply:')
+
+        self.startCount = 0
+        self.finishCount = 0
+        self.hashGoodCount = 0
+        self.hashBadCount = 0
+        self.dateReplyCount = 0
+        self.sizeReplyCount = 0
+
+    def catchFinished(self, *args):
+        self.finishCount += 1
+        self.boxFinishCount.write('%s' % self.finishCount)
+        self.ct.update()
+    def catchPatchReply(self, *args):
+        pass
+    def catchDateReply(self, *args):
+        self.dateReplyCount += 1
+        self.boxDateReply.write('%s' % self.dateReplyCount)
+        self.ct.update()
+    def catchSizeReply(self, *args):
+        self.sizeReplyCount += 1
+        self.boxSizeReply.write('%s' % self.sizeReplyCount)
+        self.ct.update()
+    def catchStart(self, *args):
+        self.startCount += 1
+        self.boxCurFile.write(args[1])
+        self.boxStartCount.write('%s' % self.startCount)
+        self.ct.update()
+    def catchHashBad(self, *args):
+        self.hashBadCount += 1
+        self.boxHashBad.write('%s' % self.hashBadCount)
+        self.ct.update()
+    def catchHashGood(self, *args):
+        self.hashGoodCount += 1
+        self.boxHashGood.write('%s' % self.hashGoodCount)
+        self.ct.update()
+
+def main(ct, args):
     '''
         --lpath=<path>
         --rpath=<path>
@@ -27,7 +107,6 @@ def main(args):
     '''
 
     # parse command line arguments
-
     opts = (
         'lpath', 'rpath', 'password', 'push', 'pull', 'sync-rdel',
         'host', 'port', 'cipher', 'filter-file', 'make-sample-filter-file',
@@ -35,7 +114,6 @@ def main(args):
     )
 
     setopts = {}
-
     for arg in args:
         for opt in opts:
             _opt = '--%s' % opt
@@ -45,9 +123,11 @@ def main(args):
                     val = val[1:] 
                 setopts[opt] = val
 
+    # by default enable warnings
+    flycatcher.enable(flycatcher.Class.Warn)
     # enable debugging output if specified
     if 'debug' in setopts:
-        flycatcher.enable()
+        flycatcher.enable(flycatcher.Class.Debug)
 
     # fill in any missing arguments 
     if 'host' not in setopts:
@@ -91,22 +171,35 @@ def main(args):
         print('you must specify an operation of push, pull, sync-rdel, or sync-ldel')
         return
 
+    sw = StatusWindow(ct)
+
+    catches = {
+        'Finished':             sw.catchFinished,
+        'PatchReply':           sw.catchPatchReply,
+        'HashBad':              sw.catchHashBad,
+        'HashGood':             sw.catchHashGood,
+        'DateReply':            sw.catchDateReply,
+        'SizeReply':            sw.catchSizeReply,
+        'Start':                sw.catchStart
+    }
+
     if 'push' in setopts:
+        print('push')
         lib.buops.Push(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['ssl']
+            setopts['rpath'], filter, setopts['ssl'], True, catches
         )
         return 
     if 'pull' in setopts:
         lib.buops.Pull(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['ssl']
+            setopts['rpath'], filter, setopts['ssl'], True, catches
         )
         return
     if 'sync-rdel' in setopts:
         lib.buops.SyncRemoteWithDeleted(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['stash'], setopts['ssl']
+            setopts['rpath'], filter, setopts['stash'], setopts['ssl'], True, catches
         )
         return
     if 'sync-ldel' in setopts:
@@ -119,5 +212,5 @@ if __name__ == '__main__':
     # set ourselves to idle unless specified to run as normal
     misc.setProcessPriorityIdle()
     # setup standard outputs (run TCP server)
-    output.Configure(tcpserver = True)
-    main(sys.argv[1:])
+    output.Init(output.Mode.TCPServer)
+    crossterm.wrapper(main, sys.argv[1:])
