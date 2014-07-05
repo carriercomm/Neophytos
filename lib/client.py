@@ -71,12 +71,13 @@ class Client:
         is64 = sys.maxsize > 2 ** 32
 
         # load library appropriate for the operating system, if the
-        # system is not supported we will use our Python implemented
+        # system is not supported we will use our Python implementation
         # although it is *much* slower..
+        print('sys.platform:%s', sys.platform)
         self.hentry = None
         if sys.platform.find('linux') > -1:
             self.hentry = None
-            # linux supports two architectures the x86 and x86_64
+            # standard linux (x86 and x86_64)
             if is64:
                 libpath = './lib/hasher/hasher64.so'
             else:
@@ -85,9 +86,30 @@ class Client:
             if os.path.exists(libpath):
                 try:
                     self.hdll = cdll.LoadLibrary(libpath)
-                    self.hentry = CFUNCTYPE(c_int)(('hash', self.hdll))
-                except:
+                    #self.hentry = CFUNCTYPE(c_int)(('hash', self.hdll))
+                    self.hentry = self.hdll['hash']
+                except Exception as e:
+                    logger.warm('%s' % e)
                     logger.warn('WARNING: FAILED LOADING SHARED LIBRARY')
+            else:
+                logger.warn('WARNING: MISSING SHARED LIBRARY AS "%s" (REVERTING TO PURE PYTHON)' % libpath)
+        elif sys.platform.find('win') > -1:
+            # windows nt (x86 and x86_64)
+            if is64:
+                libpath = './lib/hasher/hasher64.dll'
+            else:
+                libpath = './lib/hasher/hasher32.dll'
+
+            if os.path.exists(libpath):
+                try:
+                    self.hdll = windll.LoadLibrary(libpath)
+                    #self.hentry = self.hdll['hash']
+                    self.hentry = CFUNCTYPE(c_int)(('hash', self.hdll))
+                except Exception as e:
+                    logger.warm('%s' % e)
+                    logger.warn('WARNING: FAILED LOADING DLL')
+            else:
+                logger.warn('WARNING: MISSING DLL AS "%s" (REVERTING TO PURE PYTHON)' % libpath)
         else:
             logger.warn('WARNING: NATIVE HASH LIBRARY NOT SUPPORTED (EXPECT SLOW HASHING)')
         

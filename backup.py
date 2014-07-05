@@ -19,6 +19,9 @@ import lib.flycatcher as flycatcher     # debugging tool
     can set individual loggers with a filter if desired.
 '''
 def flyFilter(logger, mclass, group, module, caller, lineno, msg):
+    if mclass != flycatcher.Class.Debug:
+        return True
+
     if msg.find('patching-match:') == 0:
         return True
     else:
