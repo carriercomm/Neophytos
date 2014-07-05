@@ -70,15 +70,8 @@ First we need to generate a certificate and an RSA private/public key pair. The 
 
     openssl req -new -x509 -days 365 -nodes -out cert.pem -keyout cert.pem --newkey rsa:8192
 
-_This will generate a 8192-bit key pair which should be decently secure. You should be able to generate and use any size, but
-it will cause connection setup times to be longer and effectively pause your server during these events. So if your dealing
-with say 100 clients and it takes like 4 seconds to setup the connection then your looking at 400 seconds of pause time at
-worst if the encryption/decryption is done in pure Python. If your using the SSL (by default) then it is likely a lot better
-but if your using XORMIX (default if your disable SSL) then you could be looking at 2 - 4 seconds._
+_This will generate a 8192-bit key pair which should be decently secure. You should be able to generate and use any size._
 
-_The SSL may support encrypted certification or private keys, but XORMIX does not. All connections over XORMIX will fail, however
-this may be desired and can effectively disable it, but I would rather implement a better ability to disable anything other than
-SSL._
 	
 This file should be named _cert.pem_ in the server's working directory. The server can now be started if desired, or you can wait.
 
