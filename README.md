@@ -1,8 +1,16 @@
 ![neophytos-logo](http://kmcg3413.net/logo.png)
 =====
 
-Current Work
+Dependancies
 =====
+
+The dependancies are very minimal and this is intentional. I try to use only what
+is included in the Python standard library. Also, for the server I try to only use
+what is the Golang standard library.
+
+* server requires Golang to build or compile with - i am looking at providing prebuilt binaries
+* client requires Python 3.x (prefer latest version especially on Windows)
+* client GUI requires PyQt4 (GUI is work in progress)
 
 Current State
 =====
@@ -13,15 +21,14 @@ The [X] means it has been implemented, while [ ] means still in development.
 * [X] multiple backup targets per account
 * [X] multiple sub-accounts with different permissions if desired (read/write)
 * [X] delta uploading/downloading (only uploads/downloads changed portion of file)
-* [X] [50%] file stashing (supports versions and recovery of deleted files if desired)
+* [X] _(50% implemented)_ file stashing (supports versions and recovery of deleted files if desired)
 * [X] open source client and server
 * [X] cross-platform client (Linux, Windows, ARM, or anywhere Python 3.x will run)
 * [X] cross-platform server (Anywhere golang will run, or can target.)
-* [ ]files can be encrypted client side (in memory) before being sent (sensitive data protected on server)
+* [ ] files can be encrypted client side (in memory) before being sent (sensitive data protected on server)
 * [X] client command line interface (95% complete; _very much usable_)
-* [.] file stashing (almost fully working)
-* [ ] file encryption (0% complete; implemented server side but client does not provide this functionality yet)
 * [ ] filter system (disabled at the moment but 90% of the support is there)
+* [ ] GUI frontend
 
 Client Tutorial
 =====
