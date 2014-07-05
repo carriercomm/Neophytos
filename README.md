@@ -67,6 +67,11 @@ To pull all targets (including peach and any others).
     python3 backup.py --pull --lpath=/mnt/kmcguire/temp --host=myserver --password=e3xample
 	
 
+If you are pushing to something where the files will be used directly which is more like `rsync` then
+you should also add the `--no-sformat` option to any operation. This will ensure that the client does
+not try to interpret the files like they are in a stash format. I think a `--pull` operation may work
+fine with out it but the correct way is to use the `--no-sformat` option.
+
 Server Tutorial
 =====
 
@@ -97,3 +102,12 @@ The _disk-used_ represents the bytes used by the account. The _disk-used-perfile
 The server has now been configured and setup for the account _hdk392Ej_. The _hdk392Ej_ serves as the username and password combination. I recommend using something much longer. If you are intent on using something resembling more of a username and password combination then you could do something along the lines of _username.password_ and replace each with the respective username and password.
 
 _I would like to add support in later for a more securish (at least looking) account database. At the moment the server and client are still in development and this is not by any means the final form but simply represents a roughed in system._
+
+To start the server you will need to issue the following commands for Golang.
+
+    GOPATH="/home/kmcguire/project/goserver"
+    export GOPATH
+    go run ./src/main.go
+
+Where `GOPATH` specifies the directory `goserver` included when you download the project repository. You can
+also build an executable using `go`, but I will leave that as an excercise for you for now!
