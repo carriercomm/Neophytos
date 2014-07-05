@@ -677,7 +677,9 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
     var count        int
     var vector        uint64
     var msg            []byte
-    const maxmsgsz  uint32 = 1024 * 1024 * 4
+
+    // extra 128 bytes for header
+    const maxmsgsz  uint32 = 1024 * 1024 * 4 + 128
     
     defer self.Finalize()
 
@@ -689,7 +691,7 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
     self.conn = conn
 
     // message buffer
-    buf = make([]byte, 1024 * 1024 * 4)
+    buf = make([]byte, maxmsgsz)
     btop = 0
 
     // loop
@@ -698,7 +700,8 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
         count, err = conn.Read(buf[btop:])
         if count == 0 {
             // connection is dropped (just exit)
-            fmt.Printf("client connection dropped")
+            fmt.Printf("client connection dropped (%s)", err)
+            conn.Close()
             return
         }
         //fmt.Printf("read bytes (%d)\n", count)

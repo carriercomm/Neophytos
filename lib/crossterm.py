@@ -192,7 +192,10 @@ class CrossTerm2Box:
         for row in range(0, rowcnt):
             off = row * self.w
             line = text[off:self.w]
+            if len(line) < self.w:
+                line = '%s%s' % (line, ' ' * (self.w - len(line)))
             self.ct.writeStringAt(self.x, self.y + row, line)
+
 
 class CrossTerm2(CrossTerm):
     def __init__(self, *args):
@@ -275,6 +278,7 @@ def wrapper(f, *args):
         stdout = open('.stdout', 'w')
         ct.stdout = sys.stdout         # save it
         sys.stdout = stdout            # protect it
+        ct.stderr = sys.stderr
         sys.stderr = stdout
 
     try:
@@ -289,8 +293,9 @@ def wrapper(f, *args):
             win.keypad(0)
             # restore terminal mode
             curses.endwin()
-        else:
-            ct.stdout.close()
+        ct.stdout.close()
+        sys.stdout = ct.stdout
+        sys.stderr = ct.stderr
 '''
     My testing function.
 '''

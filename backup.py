@@ -51,21 +51,31 @@ import lib.buops                        # backup operations
 class StatusWindow:
     def __init__(self, ct):
         self.ct = ct
-        # allocate boxes to be used to hold status elements
-        self.boxCurFile = ct.getBox(0, 0, 80, 1, 'CurFile:')
-        self.boxStartCount = ct.getBox(0, 1, 15, 1, 'Processed:')
-        self.boxFinishCount = ct.getBox(0, 2, 15, 1, 'Finished:')
-        self.boxHashGood = ct.getBox(0, 3, 15, 1, 'HashGood:')
-        self.boxHashBad = ct.getBox(0, 4, 15, 1, 'HashBad:')
-        self.boxDateReply = ct.getBox(0, 5, 15, 1, 'DateReply:')
-        self.boxSizeReply = ct.getBox(0, 6, 15, 1, 'SizeReply:')
 
+        fsz = 30
+        # allocate boxes to be used to hold status elements
+        self.boxCurFile = ct.getBox(0, 0, 80, 1,     'CurFile:   ')
+        self.boxStartCount = ct.getBox(0, 1, fsz, 1,  'Processed: ')
+        self.boxFinishCount = ct.getBox(0, 2, fsz, 1, 'Finished:  ')
+        self.boxHashGood = ct.getBox(0, 3, fsz, 1,    'HashGood:  ')
+        self.boxHashBad = ct.getBox(0, 4, fsz, 1,     'HashBad:   ')
+        self.boxDateReply = ct.getBox(0, 5, fsz, 1,   'DateReply: ')
+        self.boxSizeReply = ct.getBox(0, 6, fsz, 1,   'SizeReply: ')
+        self.boxBufferSize = ct.getBox(0, 7, fsz, 1,  'Buffer:    ')
+        self.boxBytesWrote = ct.getBox(0, 8, fsz, 1,  'BytesOut:  ')
+        self.boxLocalHash = ct.getBox(0, 9, 128, 1,   'LocalHash: ')
+        self.boxRemoteHash = ct.getBox(0, 10, 128, 1, 'RemoteHash:')
+        self.boxWriteCount = ct.getBox(0, 11, fsz, 1, 'WriteCount:')
+        self.boxLastWrite = ct.getBox(0, 12, 128, 1,  'LastWrite:')
+
+        self.writeCount = 0
         self.startCount = 0
         self.finishCount = 0
         self.hashGoodCount = 0
         self.hashBadCount = 0
         self.dateReplyCount = 0
         self.sizeReplyCount = 0
+        self.bytesWrote = 0
 
     def catchFinished(self, *args):
         self.finishCount += 1
@@ -89,11 +99,29 @@ class StatusWindow:
     def catchHashBad(self, *args):
         self.hashBadCount += 1
         self.boxHashBad.write('%s' % self.hashBadCount)
+        rhash = args[4]
+        lhash = args[5]
+        rhash = '%s:%s' % (len(rhash), ''.join('{:02x}'.format(c) for c in rhash))
+        lhash = '%s:%s' % (len(lhash), ''.join('{:02x}'.format(c) for c in lhash))
+        self.boxLocalHash.write(lhash)
+        self.boxRemoteHash.write(rhash)
         self.ct.update()
     def catchHashGood(self, *args):
         self.hashGoodCount += 1
         self.boxHashGood.write('%s' % self.hashGoodCount)
         self.ct.update()
+    def catchBufferDump(self, *args):
+        self.boxBufferSize.write('%s' % args[0])
+        self.ct.update()
+    def catchWrite(self, *args):
+        # rfile, lfile, offset, size
+        self.writeCount += 1
+        self.bytesWrote += args[3]
+        self.boxBytesWrote.write('%s' % self.bytesWrote)
+        self.boxWriteCount.write('%s' % self.writeCount)
+        self.boxLastWrite.write('%s' % args[1])
+    def catchUncaught(self, *args):
+        pass
 
 def main(ct, args):
     '''
@@ -183,7 +211,10 @@ def main(ct, args):
         'HashGood':             sw.catchHashGood,
         'DateReply':            sw.catchDateReply,
         'SizeReply':            sw.catchSizeReply,
-        'Start':                sw.catchStart
+        'Start':                sw.catchStart,
+        'Uncaught':             sw.catchUncaught,
+        'Write':                sw.catchWrite,
+        'BufferDump':           sw.catchBufferDump,
     }
 
     if 'push' in setopts:

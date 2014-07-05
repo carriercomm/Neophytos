@@ -63,6 +63,7 @@ class Client:
         self.lasttitleupdated = 0
         self.workerpool = None
         self.workpool = None
+        self.maxmsgsz = 1024 * 1024 * 4
 
         # enable or disable stash/revision format
         self.revformat = sformat
@@ -289,12 +290,23 @@ class Client:
                 fnamesz, ftype = struct.unpack_from('>HB', data)
                 # grab out name
                 fname = data[3: 3 + fnamesz]
+                # pull of revision if exists
+                if fname.find('.') > -1:
+                    frev = fname[0:fname.find('.')]
+                    # try to convert into integer if possible
+                    try:
+                        frev = int(frev)
+                    except ValueError:
+                        pass
+                    fname = fname[fname.find('.') + 1:]
+                else:
+                    frev = 0
                 # decode it back to what we expect
                 fname = self.FSDecodeBytes(fname)
                 # chop off part we just read
                 data = data[3 + fnamesz:]
                 # build list
-                list.append((fname, ftype))
+                list.append((fname, ftype, frev))
             # return list
             return list
         if type == ServerType.FileTime:
@@ -354,9 +366,9 @@ class Client:
             if not _data:
                 raise ConnectionDeadException()
             data.write(_data)
-        except Exception as e:
-            # TODO: improve this.. what if socket died?
+        except:
             pass
+
 
         # only return with data if its of the specified length
         if data.tell() >= sz:
@@ -461,7 +473,12 @@ class Client:
     
     def handleOrSend(self, lookfor = None):
         # wait until the socket can read or write
-        read, write, exp = select.select([self.sock], [self.sock], [])
+        read, write, exp = select.select([self.sock], [self.sock], [self.sock])
+
+        if exp:
+            raise ConnectionDeadException()
+            sys.stdout.flush()
+            sys.stderr.flush()
 
         if read:
             # it will block by default so force
@@ -488,18 +505,13 @@ class Client:
             while totalsent < len(data):
                 try:
                     sent = self.sock.send(data[totalsent:])
-                except Exception as e:
-                    print(e)
+                except:
                     raise ConnectionDeadException()
-                    #print('socket.error', e)
-                    # non-ssl socket likes to throw this exception instead
-                    # of returning zero bytes sent it seems
-                    #self.datatosend.insert(0, data[totalsent:])
-                    #return False
                 
                 if sent == 0:
                     # place remaining data back at front of queue and
                     # we will try to send it next time
+                    self.bytestosend = self.bytestosend - totalsent
                     self.datatosend.insert(0, data[totalsent:])
                     return False
                 #print('@sent', sent)
@@ -535,15 +547,16 @@ class Client:
         for part in parts:
             if len(part) == 0:
                 continue
-            # see if it is already in stash format
+            # okay, if it uses a dot we encode it and any other
+            # special character except null characters which we
+            # will replace next after we encode this
+            part = self.FSEncodeBytes(part)
             if part.find(b'\x00') < 0:
                 # convert into stash format
                 part = b'0.' + part
             else:
                 # replace it with a dot
                 part = part.replace(b'\x00', b'.')
-            # 3. encode it (any stash value can be used)
-            part = self.FSEncodeBytes(part)
             _parts.append(part)
         path = b'/'.join(_parts)
         return path
@@ -557,7 +570,6 @@ class Client:
             (ord('0'), ord('9')),
         )
         
-        dotord = ord('.')
         dashord = ord('-')
         uscoreord = ord('_')
         
@@ -567,7 +579,7 @@ class Client:
                 if c >= valid[0] and c <= valid[1]:
                     was = True
                     break
-            if was or c == dotord or c == dashord or c == uscoreord:
+            if was or c == dashord or c == uscoreord or c == 0:
                 out.append(c)
                 continue
             # encode byte value as %XXX where XXX is decimal value since
@@ -675,3 +687,21 @@ class Client:
 class Client2(Client):
     def __init__(self, rhost, rport, aid, sformat):
         Client.__init__(self, rhost, rport, aid, sformat)
+        self.maxmsg = 1024 * 1024 * 4
+
+    '''
+        We re-implement the FileWrite to enforce the maximum
+        message size.
+    '''
+    def FileWrite(self, fid, offset, data, mode, callback = None):
+        msgmax = self.maxmsgsz
+
+        x = 0
+        while x * msgmax < len(data):
+            _max = len(data) - (x * msgmax)
+            _max = min(_max, msgmax)
+            super().FileWrite(fid, offset + x * msgmax, data[x * msgmax:x * msgmax + _max], mode, callback = callback)
+            x = x + 1
+        return 
+
+

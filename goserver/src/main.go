@@ -29,7 +29,7 @@ func main() {
 	if len(os.Args) > 1 {
 		if os.Args[1] == "testunit-hash" {
 			// read data from stdin
-			buf := make([]byte, 1024 * 1024)
+			buf := make([]byte, 1024 * 1024 * 25)
 			// read hash size
 			for top = 0; top < 3; {
 				cnt, err = os.Stdin.Read(buf[top:3])
@@ -44,7 +44,9 @@ func main() {
 			// parse header			
 			sz := int(buf[0]) << 16 | int(buf[1]) << 8 | int(buf[2])
 			// read data
+			fmt.Errorf("[go] sz:%d", sz)
 			for top = 0; top < sz; {
+				fmt.Errorf("[go] writing to %d with max %d", top, sz)
 				cnt, err = os.Stdin.Read(buf[top:sz])
 				top += cnt
 			}

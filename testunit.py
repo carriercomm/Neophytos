@@ -12,8 +12,12 @@ def unitTestHashKmc():
     c = Client2(None, None, None, None)
 
     for lcnt in range(0, 1000):
+        h1 = None
+        h2 = None
+        h3 = None
+
         # produce test data
-        maxsz = 1024 * 1024
+        maxsz = 1024 * 1024 * 16
         sz = random.randint(0, maxsz)
         hsz = random.randint(0, maxsz)
         data = []
@@ -24,12 +28,13 @@ def unitTestHashKmc():
         # test pure python implementation
         _hentry = c.hentry
         c.hentry = None
-        h1 = c.HashKmc(data, hsz)
+        #h1 = c.HashKmc(data, hsz)
         # test native implementation (if exists)
         h2 = None
         if _hentry is not None:
             c.hentry = _hentry
             _data = bytes(list(data))
+            print('getting H2')
             h2 = c.HashKmc(_data, hsz)
         cwd = os.getcwd()
         cwd = '%s/goserver/src'
@@ -47,13 +52,21 @@ def unitTestHashKmc():
         bin.append(sz >> 8 & 0xff)
         bin.append(sz & 0xff)
         bin = bytes(bin) + data
-        h3 = p.communicate(bin)[0]
+        print('getting H3')
+        out = p.communicate(bin)
+        h3 = out[0]
+        if out[1] is not None and len(out[1]) > 0:
+            print(out[1])
+            exit()
         p.wait()
         if h1: print('h1', len(h1), h1[0:10])
         if h2: print('h2', len(h2), h2[0:10])
         if h3: print('h3', len(h3), h3[0:10])
-        if h1 != h2 or h1 != h3:
+
+        if h2 != h3:
             print('FAILED AT HASH TEST')
+            return False
+            
             return False
     return True
 
