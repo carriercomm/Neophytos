@@ -141,7 +141,7 @@ def main(ct, args):
     opts = (
         'lpath', 'rpath', 'password', 'push', 'pull', 'sync-rdel',
         'host', 'port', 'cipher', 'filter-file', 'make-sample-filter-file',
-        'password', 'authcode', 'auth-code', 'no-ssl', 'debug'
+        'password', 'authcode', 'auth-code', 'no-ssl', 'debug', 'no-sformat'
     )
 
     setopts = {}
@@ -179,6 +179,10 @@ def main(ct, args):
         setopts['ssl'] = True
     else:
         setopts['ssl'] = False
+    if 'no-sformat' not in setopts:
+        setopts['sformat'] = True
+    else:
+        setopts['sformat'] = False
 
     # load filter file if specified
     filter = None
@@ -221,19 +225,19 @@ def main(ct, args):
         print('push')
         lib.buops.Push(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['ssl'], True, catches
+            setopts['rpath'], filter, setopts['ssl'], setopts['sformat'], catches
         )
         return 
     if 'pull' in setopts:
         lib.buops.Pull(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['ssl'], True, catches
+            setopts['rpath'], filter, setopts['ssl'], setopts['sformat'], catches
         )
         return
     if 'sync-rdel' in setopts:
         lib.buops.SyncRemoteWithDeleted(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['stash'], setopts['ssl'], True, catches
+            setopts['rpath'], filter, setopts['stash'], setopts['ssl'], setopts['sformat'], catches
         )
         return
     if 'sync-ldel' in setopts:
