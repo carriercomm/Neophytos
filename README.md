@@ -1,4 +1,4 @@
-![neophytos-logo](http://kmcg3413.net/logo.png)
+![neophytos-logo](http://kmcg3413.net/rdss.png)
 =====
 
 Dependancies
