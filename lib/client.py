@@ -54,10 +54,7 @@ class Client:
         self.sockreadgate = threading.Condition()
         self.socklockread = threading.Lock()
         self.socklockwrite = threading.Lock()
-        self.bytesout = 0                    # includes just actual data bytes
-        self.bytesoutst = time.time()
         self.bz2compression = 0
-        self.allbytesout = 0                # includes control bytes and data
         self.workerfailure = False
         self.workeralivecount = 0
         self.lasttitleupdated = 0
@@ -124,9 +121,9 @@ class Client:
         self.datatosend = []
         self.bytestosend = 0
         
-        self.dbgl = time.time()
-        self.dbgv = 0
-        self.dbgc = 0
+        self.bytesout = 0                   # just data out
+        self.allbytesout = 0                # control and data out
+        self.bytesoutst = time.time()
     
     def SetRevFormat(self, b):
         self.revformat = b
@@ -453,9 +450,6 @@ class Client:
             logger.debugNEOL('S')   
             self.send(struct.pack('>IQ', len(data), vector))
             self.send(data)
-            # track the total bytes out
-            self.allbytesout = self.allbytesout + 4 + 8 + len(data)
-            #print('sent data for vector:%s' % vector)
             
         if mode == Client.IOMode.Block:
             #print('blocking by handling messages')
@@ -505,6 +499,8 @@ class Client:
             while totalsent < len(data):
                 try:
                     sent = self.sock.send(data[totalsent:])
+                    # track all the bytes sent out at this very moment
+                    self.allbytesout += sent
                 except:
                     raise ConnectionDeadException()
                 
@@ -519,6 +515,9 @@ class Client:
             self.bytestosend = self.bytestosend - totalsent
         return True
     
+    def getThroughput(self):
+        return self.allbytesout / (time.time() - self.bytesoutst)
+
     '''
         The client can use any format of a path, but in order to support
         file stashing and any characters in the path we convert it into

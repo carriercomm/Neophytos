@@ -12,6 +12,13 @@ what is the Golang standard library.
 * client requires Python 3.x (prefer latest version especially on Windows)
 * client GUI requires PyQt4 (GUI is work in progress)
 
+I choose Go because it provided the needed performance. I did not know much about Rust at the
+time, but I could in the future port to Rust as I research the language more. There are a lot
+of design decisions to make regarding either one.
+
+I prefer to use Python as it provides rapid application development and is easy to use with
+an assortment of libraries, but when it comes to performance it is not always so great.
+
 Current State
 =====
 

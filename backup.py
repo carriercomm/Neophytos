@@ -66,7 +66,13 @@ class StatusWindow:
         self.boxLocalHash = ct.getBox(0, 9, 128, 1,   'LocalHash: ')
         self.boxRemoteHash = ct.getBox(0, 10, 128, 1, 'RemoteHash:')
         self.boxWriteCount = ct.getBox(0, 11, fsz, 1, 'WriteCount:')
-        self.boxLastWrite = ct.getBox(0, 12, 128, 1,  'LastWrite:')
+        self.boxLastWrite = ct.getBox(0, 12, 128, 1,  'LastWrite: ')
+        self.boxThroughput = ct.getBox(0, 13, fsz, 1, 'Throughput:')
+        self.boxLPatchTime = ct.getBox(0, 14, fsz, 1, 'LPatch:Time: ')
+        self.boxLPatchFile = ct.getBox(0, 15, 128, 1, 'LPatch:File: ')
+        self.boxLPatchUp = ct.getBox(0, 16, fsz, 1,   'LPatch:Data: ')
+        self.boxLPatchCtrl = ct.getBox(0, 17, fsz, 1, 'LPatch:Ctrl: ')
+        self.boxLPatchOpCnt = ct.getBox(0, 18, fsz, 1,'LPatch:Ops:  ')
 
         self.writeCount = 0
         self.startCount = 0
@@ -77,6 +83,16 @@ class StatusWindow:
         self.sizeReplyCount = 0
         self.bytesWrote = 0
 
+    def catchLongestPatchOp(self, op):
+        self.boxLPatchTime.write('%s' % (time.time() - op.startTime))
+        self.boxLPatchFile.write('%s' % op.lpath)
+        self.boxLPatchUp.write('%s' % op.bytesPatched)
+        self.boxLPatchCtrl.write('%s' % op.bytesProtoUsed)
+        self.boxLPatchOpCnt.write('%s' % op.opCount)
+        self.ct.update()
+    def catchThroughput(self, throughput):
+        self.boxThroughput.write('%.01f' % throughput)
+        self.ct.update()
     def catchFinished(self, *args):
         self.finishCount += 1
         self.boxFinishCount.write('%s' % self.finishCount)
@@ -120,6 +136,7 @@ class StatusWindow:
         self.boxBytesWrote.write('%s' % self.bytesWrote)
         self.boxWriteCount.write('%s' % self.writeCount)
         self.boxLastWrite.write('%s' % args[1])
+        self.ct.update()
     def catchUncaught(self, *args):
         pass
 
@@ -208,6 +225,11 @@ def main(ct, args):
 
     sw = StatusWindow(ct)
 
+    '''
+        A catch is basically a callback, but were are not really going to be
+        performing work but rather displaying the status. You could technically
+        control something from a catch, but is not yet implemented.
+    '''
     catches = {
         'Finished':             sw.catchFinished,
         'PatchReply':           sw.catchPatchReply,
@@ -219,6 +241,8 @@ def main(ct, args):
         'Uncaught':             sw.catchUncaught,
         'Write':                sw.catchWrite,
         'BufferDump':           sw.catchBufferDump,
+        'Throughput':           sw.catchThroughput,
+        'LongestPatchOp':       sw.catchLongestPatchOp,
     }
 
     if 'push' in setopts:

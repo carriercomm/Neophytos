@@ -438,26 +438,35 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 // create slice
                 msg = msg[11 + fnamesz:]
             }
-            if _, _err := os.Stat(path); _err != nil {
-                // CmdClientFileTrun should be used to create
-                // a new file of a certain size
-                ///// create new file
-                ///// fo, err := os.OpenFile(path, os.O_TRUNC, 0)
-                panic("write to non-existant file")
+
+            // redundant check.. just let os.OpenFile fail..
+            //if _, _err := os.Stat(path); _err != nil {
+            //    panic("write to non-existant file")
+            //    self.MsgWrite8(0)
+            //    self.MsgEnd()
+            //    return nil
+            //}
+
+            fo, err := os.OpenFile(path, os.O_RDWR, 0700)
+            if err != nil {
+                panic(fmt.Sprintf("error opening path (%s)", err))
                 self.MsgWrite8(0)
                 self.MsgEnd()
                 return nil
             }
 
-            fo, err := os.OpenFile(path, os.O_RDWR, 0700)
-            if err != nil {
-                panic("error opening file for RDWR")
+            // disallow writes past end of file
+            csz, err := fo.Seek(0, 2)
+            if uint64(off) + uint64(len(msg)) >= uint64(csz) {
                 self.MsgWrite8(0)
                 self.MsgEnd()
                 return nil
             }
+
+            // write the data to the file at the specified offset
             fo.WriteAt(msg, int64(off))
             fo.Close()
+
             // just reset the file so its the oldest of the old, this
             // protects the file from having a recent timestamp but not
             // actually being fully updated.. if a file is left with
@@ -465,7 +474,9 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             // and could not finish the job so the next pass the client
             // makes will consider this file old and update it either by
             // uploading or patching (client's decision); i really hate
-            // how this might cost a lot of CPU time maybe..
+            // how this might cost a lot of CPU time maybe.. but i see
+            // no other way to do it and maintain the file to being
+            // seen as out of date when a time request is issued
             os.Chtimes(path, time.Unix(0, 0), time.Unix(0, 0))
             self.MsgWrite8(1)
             self.MsgEnd()
@@ -509,7 +520,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             self.MsgWrite8(CmdServerFileTrun)
             // check for error condition first
             if err != nil {
-                panic(fmt.Sprintf("truncate: failed on %s", path))
+                panic(fmt.Sprintf("truncate: failed on %s (%s)", path, err))
                 self.MsgWrite8(0)            // failure code
                 self.MsgEnd()
                 return nil
@@ -599,7 +610,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             self.MsgStart(vector)
             self.MsgWrite8(CmdServerFileHash)
             if err != nil {
-                panic("can not open file")
+                panic(err)
                 self.MsgWrite8(0)
                 self.MsgEnd()
                 return nil
@@ -648,7 +659,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             self.MsgStart(vector)
             self.MsgWrite8(CmdServerFileSetTime)
             if err != nil {
-                panic("set time failed")
+                panic(fmt.Sprintf("error setting time (%s)", err))
                 self.MsgWrite8(0)
                 self.MsgEnd()
                 return nil
@@ -687,6 +698,11 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
    	//pprof.StartCPUProfile(f)
     //defer pprof.StopCPUProfile()
     defer pprof.WriteHeapProfile(f)
+    defer func () {
+        // prevent panic from shutting entire server down
+        p := recover()
+        fmt.Printf("%s\n", p)
+    } ()
 
     self.conn = conn
 

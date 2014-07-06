@@ -22,14 +22,19 @@ class StatusTick:
     HashReplyMatch           = 7
 
 
+'''
+    This is primarily a chronological order debugging tool. It
+    dumps to stdout and represents the order that operations have
+    happened in.
+'''
 def SendStatusTick(tick):
-    if tick == StatusTick.Process:           print('@', end = '')
-    if tick == StatusTick.Finish:            print('^', end = '')
-    if tick == StatusTick.HashReplyDifferent:print('#', end = '')
-    if tick == StatusTick.HashReplyMatch:    print('Y', end = '')
-    if tick == StatusTick.SizeReply:         print('$', end = '')
-    if tick == StatusTick.DateReply:         print('?', end = '')
-    if tick == StatusTick.WriteChunk:        print('+', end = '')
+    if tick == StatusTick.Process:           logger.debugNEOL('@')
+    if tick == StatusTick.Finish:            logger.debugNEOL('^')
+    if tick == StatusTick.HashReplyDifferent:logger.debugNEOL('#')
+    if tick == StatusTick.HashReplyMatch:    logger.debugNEOL('Y')
+    if tick == StatusTick.SizeReply:         logger.debugNEOL('$')
+    if tick == StatusTick.DateReply:         logger.debugNEOL('?')
+    if tick == StatusTick.WriteChunk:        logger.debugNEOL('+')
     sys.stdout.flush()
 
 def TruncateFile(lpath, size):
@@ -52,6 +57,7 @@ def CallCatch(catches, signal, *args):
             return catches['Uncaught'](*args)    
         return
     return catches[signal](*args)
+
 
 def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True):
     if rpath is None:
@@ -239,6 +245,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     jobPatchQueryDelayed = []    # delayed patch hash requests
     jobUpload = []               # upload jobs
 
+
+    jobPatchOperations = []
+
     '''
         This is used to share state between the asynchronous sub-jobs
         of a patch operation. When a patch is started one or more sub
@@ -290,6 +299,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 
         if _success == 0:
             print('HASH-ERROR:%s' % _rpath)
+            exit()
             return
 
         # produce local hash
@@ -313,6 +323,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             logger.debug('FORCEDPATCH:%s:%x:%x' % (_lpath, _offset, _size))
             _shrstate.bytesPatched += len(_data)
             c.FileWrite(_rpath, _offset, _data, Client.IOMode.Discard)
+            shrstate.opCount -= 1
+            if shrstate.opCount < 1:
+                CallCatch(catches, 'Finish', _rpath, _lpath, _offset, _size)
             return
 
         # if the hashes are the same do nothing
@@ -397,6 +410,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         logger.debug('waitcount:%s' % c.waitCount())
         # read any messages
         c.handleOrSend()
+        CallCatch(catches, 'Throughput', c.getThroughput())
+
         
         # if our output buffer is empty, we have no jobs, and we are not 
         # waiting on any requests
@@ -460,7 +475,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 output.SetTitle('DataOutMB', outdata)
                 output.SetTitle('ControlOutMB', outcontrol)
                 output.SetTitle('OutBuffer', c.getBytesToSend())
+
                 CallCatch(catches, 'BufferDump', c.getBytesToSend())
+                CallCatch(catches, 'Throughput', c.getThroughput())
                 time.sleep(0.01)
             logger.debug('    continuing..')
         else:
@@ -532,6 +549,25 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         #       this happens before any new files are placed into the queues
         #       so we can finish our patch jobs before moving on the to next
         #       file
+
+        tr = []
+        hv = 0
+        he = None
+        for op in jobPatchOperations:
+            if op.opCount < 1:
+                # this operation has finished
+                tr.append(op)
+                continue
+            # report the longest lived
+            if time.time() - op.startTime > hv:
+                hv = time.time() - op.startTime
+                he = op
+        if he is not None:
+            CallCatch(catches, 'LongestPatchOp', he)
+
+        for t in tr:
+            jobPatchOperations.remove(t)
+
         _max = min(max(0, 200 - c.waitCount()), len(jobPatch))
         x = 0
         while x < _max:
@@ -549,7 +585,11 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 shrstate.bytesProtoUsed = 0
                 shrstate.bytesPatched = 0
                 shrstate.opCount = 0
+                shrstate.startTime = time.time()
+                shrstate.lpath = _lpath
+                shrstate.rpath = _rpath
                 job.append(shrstate)
+                jobPatchOperations.append(shrstate)
             else:
                 # get existing shared state container
                 shrstate = job[5]
@@ -697,7 +737,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _rsize = uj[2]
             _lsize = uj[3]
             _curoff = uj[4]
-            _chunksize = 1024 * 1024
+            _chunksize = 1024 * 1024 * 4
             # see what we can send
             _rem = _lsize - _curoff
             if _rem > _chunksize:
@@ -725,6 +765,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             # advance our current offset
             uj[4] = _curoff + _rem
             cjc = cjc + 1
+
         # remove finished jobs
         ct = time.time()
         for uj in tr:

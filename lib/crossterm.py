@@ -7,6 +7,9 @@
     API is totally different, but it does try to provide a minimal cross-platform 
     support for positional printing and colors.
 
+    It also supports cross-process access. This allows you to query information from
+    another process through a TCP server.
+
     * colors still being implemented
 '''
 
@@ -84,10 +87,19 @@ class CrossTerm:
             cy = info[3]
             return (cx, cy)
 
+    '''
+        Should be caled after you make any changes to have them
+        displayed to the screen. This actually does nothin for Windows
+        but it is required for curses. So if you want cross-platform
+        operation then just call this as needed.
+    '''
     def update(self):
         if self.hasCurses:
             self.win.refresh()
 
+    '''
+        Will clear the screen with all spaces.
+    '''
     def clear(self):
         if self.hasCurses:
             self.win.clear()
@@ -100,6 +112,9 @@ class CrossTerm:
             # create new lines the height of the current window (to keep scrollable history)
             self.writeStringAt(0, self.topy + h, ' ' * w)
 
+    '''
+        Internal WinNT only function
+    '''
     def _getConsoleScreenBufferInfo(self):
             ch = self.hGetStdHandle(c_int(-11))
             buf = struct.pack('<HHHHHHHHHHH', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -118,6 +133,9 @@ class CrossTerm:
             binfo.winH = info[8]
             return binfo
 
+    '''
+        Get size of visible screen. (Does not include buffer size if any.)
+    '''
     def getScreenSize(self):
         if self.hasCurses:
             return self.win.getyx()
@@ -167,6 +185,9 @@ class CrossTerm:
 class BoxOverlapException(Exception):
     pass
 
+'''
+    The object used to write to the screen when using boxes.
+'''
 class CrossTerm2Box:
     def __init__(self, ct, x, y, w, h, prefix = ''):
         self.ct = ct
@@ -197,6 +218,12 @@ class CrossTerm2Box:
             self.ct.writeStringAt(self.x, self.y + row, line)
 
 
+'''
+    This provides enhanced and extra features.
+
+    [X] box support
+    [ ] tcp server support
+'''
 class CrossTerm2(CrossTerm):
     def __init__(self, *args):
         super().__init__(*args)
@@ -216,6 +243,9 @@ class CrossTerm2(CrossTerm):
         # no space big enough for the box
         return None
 
+    '''
+        This will create a new box.
+    '''
     def getBox(self, x, y, w, h, prefix = ''):
         # look through list of boxes and find place to put
         nx1 = x
