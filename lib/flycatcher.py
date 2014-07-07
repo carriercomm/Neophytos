@@ -8,6 +8,7 @@
 '''
 
 import inspect
+import sys
 
 enabled = []
 ffunc = None
@@ -64,6 +65,7 @@ class Logger:
             print(msg)
         else:
             print(msg, end='')
+        sys.stdout.flush()
 
 def enable(mclass):
     global enabled

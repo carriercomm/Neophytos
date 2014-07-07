@@ -271,12 +271,8 @@ func FileCopy(dst string, src string, move bool) error {
     }
     defer out.Close()
     _, err = io.Copy(out, in)
-    cerr := out.Close()
-    if err != nil {
-        return err 
-    }
     os.Remove(src)
-    return cerr
+    return err
 }
 
 func HashKmc(data []byte, max int) ([]byte) {
@@ -393,6 +389,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             rsz := Read64MSB(msg, 8)
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[16:]))
             fo, err := os.OpenFile(path, os.O_RDWR, 0)
+            defer fo.Close()
             if err != nil {
                 self.MsgWrite8(0)
                 self.MsgEnd()
@@ -402,8 +399,8 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             //       to prevent loading the GC with garbage 
             //       that it will have to collect
             buf := make([]byte, rsz)
-            _, err = fo.ReadAt(buf, int64(off))
-            fo.Close()
+            fo.Seek(int64(off), 0)
+            _, err = fo.Read(buf)
             self.MsgStart(vector)
             self.MsgWrite8(CmdServerFileRead)
             if err != nil {
@@ -438,7 +435,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 // create slice
                 msg = msg[11 + fnamesz:]
             }
-
+            // c:\Users\kmcguire\Desktop\armos\sortix_0.8_i486.iso
             // redundant check.. just let os.OpenFile fail..
             //if _, _err := os.Stat(path); _err != nil {
             //    panic("write to non-existant file")
@@ -448,6 +445,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             //}
 
             fo, err := os.OpenFile(path, os.O_RDWR, 0700)
+            defer fo.Close()
             if err != nil {
                 panic(fmt.Sprintf("error opening path (%s)", err))
                 self.MsgWrite8(0)
@@ -457,15 +455,16 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 
             // disallow writes past end of file
             csz, err := fo.Seek(0, 2)
-            if uint64(off) + uint64(len(msg)) >= uint64(csz) {
+            if (uint64(off) + uint64(len(msg))) > uint64(csz) {
+                panic(fmt.Sprintf("error: writing past end of file off:%x len(msg):%x csz:%x", off, len(msg), csz))
                 self.MsgWrite8(0)
                 self.MsgEnd()
                 return nil
             }
 
+            fo.Seek(int64(off), 0)
             // write the data to the file at the specified offset
-            fo.WriteAt(msg, int64(off))
-            fo.Close()
+            fo.Write(msg)
 
             // just reset the file so its the oldest of the old, this
             // protects the file from having a recent timestamp but not
@@ -499,6 +498,8 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             self.MsgEnd()
             return nil
         case CmdClientFileTrun:
+            var cfsz        int64
+
             sz := Read64MSB(msg, 0)
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[8:]))
             fmt.Printf("trun:(%d):%s\n", sz, path)
@@ -510,10 +511,22 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 os.MkdirAll(base, 0700)
                 // create the file
                 fo, err := os.OpenFile(path, os.O_RDWR | os.O_CREATE, 0700)
+                defer fo.Close()
                 if err != nil {
                     panic(err)
                 }
-                fo.Close()
+                cfsz = 0
+            } else {
+                cfsz = stat.Size()
+            }
+
+            // enforce quota (if file even exists)
+            fmt.Printf("SpaceUsed:%x cfsz:%x sz:%x SpaceQuota:%x\n", self.config.SpaceUsed(0), cfsz, sz, self.config.SpaceQuota(0))
+            if (self.config.SpaceUsed(0) - cfsz) + int64(sz) > self.config.SpaceQuota(0) {
+                panic("quota exceeded")
+                self.MsgWrite8(0)
+                self.MsgEnd()
+                return nil
             }
             err = os.Truncate(path, int64(sz))
             self.MsgStart(vector)
@@ -607,6 +620,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             rsz := Read64MSB(msg, 8)
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[16:]))
             fo, err := os.OpenFile(path, os.O_RDWR, 0)
+            defer fo.Close()
             self.MsgStart(vector)
             self.MsgWrite8(CmdServerFileHash)
             if err != nil {
@@ -618,11 +632,12 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             // TODO: might want to look at reusing the buffer
             //       to prevent loading the GC with garbage 
             //       that it will have to collect
+
             buf := make([]byte, rsz)
-            _, err = fo.ReadAt(buf, int64(off))
-            fo.Close()
+            fo.Seek(int64(off), 0)
+            _, err = fo.Read(buf)
             if err != nil {
-                fmt.Printf("read failed on [%s] at [%x] for sz:%x\n", path, off, rsz)
+                fmt.Printf("read failed on [%s] at [%x] for sz:%x with [%s]\n", path, off, rsz, err)
                 panic(err)
                 self.MsgWrite8(0)
                 self.MsgEnd()
@@ -703,6 +718,7 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
         p := recover()
         fmt.Printf("%s\n", p)
     } ()
+    defer conn.Close()
 
     self.conn = conn
 
@@ -787,32 +803,32 @@ func (self *Server) LoadAccountConfig(account string) (*AccountConfig) {
                 case "DiskPath":
                     config.DiskPath = val
                 case "SpaceQuota":
-                    nval, err := strconv.Atoi(val)
+                    nval, err := strconv.ParseInt(val, 10, 64)
                     if err != nil {
                         fmt.Printf("value %s for account config key [%s] is not an integer!\n", val, key)
                     } else {
-                        config.SpaceQuota(int64(nval))
+                        config.SpaceQuota(nval)
                     }
                 case "SpaceUsed":
-                    nval, err := strconv.Atoi(val)
+                    nval, err := strconv.ParseInt(val, 10, 64)
                     if err != nil {
                         fmt.Printf("value [%s] for account config key [%s] is not an integer!\n", val, key)
                     } else {
-                        config.SpaceUsed(int64(nval))
+                        config.SpaceUsed(nval)
                     }
                 case "SpacePerFile":
-                    nval, err := strconv.Atoi(val)
+                    nval, err := strconv.ParseInt(val, 10, 64)
                     if err != nil {
                         fmt.Printf("value [%s] for account config key [%s] is not an integer!\n", val, key)
                     } else {                    
-                        config.SpacePerFile(int64(nval))
+                        config.SpacePerFile(nval)
                     }
                 case "SpacePerDir":
-                    nval, err := strconv.Atoi(val)
+                    nval, err := strconv.ParseInt(val, 10, 64)
                     if err != nil {
                         fmt.Printf("value [%s] for account config key [%s] is not an integer!\n", val, key)
                     } else {
-                        config.SpacePerDir(int64(nval))
+                        config.SpacePerDir(nval)
                     }
                 default:
                     fmt.Printf("unknown key in account configurtion as [%s]\n", key)

@@ -22,19 +22,24 @@ def flyFilter(logger, mclass, group, module, caller, lineno, msg):
     if mclass != flycatcher.Class.Debug:
         return True
 
-    if msg.find('patching-match:') == 0:
-        return True
-    else:
-        return False
+    onlythese = (
+        'patching-section:',
+    )
+
+    for ot in onlythese:
+        if msg.find(ot) == 0:
+            return True
+
+    return False
 
     disableThese = (
         '<request-size>:',
-        #'patching-section:',
+        'patching-section:',
         '<got-size>:',
-        '<up-to-date>:',
+        #'<up-to-date>:',
         '<got-date>:',
         'hash:',
-        'removing:',
+        #'removing:',
         'patching-split:',
         'patching-match:',
         '<delay-hash-send>:',
@@ -73,6 +78,7 @@ class StatusWindow:
         self.boxLPatchUp = ct.getBox(0, 16, fsz, 1,   'LPatch:Data: ')
         self.boxLPatchCtrl = ct.getBox(0, 17, fsz, 1, 'LPatch:Ctrl: ')
         self.boxLPatchOpCnt = ct.getBox(0, 18, fsz, 1,'LPatch:Ops:  ')
+        self.boxLPatchSaved = ct.getBox(0, 19, fsz, 1,'LPatch:Saved:')
 
         self.writeCount = 0
         self.startCount = 0
@@ -83,12 +89,15 @@ class StatusWindow:
         self.sizeReplyCount = 0
         self.bytesWrote = 0
 
+    def catchPatchFinish(self, shrstate):
+        pass
     def catchLongestPatchOp(self, op):
         self.boxLPatchTime.write('%s' % (time.time() - op.startTime))
         self.boxLPatchFile.write('%s' % op.lpath)
         self.boxLPatchUp.write('%s' % op.bytesPatched)
         self.boxLPatchCtrl.write('%s' % op.bytesProtoUsed)
         self.boxLPatchOpCnt.write('%s' % op.opCount)
+        self.boxLPatchSaved.write('%s' % op.bytesSaved)
         self.ct.update()
     def catchThroughput(self, throughput):
         self.boxThroughput.write('%.01f' % throughput)
@@ -231,18 +240,19 @@ def main(ct, args):
         control something from a catch, but is not yet implemented.
     '''
     catches = {
-        'Finished':             sw.catchFinished,
-        'PatchReply':           sw.catchPatchReply,
-        'HashBad':              sw.catchHashBad,
-        'HashGood':             sw.catchHashGood,
-        'DateReply':            sw.catchDateReply,
-        'SizeReply':            sw.catchSizeReply,
-        'Start':                sw.catchStart,
-        'Uncaught':             sw.catchUncaught,
-        'Write':                sw.catchWrite,
-        'BufferDump':           sw.catchBufferDump,
-        'Throughput':           sw.catchThroughput,
-        'LongestPatchOp':       sw.catchLongestPatchOp,
+        'Finished':             sw.catchFinished,           # when file is finished
+        'PatchReply':           sw.catchPatchReply,         # on hash/patch reply
+        'HashBad':              sw.catchHashBad,            # if hash was bad
+        'HashGood':             sw.catchHashGood,           # if hash was good
+        'DateReply':            sw.catchDateReply,          # on date/time reply
+        'SizeReply':            sw.catchSizeReply,          # on size eply
+        'Start':                sw.catchStart,              # when file is started
+        'Uncaught':             sw.catchUncaught,           # anything we dont catch
+        'Write':                sw.catchWrite,              # when write happens
+        'BufferDump':           sw.catchBufferDump,         # during buffer dumps
+        'Throughput':           sw.catchThroughput,         # periodically
+        'LongestPatchOp':       sw.catchLongestPatchOp,     # longest living patch operation
+        'PatchFinish':          sw.catchPatchFinish,        # when patch operation finishes
     }
 
     if 'push' in setopts:

@@ -513,10 +513,14 @@ class Client:
                 #print('@sent', sent)
                 totalsent = totalsent + sent
             self.bytestosend = self.bytestosend - totalsent
+
         return True
     
     def getThroughput(self):
-        return self.allbytesout / (time.time() - self.bytesoutst)
+        ct = time.time()
+        if ct - self.bytesoutst == 0:
+            return 0.0
+        return self.allbytesout / (ct - self.bytesoutst)
 
     '''
         The client can use any format of a path, but in order to support
@@ -620,8 +624,8 @@ class Client:
         _fid = self.GetServerPathForm(fid)
         return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + _fid, mode, callback)
     def FileWrite(self, fid, offset, data, mode, callback = None):
-        if self.bz2compression > 0:
-            data = zlib.compress(data, self.bz2compression)
+        #if self.bz2compression > 0:
+        #    data = zlib.compress(data, self.bz2compression)
         fid = self.GetServerPathForm(fid)
         return self.WriteMessage(struct.pack('>BQHB', ClientType.FileWrite, offset, len(fid), self.bz2compression) + fid + data, mode, callback)
     def FileSetTime(self, fid, atime, mtime, mode, callback = None):
@@ -653,8 +657,8 @@ class Client:
         fid = self.GetServerPathForm(fid)
         return self.WriteMessage(struct.pack('>B', ClientType.FileTime) + fid, mode, callback)
     def HashKmc(self, data, max):
-        #out = create_string_buffer(w * h * 2)
         if self.hentry is not None:
+            #out = create_string_buffer(len(data))
             sz = self.hentry(c_char_p(data), c_uint(len(data)), max)
             return data[0:sz]
 

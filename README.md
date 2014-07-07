@@ -36,6 +36,7 @@ The [X] means it has been implemented, while [ ] means still in development.
 * [X] client command line interface (95% complete; _very much usable_)
 * [ ] filter system (disabled at the moment but 90% of the support is there)
 * [ ] GUI frontend
+* [X] delta uploading (patching) - only changed parts of file are uploaded
 
 Client Tutorial
 =====
@@ -67,17 +68,32 @@ For example to push all files in a directory to the server under the name `peach
 
 To pull files from server under the name `peach`.
 
-    python3 backup.py --pull --lpath=/mnt/kmcguire/temp --rpath=peach --host=myserver --password=e3xample
+    python3 backup.py --pull --lpath=/temp --rpath=peach --host=myserver --password=e3xample
 
 To pull all targets (including peach and any others).
 
     python3 backup.py --pull --lpath=/mnt/kmcguire/temp --host=myserver --password=e3xample
 	
-
 If you are pushing to something where the files will be used directly which is more like `rsync` then
 you should also add the `--no-sformat` option to any operation. This will ensure that the client does
 not try to interpret the files like they are in a stash format. I think a `--pull` operation may work
 fine with out it but the correct way is to use the `--no-sformat` option.
+
+    python3 backup.py --push --lpath=/mnt/kmcguire --rpath=rsynclike --no-sformat
+
+The files placed on the server will be named exactly like they are locally using the `--no-sformat` option. If
+you omit this you will end up with a revision (or stash identifier) prefixed to every file and directory. This
+is useful when your just trying to synchronize two paths between two machines. You can actually do all the 
+synchronization from one machine with.
+
+    python3 backup.py --pull --lpath=/mnt/kmcguire --rpath=rsynclike --no-sformat
+    python3 backup.py --push --lpath=/mnt/kmcguire --rpath=rsynclike --no-sformat
+
+The only problem is this will delete nothing locally or remotely which can be desired, but due to
+technical limitations it is not easy to infer if a file has been deleted from the server because
+that would require storing this information. And, for how long should this be stored? _This type
+of a situation would likely better lend it's self other solutions that I have in mind but need
+more time to actually put together._
 
 Server Tutorial
 =====
