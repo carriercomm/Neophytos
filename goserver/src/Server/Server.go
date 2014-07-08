@@ -504,7 +504,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[8:]))
             fmt.Printf("trun:(%d):%s\n", sz, path)
             stat, err := os.Stat(path)
-            fmt.Printf("stat:%p err:%p", stat, err)
+            fmt.Printf("stat:%p err:%p\n", stat, err)
             if err != nil {
                 base := path[0:strings.LastIndex(path, "/")]
                 // try to make the directory path just to be sure
@@ -668,7 +668,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             mtime := Read64MSB(msg, 8)
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[16:]))
 
-            fmt.Printf("path:%s atime:%d mtime:%d", path, atime, mtime)
+            fmt.Printf("path:%s atime:%d mtime:%d\n", path, atime, mtime)
 
             err := os.Chtimes(path, time.Unix(int64(atime), 0), time.Unix(int64(mtime), 0))
             self.MsgStart(vector)
@@ -732,7 +732,7 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
         count, err = conn.Read(buf[btop:])
         if count == 0 {
             // connection is dropped (just exit)
-            fmt.Printf("client connection dropped (%s)", err)
+            fmt.Printf("client connection dropped (%s)\n", err)
             conn.Close()
             return
         }
