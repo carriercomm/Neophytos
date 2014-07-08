@@ -455,7 +455,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         else:
             jobDirEnumLimit = 0
         #    JOB-PENDING-FILES
-        if c.waitCount() < 500 and len(jobPatchOperations) == 0:
+        # do not process any new files unless we have no patch operations
+        # and no more than 19 upload operations.. otherwise we start spreading
+        # things out and nothing really gets completely done
+        if c.waitCount() < 500 and len(jobPatchOperations) == 0 and len(jobUpload) < 20:
             # only throw files into pipeline when wait count is low
             jobPendingFilesLimit = min(500, len(jobPendingFiles))
         else:
@@ -492,7 +495,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         output.SetTitle('Uploaded', stat_uploaded)
         output.SetTitle('Checked', stat_checked)
         output.SetTitle('Patched', stat_patched)
-
         
         # if we let this continue to grow it could eventually consume all
         # physical memory so we limit it and once it reaches that soft
@@ -549,10 +551,12 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 _lpath = '%s/%s' % (dej, node)
                 if os.path.isdir(_lpath):
                     # delay this..
-                    jobDirEnum.append(_lpath)
+                    if CallCatch(catches, 'Filter', _lpath, node, True):
+                        jobDirEnum.append(_lpath)
                     #print('[enum]:%s' % _lpath)
                     continue
-                jobPendingFiles.append(_lpath)
+                if CallCatch(catches, 'Filter', _lpath, node, False):
+                    jobPendingFiles.append(_lpath)
         # drop what we completed
         jobDirEnum = jobDirEnum[x + 1:]
 

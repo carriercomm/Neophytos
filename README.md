@@ -95,6 +95,29 @@ that would require storing this information. And, for how long should this be st
 of a situation would likely better lend it's self other solutions that I have in mind but need
 more time to actually put together._
 
+Filters
+=====
+
+For those less inclined to delve into the source code and implement your own filter system there
+is one provided that is fairly powerful in design, and easy to understand. First let us take a
+look at a common filter.
+
+    dir       reject      ^test$
+    any       accept      .*
+
+This will accept all files and directories _except any named `test`. To do this the filter is executed
+from top to bottom for each file and directory. It first evaluates `dir reject ^test$`. If this rule
+matches it rejects it. But, for it to even evaluate it has to be a `dir`. If it was a file it woud just
+skip down to the next line. So essentially each rule is evaluated and if it matches it either accepts
+or rejects. You can make rules for `dir`, `file`, `path`, or `any`. When a file or directory is tested
+only the top level portion of the path is used. For example for `/home/dave/test/apple.png` only `apple.png`
+is checked _except if you use the `path` type. The `path` type checks the entire path.
+
+What happens when it reaches the end of the filter file and has no matches? Well, by default it rejects. You
+can have an unlimited amount of rules. _I hope to one day add more functionality such as forward jumps so you
+can create individual sections for specific things with some basic flow control.
+
+
 Server Tutorial
 =====
 
