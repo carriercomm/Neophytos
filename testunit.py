@@ -70,7 +70,49 @@ def unitTestHashKmc():
             return False
     return True
 
+def makeRandomString(sz):
+    out = []
+    for x in range(0, sz):
+        out.append(chr(ord('a') + random.randint(0, 26)))
+    return ''.join(out)
+
+def makeRandomNodes(path, total = 0):
+    dc = random.randint(0, 255)
+    nc = random.randint(0, 255)
+    for x in range(0, dc):
+        node = makeRandomString(random.randint(0, 32))
+        os.makedirs('%s/%s' % (path, node))
+        total = makeRandomNodes('%s/%s' % (path, node), total)
+
+    for x in range(0, nc):
+        pass
+
+    return total + dc + nc
+
+def unitTestBackupOps():
+    for run in range(0, 100):
+        # remove temp directories if they exist
+        os.remove('tmp')        
+        # create temp directorys and files
+        os.makedirs('./tmp/local')
+        os.makedirs('./tmp/remote')
+
+        # issue a push operation
+        # verify directories are the same and file contents are equal
+        # issue a pull operation
+        # verify pull operation results of files and contents
+        # delete some random local directory files
+        # sync locally deleted files
+        # verify results
+        # delete some random remote directory files
+        # verify results
+
 def main():
-    unitTestHashKmc()
+    if unitTestHashKmc() is False:
+        print('[TestHashKmc]    FAILED')
+    if unitTestBackupOps() is False:
+        print('[TestBackupOps]  FAILED')
+    else:
+
 
 main()

@@ -22,8 +22,10 @@ def flyFilter(logger, mclass, group, module, caller, lineno, msg):
     if mclass != flycatcher.Class.Debug:
         return True
 
+    return True
+
     onlythese = (
-        'patching-section:',
+        '<wrote>',
     )
 
     for ot in onlythese:

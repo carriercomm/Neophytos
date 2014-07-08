@@ -336,6 +336,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _shrstate.dec()
             if _shrstate.opCount < 1:
                 CallCatch(catches, 'Finish', _rpath, _lpath, _offset, _size)
+                CallCatch(catches, 'PatchFinish', _shrstate)
             return
 
         # if the hashes are the same do nothing
@@ -794,31 +795,24 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _curoff = uj[4]
             _chunksize = 1024 * 1024 * 4
             # see what we can send
-            _rem = _lsize - _curoff
-            if _rem > _chunksize:
-                _rem = _chunksize
-            else:
-                tr.append(uj)
+            _rem = min(_lsize - _curoff, _chunksize)
             # open local file and read chunk
             _fd = open(_lpath, 'rb')
             _fd.seek(_curoff)
             _data = _fd.read(_rem)
             _fd.close()
-            logger.debug('<wrote>:%s:%x' % (_lpath, _curoff))
+            logger.debug('<wrote> path:%s offset:%x size:%x lsize:%x' % (_lpath, _curoff, len(_data), _lsize))
             SendStatusTick(StatusTick.WriteChunk)
             CallCatch(catches, 'Write', _rpath, _lpath, _curoff, _chunksize)
             c.FileWrite(_rpath, _curoff, _data, Client.IOMode.Discard)
-            # help track statistics for data out in bytes (non-control data)
+            # advance our current offset
+            uj[4] = _curoff + _rem
+            # if we reached the EOF then drop it
+            if uj[4] >= _lsize:
+                tr.append(uj)
             databytesout = databytesout + _rem
             if c.getBytesToSend() > buflimit:
                 break
-            # just a kinda safe upper limit in the case something
-            # happens and we have tons of super small files i dont
-            # want that the overload memory
-            if cjc > 10000:
-                break
-            # advance our current offset
-            uj[4] = _curoff + _rem
             cjc = cjc + 1
 
         # remove finished jobs
@@ -833,6 +827,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             jobUpload.remove(uj)
             stat_uploaded = stat_uploaded + 1
         continue
+    raise Exception('DONE DONE')
     c.close()
 
 def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None, stash = True, ssl = True, sformat = True):

@@ -2,21 +2,23 @@ package Server
 
 import             "fmt"
 import tls         "crypto/tls"
-//import rsa     "crypto/rsa"
-//import crand    "crypto/rand"
 import             "net"
-import            "sync"
-import ioutil    "io/ioutil"
-import            "bytes"
-import            "strconv"
-import            "os"
-import pprof     "runtime/pprof"
-import            "strings"
-//import            "math"
-import            "time"
-import            "io"
-//import            "zlib"
-//import            "runtime"
+import             "sync"
+import ioutil      "io/ioutil"
+import             "bytes"
+import             "strconv"
+import             "os"
+import pprof       "runtime/pprof"
+import             "strings"
+import             "time"
+import             "io"
+
+// unused imports
+//import           "math"
+//import           "zlib"
+//import           "runtime"
+//import rsa       "crypto/rsa"
+//import crand     "crypto/rand"
 
 const (
     CmdClientDirList                = 0
@@ -513,7 +515,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 fo, err := os.OpenFile(path, os.O_RDWR | os.O_CREATE, 0700)
                 defer fo.Close()
                 if err != nil {
-                    panic(err)
+                    panic(fmt.Sprintf("during trun: %s", err))
                 }
                 cfsz = 0
             } else {
@@ -624,7 +626,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             self.MsgStart(vector)
             self.MsgWrite8(CmdServerFileHash)
             if err != nil {
-                panic(err)
+                panic(fmt.Sprintf("during hash error:%s", err))
                 self.MsgWrite8(0)
                 self.MsgEnd()
                 return nil
@@ -638,7 +640,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             _, err = fo.Read(buf)
             if err != nil {
                 fmt.Printf("read failed on [%s] at [%x] for sz:%x with [%s]\n", path, off, rsz, err)
-                panic(err)
+                panic(fmt.Sprintf("during hash error:%s", err))
                 self.MsgWrite8(0)
                 self.MsgEnd()
                 return nil
@@ -716,7 +718,7 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
     defer func () {
         // prevent panic from shutting entire server down
         p := recover()
-        fmt.Printf("%s\n", p)
+        fmt.Printf("error: %s\n", p)
     } ()
     defer conn.Close()
 

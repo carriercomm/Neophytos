@@ -105,11 +105,23 @@ look at a common filter.
     dir       reject      ^test$
     any       accept      .*
 
-This will accept all files and directories _except any named `test`. To do this the filter is executed
+This would be located in a file of your choice in naming. For this example let us pretend it was saved
+under `test-filter` located in the working directory of the client. You load this file you would issue
+the option `--filter-file=test-filter`. Notice the filename comes after the equal sign. You can also
+specify relative and absolute paths such as `/home/dave/myfilters/onlysource` or `../myfilters/nomedia`.
+
+Each line is a filter rule. You can insert tabs or spaces between the elements of a filter rule. The
+filter rule has three elements. The first is the type of rule, the second is what to do if it matches,
+and the third is the regular expression (pattern) to do the matching with. The tabs and spaces do not
+have to be the same on each rule however it may look nicer and be easier to read if you do maintain 
+equal spacing.
+
+That filter will accept all files and directories _except_ any directory named `test`. 
+To do this the filter is executed 
 from top to bottom for each file and directory. It first evaluates `dir reject ^test$`. If this rule
 matches it rejects it. But, for it to even evaluate it has to be a `dir`. If it was a file it woud just
 skip down to the next line. So essentially each rule is evaluated and if it matches it either accepts
-or rejects. You can make rules for `dir`, `file`, `path`, or `any`. When a file or directory is tested
+or rejects. You can make rules for `dir`, `file`, `path`, or `any`. When a file or dires orctory is tested
 only the top level portion of the path is used. For example for `/home/dave/test/apple.png` only `apple.png`
 is checked _except if you use the `path` type. The `path` type checks the entire path.
 
