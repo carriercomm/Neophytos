@@ -137,13 +137,16 @@ class Client:
     def Connect(self, essl = False):
         # try to establish a connection
         if essl:
-            self.sock = ssl.wrap_socket(self.sock, ciphers = 'RC4')
+            self.sock = ssl.wrap_socket(self.sock, ciphers = 'AES')
         
         if essl:
             self.sock.connect((self.rhost, self.rport + 1))
             output.SetTitle('ssl-cipher', self.sock.cipher())
         else:
             self.sock.connect((self.rhost, self.rport))
+
+        # set socket to non-blocking for life of our object
+        self.sock.settimeout(0)
         
         self.ssl = essl
         
@@ -169,8 +172,16 @@ class Client:
         if result:
             return True
         else:
+            # TODO: i do not really like raising an exception here, it is great
+            #       for debugging but in a production mode it seems not stylish
             raise BadLoginException()
 
+    '''
+        Will get a message if stored. The alternative is to call HandleMessages
+        but it will block looking for a message. This method is more like polling
+        for something and is generally inefficent for usage except in special
+        cases.
+    '''
     def GetStoredMessage(self, vector):
         with self.socklockread:
             if vector in self.keepresult and self.keepresult[vector] is not None:
@@ -179,10 +190,16 @@ class Client:
                 return ret
         return None
     
+    '''
+        Get the number of outstanding requests (waiting for reply).
+    '''
     def waitCount(self):
         return len(self.keepresult) + len(self.callback)
     
-    # processes any incoming messages and exits after specified time
+    '''
+        This will block if `lookfor` is set to a vector. It will also read from
+        the socket and process messages routing them to where they go.
+    '''
     def HandleMessages(self, lookfor = None):
         # TODO: we are modifying a dictionary with out holding a lock for it...
         while not self.socklockread.acquire(False):
@@ -238,7 +255,9 @@ class Client:
         self.socklockread.release()
         return
     
-    # processes any message and produces output in usable form
+    '''
+        This will break the message into a usable form.
+    '''
     def ProcessMessage(self, svector, vector, data):
         type = data[0]
         
@@ -266,6 +285,7 @@ class Client:
         if type == ServerType.SetCompressionLevel:
             self.bz2compression = data[0]
             return
+
         # process message based on type
         if type == ServerType.LoginResult:
             if data[0] == ord('y'):
@@ -349,23 +369,22 @@ class Client:
             return out
         raise UnknownMessageTypeException('%s' % type)
     
-    def ifDead(self):
-        tdelta = (time.time() - self.lastactivity)
-        if tdelta > self.conntimeout:
-            raise ConnectionDeadException()
-    
+    '''
+        A wrapper around the socket which is used to read incoming into
+        our application level buffer. It will only return data if it is
+        of the specified size, otherwise it returns None.
+    '''
     def recv(self, sz):
         data = self.data
 
-        self.sock.settimeout(0)
         try:
-            _data = self.sock.recv(4096)
+            _data = self.sock.read(4096)
             if not _data:
                 raise ConnectionDeadException()
             data.write(_data)
         except:
+            # the socket was not ready to be read
             pass
-
 
         # only return with data if its of the specified length
         if data.tell() >= sz:
@@ -377,9 +396,12 @@ class Client:
             return _data
         return None
     
-    # read a single message from the stream and exits after specified time
+    '''
+        This will read a message from the application level read buffer. It 
+        will either return the message or return None.
+    '''
     def ReadMessage(self, timeout = 0):
-        self.sock.settimeout(timeout)
+        #self.sock.settimeout(timeout)
         
         # if no size set then we need to read the header
         if self.datasz is None:
@@ -404,6 +426,11 @@ class Client:
         # return the data
         return self.datasv, self.datav, data
         
+    '''
+        This will write a message. It supports four different modes
+        which are: Block, Async, Callback, and Discard. These modes
+        specify how we shall handle the reply.
+    '''
     def WriteMessage(self, data, mode, callback = None):
         with self.socklockwrite:
             vector = self.vector
@@ -459,12 +486,25 @@ class Client:
             return res
         return vector
     
+    '''
+        Returns True if we have data to send in our outgoing buffer.
+    '''
     def canSend(self):
         return len(self.datatosend) > 0
     
+    '''
+        Returns the number of bytes in our outgoing buffer.
+    '''
     def getBytesToSend(self):
         return self.bytestosend
     
+    '''
+        This will read in and process incoming data, and write out
+        outgoing data. It will block forever until we can write to
+        the socket or we can read from it. This is mainly used when
+        trying to dump our outgoing buffer to keep it from getting
+        too large and exhausting memory.
+    '''
     def handleOrSend(self, lookfor = None):
         # wait until the socket can read or write
         read, write, exp = select.select([self.sock], [self.sock], [self.sock])
@@ -474,33 +514,46 @@ class Client:
             sys.stdout.flush()
             sys.stderr.flush()
 
-        if read:
+        if read or True:
             # it will block by default so force
             # it to not block/wait
             self.HandleMessages(lookfor = lookfor)
+
         if write:
             # dump some of the buffers if any
             self.send()
     
+    '''
+        This will either send the data specified or buffer in our
+        application level outgoing buffer to be sent later. It will
+        not block and you can be assured the data will be sent as
+        soon as possible.
+    '''
     def send(self, data = None, timeout = 0):
         if data is not None:
             self.datatosend.append(data)
             self.bytestosend = self.bytestosend + len(data)
         
-        self.sock.settimeout(timeout)
+        #self.sock.settimeout(timeout)
         
+
         # check there is data to send
         while len(self.datatosend) > 0:
             # pop from the beginning of the queue
             data = self.datatosend.pop(0)
+
+            logger.debug('data-pop:%s' % len(data))
             
             # try to send it
             totalsent = 0
             while totalsent < len(data):
                 try:
-                    sent = self.sock.send(data[totalsent:])
+                    sent = self.sock.write(data[totalsent:])
+                    logger.debug('sent:%s totalsent:%s' % (sent, totalsent))
                     # track all the bytes sent out at this very moment
                     self.allbytesout += sent
+                except ssl.SSLWantWriteError:
+                    sent = 0
                 except:
                     raise ConnectionDeadException()
                 
@@ -516,6 +569,10 @@ class Client:
 
         return True
     
+    '''
+        Get our calculated throughput in bytes per second for the
+        life time of this client object.
+    '''
     def getThroughput(self):
         ct = time.time()
         if ct - self.bytesoutst == 0:
