@@ -12,15 +12,6 @@ from lib.client import Client2
 import lib.flycatcher as flycatcher
 logger = flycatcher.getLogger('BuOps')
 
-class StatusTick:
-    HashReplyDifferent       = 1
-    SizeReply                = 2
-    DateReply                = 3
-    WriteChunk               = 4
-    Process                  = 5
-    Finish                   = 6
-    HashReplyMatch           = 7
-
 '''
     This is used to share state between the asynchronous sub-jobs
     of a patch operation. When a patch is started one or more sub
@@ -35,22 +26,6 @@ class PatchJobSharedState:
             raise Exception('DEC TOO MANY TIMES')
     def inc(self):
         self.opCount += 1
-
-
-'''
-    This is primarily a chronological order debugging tool. It
-    dumps to stdout and represents the order that operations have
-    happened in.
-'''
-def SendStatusTick(tick):
-    if tick == StatusTick.Process:           logger.debugNEOL('@')
-    if tick == StatusTick.Finish:            logger.debugNEOL('^')
-    if tick == StatusTick.HashReplyDifferent:logger.debugNEOL('#')
-    if tick == StatusTick.HashReplyMatch:    logger.debugNEOL('Y')
-    if tick == StatusTick.SizeReply:         logger.debugNEOL('$')
-    if tick == StatusTick.DateReply:         logger.debugNEOL('?')
-    if tick == StatusTick.WriteChunk:        logger.debugNEOL('+')
-    sys.stdout.flush()
 
 def TruncateFile(lpath, size):
     if os.path.exists(lpath) is False:
@@ -78,8 +53,6 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     if rpath is None:
         rpath = b'/'
 
-    output.SetTitle('user', os.getlogin())
-
     sac = bytes(sac, 'utf8')
     c = Client2(rhost, rport, sac, sformat)
     c.Connect(essl = ssl)
@@ -101,8 +74,14 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             return
         for node in result:
             # skip any other revision
-            if node[2] != 0:
-                continue
+            meta = node[2]
+            # if meta data make sure it is enough bytes
+            # of it, and that it is the revision 0
+            if meta is not None and len(meta) > 3:
+                rev = struct.unpack_from('>I', meta)
+                # we only want to deal with revision 0
+                if rev != 0:
+                    continue
             name = node[0]
             name = rpath + b'/' + name
             nodes.append((name, node[1]))
@@ -237,17 +216,15 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         for t in tr:
             jobDownload.remove(t)
         # <end-of-loop>
-
+'''
+    PUSH
+'''
 def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True, catches = {}):
     if rpath is None:
         rpath = b'/'
-    else:
-        rpath = bytes(rpath, 'utf8')
-
-    output.SetTitle('user', os.getlogin())
 
     sac = bytes(sac, 'utf8')
-    c = Client2(rhost, rport, sac, sformat)
+    c = Client2(rhost, rport, sac, sformat, metasize = 128)
     c.Connect(essl = ssl)
     # produce remote and local paths
     lpbsz = len(lpath)
@@ -280,10 +257,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         objects which reduces polling time (CPU burn)..
     '''
     def __eventFileSize(pkg, result, vector):
-        SendStatusTick(StatusTick.SizeReply)
         jobGetRemoteSize.append((pkg, result))
     def __eventFileTime(pkg, result, vector):
-        SendStatusTick(StatusTick.DateReply)
         jobGetModifiedDate.append((pkg, result)) 
     def __eventEcho(pkg, result, vector):
         logger.debug('ECHO')
@@ -385,7 +360,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 return
 
             # just upload this section..
-            SendStatusTick(StatusTick.WriteChunk)
             CallCatch(catches, 'Write', _rpath, _lpath, _offset, _size)
             _shrstate.bytesPatched += _size
 
@@ -395,7 +369,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             # track how many bytes we saved!
             _shrstate.bytesSaved += _size
             CallCatch(catches, 'HashGood', _rpath, _lpath, _offset, _size)
-            SendStatusTick(StatusTick.HashReplyMatch)
             logger.debug('patching-match:%s:%x:%x' % (_lpath, _offset, _size))
         # decrement since we just died and spawned no sub-hash jobs
         logger.debug('hash; [%s] minus one' % id(_shrstate))
@@ -419,24 +392,13 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     
     # the soft limit for application level buffer size
     buflimit = 1024 * 1024 * 4
-    
-    st = time.time()
 
     # keep going until we get the echo 
     while echo['echo'] is False:
-        if time.time() - st > 10:
-            st = time.time()
-            logger.debug('  jobDirEnum:           %s' % len(jobDirEnum))
-            logger.debug('  jobPendingFiles:      %s' % len(jobPendingFiles))
-            logger.debug('  jobGetRemoteSize:     %s' % len(jobGetRemoteSize))
-            logger.debug('  jobGetModifiedDate:   %s' % len(jobGetModifiedDate))
-            logger.debug('  jobPatch:             %s' % len(jobPatch))
-            logger.debug('  jobPatchQueryDelayed: %s' % len(jobPatchQueryDelayed))
-            logger.debug('  jobUpload:            %s' % len(jobUpload))
-            logger.debug('  bytesOut:             %s' % c.getBytesToSend())
-            logger.debug('  waitcount:            %s' % c.waitCount())
         # read any messages
         c.handleOrSend()
+
+        # update our throughput
         CallCatch(catches, 'Throughput', c.getThroughput())
 
         ########################################################
@@ -478,24 +440,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             logger.debug('sending echo')
             sentEcho = True
             c.Echo(Client.IOMode.Callback, (__eventEcho, echo))
-
-        # 
-        dt = time.time() - c.bytesoutst
-        if dt == 0: dt = 1
-        outdata = '%.03f' % (databytesout / 1024 / 1024 / dt)
-        outcontrol = '%.03f' % ((c.allbytesout - databytesout) / 1024 / 1024 / dt)
-        output.SetTitle('WaitingVectors', c.waitCount())
-        output.SetTitle('DataOutMB', outdata)
-        output.SetTitle('ControlOutMB', outcontrol)
-        output.SetTitle('Jobs[DirEnum]', len(jobDirEnum))
-        output.SetTitle('Jobs[GetRemoteSize]', len(jobGetRemoteSize))
-        output.SetTitle('Jobs[GetModDate]', len(jobGetModifiedDate))
-        output.SetTitle('Jobs[Patch]', len(jobPatch))
-        output.SetTitle('Jobs[Upload]', len(jobUpload))
-        output.SetTitle('UpToDate', stat_uptodate)
-        output.SetTitle('Uploaded', stat_uploaded)
-        output.SetTitle('Checked', stat_checked)
-        output.SetTitle('Patched', stat_patched)
         
         # if we let this continue to grow it could eventually consume all
         # physical memory so we limit it and once it reaches that soft
@@ -507,7 +451,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             # in hopes that if we didnt it would be easier to keep
             # the server working - the more time the server is idle
             # is lost work time
-            print('emptying buffer')
             while c.getBytesToSend() > 1024 * 1024:
                 #              STALL/NET-DEADLOCK PREVENTION
                 # this will still cause callbacks to be fired and async results
@@ -515,21 +458,13 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 # application level buffers, which is desired - if we only sent
                 # pending data and never read the server's outgoing buffer would
                 # fill up because our incoming would fill up these creating a 
-                # data lock because we could never send to lower our buffer
+                # data lock because we could never send from our buffer because
+                # the remote side could not read because it can not write
                 c.handleOrSend()
-                
-                # keep the status updated
-                dt = time.time() - c.bytesoutst
-                outdata = '%.03f' % (databytesout / 1024 / 1024 / dt)
-                outcontrol = '%.03f' % ((c.allbytesout - databytesout) / 1024 / 1024 / dt)
-                output.SetTitle('DataOutMB', outdata)
-                output.SetTitle('ControlOutMB', outcontrol)
-                output.SetTitle('OutBuffer', c.getBytesToSend())
 
                 CallCatch(catches, 'BufferDump', c.getBytesToSend())
                 CallCatch(catches, 'Throughput', c.getThroughput())
                 time.sleep(0.01)
-            logger.debug('    continuing..')
         else:
             # just send what we can right now
             c.send()
@@ -544,17 +479,15 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         x = -1
         for x in range(0, jobDirEnumLimit):
             dej = jobDirEnum[x] 
-            output.SetTitle('LastDir', dej)
-            #print('<enuming-dir>:%s' % dej)
             nodes = os.listdir(dej)
 
             for node in nodes:
-                _lpath = '%s/%s' % (dej, node)
+                print(node, dej)
+                _lpath = b'/'.join((dej, node))
                 if os.path.isdir(_lpath):
                     # delay this..
                     if CallCatch(catches, 'Filter', _lpath, node, True):
                         jobDirEnum.append(_lpath)
-                    #print('[enum]:%s' % _lpath)
                     continue
                 if CallCatch(catches, 'Filter', _lpath, node, False):
                     jobPendingFiles.append(_lpath)
@@ -580,10 +513,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _off = job[1]
             _size = job[2]
             subjob = job[3]
-            logger.debug('pending-hash:%s:%x:%x' % (_rpath, _off, _size))
-            logger.debug('<delay-hash-send>:%s' % _rpath)
             v = c.FileHash(_rpath, _off, _size, Client.IOMode.Callback, (__eventHashReply, subjob))
-            logger.debug('created-hash-job; vector:%s;' % v)
+
         # drop the ones we executed
         jobPatchQueryDelayed = jobPatchQueryDelayed[x + 1:]
 
@@ -650,10 +581,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             csz = 1024 * 1024 * 32
             _tsz = min(csz, _lsize - _curoff)
 
-            logger.debug('hash:%s:%x:%x' % (_lpath, _curoff, _tsz))
-
             # increment number of operations ongoing
-            logger.debug('hash; [%s] plus one' % id(shrstate))
             shrstate.inc()
 
             # create job and request with callback
@@ -663,7 +591,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             job[4] = job[4] + _tsz
             if job[4] >= _lsize:
                 # do not increment x after removing it
-                logger.debug('removing:%s' % _lpath)
                 shrstate.init = False
                 del jobPatch[x]
                 jobPatchLimit = jobPatchLimit - 1
@@ -687,10 +614,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             if _lsize > 1024 * 1024 * 200:
                 continue
             ###############################################
-            _rpath = rpath + bytes(_lpath[lpbsz:], 'utf8')
+            _rpath = rpath + _lpath[lpbsz:]
             stat_checked = stat_checked + 1
             pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
-            logger.debug('<request-size>:%s' % _lpath)
             CallCatch(catches, 'Start', _rpath, _lpath)
             c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
         # drop what we completed
@@ -716,21 +642,12 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 
             # result[0] = success code is non-zero and result[1] = size (0 on failure code)
             _rsize = _result[1]
-            # if file does not exist go trun/upload route.. if it does
-            # exist and the size is the same then check the file modified
-            # date and go from there
-            #if _lsize != _rsize:
-                #print('[size] file:%s local:%s remote:%s' % (_lpath, _lsize, _rsize))
-            logger.debug('<got-size>:%s' % _lpath)
             if _lsize == _rsize and _result[0] == 1:
                 # need to check modified date
-                #print('<getting-time>:%s' % _lpath)
-                #print('<gettime>:%s' % _lpath)
                 pkg = (_rpath, _lpath, _rsize, _lsize, _vector, _lmtime)
                 c.FileTime(_rpath, Client.IOMode.Callback, (__eventFileTime, pkg))
             else:
                 # first make the remote size match the local size
-                #print('<trun>:%s' % _lpath)
                 c.FileTrun(_rpath, _lsize, Client.IOMode.Discard)
                 if max(_rsize, _lsize) < 1:
                     CallCatch(catches, 'Finished')
@@ -742,7 +659,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                     jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
                 else:
                     # make patch job
-                    #print('<make-patch-job>:%s' % _lpath)
                     jobPatch.append([_rpath, _lpath, _rsize, _lsize, 0])
         jobGetRemoteSize = []
 
@@ -761,22 +677,16 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 
             CallCatch(catches, 'DateReply', _rpath, _lpath)
 
-            #print('<handling-time-reply>:%s' % _lpath)
-            logger.debug('<got-date>:%s' % _lpath)
             if _rmtime < _lmtime:
                 # need to decide if we want to upload or patch
                 if min(_rsize, _lsize) / (max(_rsize, _lsize) + 1) < 0.5:
                     # make upload job
-                    logger.debug('<upload>:%s' % _lpath)
                     jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
                 else:
-                    #print('<make-patch>:%s' % _lpath)
                     # make patch job
                     jobPatch.append([_rpath, _lpath, _rsize, _lsize, 0])
             else:
                 # just drop it since its either up to date or newer
-                logger.debug('<up-to-date>:%s' % _lpath)
-                SendStatusTick(StatusTick.Finish)
                 CallCatch(catches, 'Finished')
                 stat_uptodate = stat_uptodate + 1
                 continue
@@ -801,9 +711,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _fd.seek(_curoff)
             _data = _fd.read(_rem)
             _fd.close()
-            logger.debug('<wrote> path:%s offset:%x size:%x lsize:%x' % (_lpath, _curoff, len(_data), _lsize))
-            SendStatusTick(StatusTick.WriteChunk)
+
             CallCatch(catches, 'Write', _rpath, _lpath, _curoff, _chunksize)
+            
             c.FileWrite(_rpath, _curoff, _data, Client.IOMode.Discard)
             # advance our current offset
             uj[4] = _curoff + _rem
@@ -818,7 +728,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         # remove finished jobs
         ct = time.time()
         for uj in tr:
-            SendStatusTick(StatusTick.Finish)
             CallCatch(catches, 'Finish', uj[0], uj[1])
             # set the modified time on the file to the current
             # time to represent it is up to date
@@ -834,8 +743,6 @@ def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None,
     if rpath is None:
         rpath = b'/'
 
-    output.SetTitle('user', os.getlogin())
-
     sac = bytes(cfg['storage-auth-code'], 'utf8')
     c = Client2(rhost, rport, sac, sformat)
     c.Connect(essl = ssl)
@@ -845,9 +752,6 @@ def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None,
     waitlist = {}
     waitlist[c.DirList(rpath, block = False, discard = False)] = (lpath, rpath)
     
-    output.SetTitle('account', account)
-    output.SetTitle('target', target)
-    
     donecount = 0
     stashfilecount = 0
     stashdircount = 0
@@ -855,16 +759,6 @@ def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None,
     # keep going until nothing is left in the wait list
     while len(waitlist) > 0:
         dt = time.time() - c.bytesoutst
-        
-        outdata = '%.03f' % (c.bytesout / 1024 / 1024 / dt)
-        outcontrol = '%.03f' % ((c.allbytesout - c.bytesout) / 1024 / 1024 / dt)
-        
-        output.SetTitle('DataOutMB', outdata)
-        output.SetTitle('ControlOutMB', outcontrol)
-        output.SetTitle('PendingRequests', len(waitlist))
-        output.SetTitle('FileDoneCount', donecount)
-        output.SetTitle('StashedFiles', stashfilecount)
-        output.SetTitle('StashedDirs', stashdircount)
     
         # process any incoming messages; the 0 means
         # wait 0 seconds which is non-blocking; if
@@ -1003,7 +897,6 @@ def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None,
                 _lpath = subdir[0]
                 _rpath = subdir[1]
                 #print('[requesting]:%s' % _rpath)
-                output.SetTitle('RecentDir', _lpath)
                 toadd.append((c.DirList(_rpath, block = False, discard = False), _lpath, _rpath))
             # <end-of-wait-list-loop> (looping over waiting vectors)
         

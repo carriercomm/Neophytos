@@ -83,7 +83,7 @@ class Catcher:
         and directory.
     '''
     def loadFilterFile(filterFile):
-        fd = open(filterFile, 'r')
+        fd = open(filterFile, 'rb')
         lines = fd.readlines()
         fd.close()
 
@@ -91,28 +91,28 @@ class Catcher:
 
         for line in lines:
             line = line.strip()
-            i = Catcher.findOrFind(line, ' ', '\t')
+            i = Catcher.findOrFind(line, b' ', b'\t')
             if i < 0:
                 continue
             f1 = line[0:i].strip().lower()
             line = line[i:].strip()
-            i = Catcher.findOrFind(line, ' ', '\t')
+            i = Catcher.findOrFind(line, b' ', b'\t')
             if i < 0:
                 continue
             f2 = line[0:i].strip().lower()
             line = line[i:].strip()
             f3 = line
 
-            if f1 == 'file':
+            if f1 == b'file':
                 f1 = FilterOption.MatchFile
-            elif f1 == 'dir':
+            elif f1 == b'dir':
                 f1 = FilterOption.MatchDir
-            elif f1 == 'path':
+            elif f1 == b'path':
                 f1 = FilterOption.MatchPath
             else:
                 f1 = FilterOption.MatchAny
 
-            if f2 == 'accept':
+            if f2 == b'accept':
                 f2 = FilterOption.MatchAccept
             else:
                 f2 = FilterOption.MatchReject
@@ -325,6 +325,17 @@ def main(ct, args):
         setopts['rpath'] = '/'
     if 'lpath' not in setopts:
         print('--lpath=<path> must be specified')
+        return
+
+    # all path operations are done using bytes which allow
+    # us to handle filenames using any characters...
+
+    # convert remote path into bytes
+    setopts['rpath'] = bytes(setopts['rpath'], 'utf8')
+    # convert local path into bytes
+    setopts['lpath'] = bytes(setopts['lpath'], 'utf8')        
+
+
     if 'no-ssl' not in setopts:
         setopts['ssl'] = True
     else:

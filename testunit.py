@@ -76,18 +76,42 @@ def makeRandomString(sz):
         out.append(chr(ord('a') + random.randint(0, 26)))
     return ''.join(out)
 
-def makeRandomNodes(path, total = 0):
+def makeRandomNodes(path, maxSpace = 1024 * 1024 * 1024 * 5, maxFiles = 1024 * 1024, aSpaceUsed = 0, aTotalFiles = 0):
     dc = random.randint(0, 255)
     nc = random.randint(0, 255)
+
+    # soft cap things.. else.. they could get out of control
+    if aSpaceUsed > maxSpace:
+        return 0, 0
+    if aTotalFiles > maxFiles:
+        return 0, 0
+
+    total = 0
+    spaceUsed = 0
+
+    # make random directories
     for x in range(0, dc):
         node = makeRandomString(random.randint(0, 32))
         os.makedirs('%s/%s' % (path, node))
-        total = makeRandomNodes('%s/%s' % (path, node), total)
+        _total, _spaceUsed = makeRandomNodes('%s/%s' % (path, node), maxSpace, maxFiles, spaceUsed, total)
+        total += _total
+        spaceUsed += _spaceUsed
 
+    # make random files
     for x in range(0, nc):
-        pass
+        # get random name of random length
+        fname = makeRando mString(random.randint(0, 32))
+        # get random data of random length
+        fsz = random.randint(0, 1024 * 1024 * 64)
+        spaceUsed += fsz
+        data = makeRandomString(fsz)
+        # write data into file
+        fd = open('%s/%s' % (path, fname), 'w')
+        fd.write(data)
+        fd.close()
+        print('made:%s/%s' % (path, fname))
 
-    return total + dc + nc
+    return dc + nc, spaceUsed
 
 def unitTestBackupOps():
     for run in range(0, 100):
@@ -96,6 +120,8 @@ def unitTestBackupOps():
         # create temp directorys and files
         os.makedirs('./tmp/local')
         os.makedirs('./tmp/remote')
+
+        makeRandomNodes('./tmp/local')
 
         # issue a push operation
         # verify directories are the same and file contents are equal

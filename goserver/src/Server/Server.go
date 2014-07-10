@@ -302,7 +302,15 @@ func HashKmc(data []byte, max int) ([]byte) {
     return data[0:sz]
 }
 
-// process a message by executing what it commands under the ServerClient context
+/*
+    This will process a message by executing what it commands 
+    under the ServerClient context. 
+
+    DEVELOPMENT: It will panic, but this is only to aid in debugging. In 
+                 production version all panics will be removed and instead
+                 it will be ensured that a failure code is sent to the client
+                 and we can let the client do what ever it likes
+*/
 func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) {
     var cmd            byte
 
@@ -351,9 +359,12 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 
     switch (cmd) {
         case CmdClientDirList:
-            path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg))
+            metaSize := Read16MSB(msg, 0)
+            path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[8:]))
             //fmt.Printf("DirList:%s\n", path)
             nodes, err := ioutil.ReadDir(path)
+
+            metaBuf := make([]byte, metaSize)
 
             self.MsgStart(vector)
             self.MsgWrite8(CmdServerDirList)
@@ -364,7 +375,10 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 return nil
             }
 
+            // write success code
             self.MsgWrite8(1)
+            // write meta size we are using
+            self.MsgWrite16MSB(metaSize)
             for _, n := range nodes {
                 // write length of name
                 self.MsgWrite16MSB(uint16(len(n.Name())))
@@ -373,6 +387,26 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                     self.MsgWrite8(1)
                 } else {
                     self.MsgWrite8(0)
+                }
+                // consists of one byte repsenting succes or error
+                // then the remaining bytes of what is considered
+                // metadata
+                if metaSize > 0 {
+                    fd, err := os.OpenFile(n.Name(), os.O_RDWR, 0)
+                    if err == nil {
+                        _, err := fd.Read(metaBuf)
+                        if err == nil {
+                            self.MsgWrite8(1)
+                            self.MsgWrite(metaBuf)
+                        } else {
+                            self.MsgWrite8(0)
+                            self.MsgWrite(metaBuf)
+                        }
+                        fd.Close()
+                    } else {
+                        self.MsgWrite8(0)
+                        self.MsgWrite(metaBuf)
+                    }
                 }
                 // write name
                 //self.MsgWrite([]byte(n.Name()))
@@ -620,6 +654,13 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
         case CmdClientFileHash:
             off := Read64MSB(msg, 0)
             rsz := Read64MSB(msg, 8)
+            if rsz > 1024 * 1024 * 128 {
+                self.MsgStart(vector)
+                self.MsgWrite8(CmdServerFileHash)
+                self.MsgWrite8(0)
+                self.MsgEnd()
+                return nil
+            }
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[16:]))
             fo, err := os.OpenFile(path, os.O_RDWR, 0)
             defer fo.Close()
@@ -734,6 +775,7 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
         count, err = conn.Read(buf[btop:])
         if count == 0 {
             // connection is dropped (just exit)
+            fmt.Printf("btop:%x cap(buf):%x len(buf):%x\n", btop, cap(buf), len(buf))
             fmt.Printf("client connection dropped (%s)\n", err)
             conn.Close()
             return

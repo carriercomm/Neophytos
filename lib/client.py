@@ -33,6 +33,9 @@ class ConnectionDeadException(Exception):
     
 class BadLoginException(Exception):
     pass
+
+class MaxMessageSizeException(Exception):
+    pass
         
 class Client:
     FileHeaderReserve        = 32
@@ -43,7 +46,7 @@ class Client:
         Callback     = 3        # Execute callback on arrival.
         Discard        = 4        # Async, but do not keep results.
         
-    def __init__(self, rhost, rport, aid, sformat):
+    def __init__(self, rhost, rport, aid, metasize = 0):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.keepresult = {}
         self.callback = {}
@@ -52,8 +55,8 @@ class Client:
         self.rport = rport
         self.aid = aid
         self.sockreadgate = threading.Condition()
-        self.socklockread = threading.Lock()
-        self.socklockwrite = threading.Lock()
+        self.socklockread = threading.RLock()
+        self.socklockwrite = threading.RLock()
         self.bz2compression = 0
         self.workerfailure = False
         self.workeralivecount = 0
@@ -62,8 +65,9 @@ class Client:
         self.workpool = None
         self.maxmsgsz = 1024 * 1024 * 4
 
-        # enable or disable stash/revision format
-        self.revformat = sformat
+        if metasize is None:
+            metasize = 0        
+        self.metasize = metasize
 
         # determine if we are running in 32-bit or 64-bit mode
         is64 = sys.maxsize > 2 ** 32
@@ -125,9 +129,6 @@ class Client:
         self.allbytesout = 0                # control and data out
         self.bytesoutst = time.time()
     
-    def SetRevFormat(self, b):
-        self.revformat = b
-
     def Shutdown(self):
         self.sock.close()
     
@@ -293,7 +294,7 @@ class Client:
             return False
             
         if type == ServerType.DirList:
-            result = struct.unpack_from('>B', data)[0]
+            result, metasize = struct.unpack_from('>BH', data)
             
             # path could not be accessed
             if result == 0:
@@ -304,26 +305,18 @@ class Client:
             list = []
             while len(data) > 0:
                 # parse header
-                fnamesz, ftype = struct.unpack_from('>HB', data)
-                # grab out name
-                fname = data[3: 3 + fnamesz]
-                # pull of revision if exists
-                if fname.find('.') > -1:
-                    frev = fname[0:fname.find('.')]
-                    # try to convert into integer if possible
-                    try:
-                        frev = int(frev)
-                    except ValueError:
-                        pass
-                    fname = fname[fname.find('.') + 1:]
+                fnamesz, ftype, metaValid = struct.unpack_from('>HBB', data)
+                # grab meta data
+                if metaValid:
+                    metadata = data[4:4 + metasize]
                 else:
-                    frev = 0
-                # decode it back to what we expect
-                fname = self.FSDecodeBytes(fname)
-                # chop off part we just read
-                data = data[3 + fnamesz:]
+                    metadata = None
+                # grab out name
+                fname = data[4 + metasize: 4 + metasize + fnamesz]
+                # see if we are using stash format
+                data = data[4 + metasize + fnamesz:]
                 # build list
-                list.append((fname, ftype, frev))
+                list.append((fname, ftype, fmetadata))
             # return list
             return list
         if type == ServerType.FileTime:
@@ -370,11 +363,11 @@ class Client:
         raise UnknownMessageTypeException('%s' % type)
     
     '''
-        A wrapper around the socket which is used to read incoming into
-        our application level buffer. It will only return data if it is
-        of the specified size, otherwise it returns None.
+        This just moves data from the network level buffers
+        into our application buffers. It will eventually exhaust
+        memory if it is never processed.
     '''
-    def recv(self, sz):
+    def __recv(self):
         data = self.data
 
         try:
@@ -385,6 +378,15 @@ class Client:
         except:
             # the socket was not ready to be read
             pass
+    '''
+        A wrapper around the socket which is used to read incoming into
+        our application level buffer. It will only return data if it is
+        of the specified size, otherwise it returns None.
+    '''
+    def recv(self, sz):
+        data = self.data
+
+        self.__recv()
 
         # only return with data if its of the specified length
         if data.tell() >= sz:
@@ -473,8 +475,10 @@ class Client:
                 self.callback[vector] = callback
             if mode == Client.IOMode.Async:
                 self.keepresult[vector] = None
-         
-            logger.debugNEOL('S')   
+
+            if len(data) + 4 + 8 > self.maxmsgsz:
+                raise MaxMessageSizeException('exceeded by %s bytes' % ((len(data) + 4 + 8) - self.maxmsgsz))
+
             self.send(struct.pack('>IQ', len(data), vector))
             self.send(data)
             
@@ -543,6 +547,8 @@ class Client:
             data = self.datatosend.pop(0)
 
             logger.debug('data-pop:%s' % len(data))
+
+            self.__recv()
             
             # try to send it
             totalsent = 0
@@ -580,16 +586,25 @@ class Client:
         return self.allbytesout / (ct - self.bytesoutst)
 
     '''
-        The client can use any format of a path, but in order to support
-        file stashing and any characters in the path we convert it into
-        a stashing format and encode the parts. Therefore it makes it possible
-        to use any character for a directory name or file name. This function
-        however reserves the character `/` and `\x00` as special and neither
-        are usable as an or part of a file or directory name.
-        
-        You can freely reimplement this method as long as the server supports
-        the characters you use. The output of the base 64 encoded shall always
-        be supported by the server for directory and file names.
+        The server is expected to support a file name using any character
+        except '/' and '\x00'. It is expected to support at least 255
+        byte length filename. This function mainly just cleans the path up
+        removing what the server would remove but helping decrease processing
+        on the server side.
+
+        The history of this function was it encoded the file name to in order
+        to store some metadata in the filename. This presented a problem because
+        on ext4 we are limited to a filename length of 255 bytes. This makes it
+        impossible to cleanly handle some files on a users machine that may be
+        255 bytes or even close. So this function should be named sanitizePath
+        instead. 
+
+        The metadata is now supported using the metasize argument of this class,
+        and stores metadata at the front of each file. This room is automatically
+        reserved by the functions below. You can pass a negative offset however
+        to force the reading of metadata. The DirList function also supports reading
+        the metadata for each file which makes it faster than sending requests for 
+        each file to read the metadata.
     '''
     def GetServerPathForm(self, path):
         # 1. prevent security hole (helps reduce server CPU load if these exist)
@@ -598,92 +613,48 @@ class Client:
         # remove duplicate path separators
         while path.find(b'//') > -1:
             path = path.replace(b'//', b'/')
-        # if not using revision format then dont 
-        if not self.revformat:
-            return path
-        # 2. convert entries into stash format
-        parts = path.split(b'/')
-        _parts = []
-        for part in parts:
-            if len(part) == 0:
-                continue
-            # okay, if it uses a dot we encode it and any other
-            # special character except null characters which we
-            # will replace next after we encode this
-            part = self.FSEncodeBytes(part)
-            if part.find(b'\x00') < 0:
-                # convert into stash format
-                part = b'0.' + part
-            else:
-                # replace it with a dot
-                part = part.replace(b'\x00', b'.')
-            _parts.append(part)
-        path = b'/'.join(_parts)
+        # remove leading slash if present
+        if path[0] == b'/':
+            path = path[1:]
+        # check the type of path to see if they specified
+        # an additional revision parameter, and if so check
+        # if it is zero (normal) - if not place it into a
+        # revision path
+        ptype = type(path)
+        if ptype is tuple or ptype is list:
+            rev = int(path[1])
+            path = path[0]
+            if rev != 0:
+                # check if path contains a base directory
+                if path.find(b'/') > -1:
+                    # grab off the base (hash to be directory)
+                    base = path[0:path.find(b'/')]
+                    # assign path with out the base
+                    path = path[path.find(b'/'):]
+                    # create the base using special revision format
+                    base = b'\xff'.join(b'0', base)
+                    # create the new path
+                    path = b'/'.join((base, path))
+                else:
+                    # no base directory so we have to create one
+                    base = b'\xff\xff'
+                    path = b'/'.join((base, path))
         return path
-        
-    def FSEncodeBytes(self, s):
-        out = []
-        
-        valids = (
-            (ord('a'), ord('z')),
-            (ord('A'), ord('Z')),
-            (ord('0'), ord('9')),
-        )
-        
-        dashord = ord('-')
-        uscoreord = ord('_')
-        
-        for c in s:
-            was = False
-            for valid in valids:
-                if c >= valid[0] and c <= valid[1]:
-                    was = True
-                    break
-            if was or c == dashord or c == uscoreord or c == 0:
-                out.append(c)
-                continue
-            # encode byte value as %XXX where XXX is decimal value since
-            # i think it is faster to decode the decimal value than a hex
-            # value even though the hex will look nicer
-            out.append(ord('%'))
-            v = int(c / 100)
-            out.append(ord('0') + v)
-            c = c - (v * 100)
-            v = int(c / 10)
-            out.append(ord('0') + v)
-            c = c - (v * 10)
-            out.append(ord('0') + c)
-        
-        return bytes(out)
-                            
-    def FSDecodeBytes(self, s):
-        out = []
-        
-        x = 0
-        po = ord('%')
-        while x < len(s):
-            c = s[x]
-            if c != po:
-                out.append(c)
-                x = x + 1
-                continue
-            zo = ord('0')
-            v = (s[x + 1] - zo) * 100 + (s[x + 2] - zo) * 10 + (s[x + 3] - zo) 
-            out.append(v)
-            x = x + 4
-        
-        return bytes(out)
-        
-    def DirList(self, dir, mode, callback = None):
-        dir = self.GetServerPathForm(dir)
-        return self.WriteMessage(struct.pack('>B', ClientType.DirList) + dir, mode, callback)
+    
+    def DirList(self, xdir, mode, callback = None, metasize = None):
+        xdir = self.GetServerPathForm(xdir)
+        if metasize is None:
+            metasize = self.metasize
+        return self.WriteMessage(struct.pack('>BH', ClientType.DirList, metasize) + xdir, mode, callback)
     def FileRead(self, fid, offset, length, mode, callback = None):
         _fid = self.GetServerPathForm(fid)
+        # compensate for metadata length
+        offset += self.metasize
         return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + _fid, mode, callback)
     def FileWrite(self, fid, offset, data, mode, callback = None):
-        #if self.bz2compression > 0:
-        #    data = zlib.compress(data, self.bz2compression)
         fid = self.GetServerPathForm(fid)
+        # compensate for metadata length
+        offset += self.metasize
         return self.WriteMessage(struct.pack('>BQHB', ClientType.FileWrite, offset, len(fid), self.bz2compression) + fid + data, mode, callback)
     def FileSetTime(self, fid, atime, mtime, mode, callback = None):
         fid = self.GetServerPathForm(fid)
@@ -693,6 +664,8 @@ class Client:
         return self.WriteMessage(struct.pack('>B', ClientType.FileSize) + fid, mode, callback)
     def FileTrun(self, fid, newsize, mode, callback = None):
         fid = self.GetServerPathForm(fid)
+        # compensate for metadata length
+        newsize += self.metasize
         return self.WriteMessage(struct.pack('>BQ', ClientType.FileTrun, newsize) + fid, mode, callback)
     def Echo(self, mode, callback = None):
         return self.WriteMessage(struct.pack('>B', ClientType.Echo), mode, callback)
@@ -745,22 +718,29 @@ class Client:
         return bytes(data[0:sz])
 
 class Client2(Client):
-    def __init__(self, rhost, rport, aid, sformat):
-        Client.__init__(self, rhost, rport, aid, sformat)
-        self.maxmsg = 1024 * 1024 * 4
+    def __init__(self, rhost, rport, aid, sformat, metasize = None):
+        Client.__init__(self, rhost, rport, aid, metasize = metasize)
 
     '''
         We re-implement the FileWrite to enforce the maximum
         message size.
     '''
     def FileWrite(self, fid, offset, data, mode, callback = None):
-        msgmax = self.maxmsgsz
+        # BQHB (compensate for added file write header size)        1+8+2+1
+        # IQ   (compensate for added message header size)           4+8
+        msgmax = self.maxmsgsz - (1 + 8 + 2 + 1 + 4 + 8 + 1)
+
+        _fid = self.GetServerPathForm(fid)
+
+        # compensate for filename length after transformation
+        msgmax -= len(_fid)
 
         x = 0
         while x * msgmax < len(data):
             _max = len(data) - (x * msgmax)
             _max = min(_max, msgmax)
-            super().FileWrite(fid, offset + x * msgmax, data[x * msgmax:x * msgmax + _max], mode, callback = callback)
+            _data = data[x * msgmax:x * msgmax + _max]
+            super().FileWrite(fid, offset + x * msgmax, _data, mode, callback = callback)
             x = x + 1
         return 
 
