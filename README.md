@@ -169,3 +169,124 @@ To start the server you will need to issue the following commands for Golang.
 
 Where `GOPATH` specifies the directory `goserver` included when you download the project repository. You can
 also build an executable using `go`, but I will leave that as an excercise for you for now!
+
+Technical Limitations Of Client And Server
+=====
+_When I refer to stashing I am refering to the ability to create an one or more alternative data
+streams each with meta-data._
+
+_When I refer to meta-data I am refering to the ability to tag a file with an variable sized byte
+header._
+
+If you use the byte 0xff as the first byte
+in a directory name you will be unable to use the stashing features of the client. 
+The stashing is implemented completely by the client. The server is unaware of stashing. You can
+however modify the client and circumvent this limitation. I implemented it this way to balance between
+performance, or so I intended to do so. It is possible to make this limitation only apply to the very
+first directory of a path but it requires a little work which I have not done quite yet.
+
+The server at this time is expected to support a filename of at least a length of 255 bytes. 
+If you use UTF-16 that means you can have a filename length of 128 bytes. If you use UTF-8 it can vary. 
+This is the maximum supported filename length of the EXT4 file system on linux. The server does not 
+enforce this limitation, but instead the OS and file system that the server is running on and 
+manipulating files on does. If your OS has no limitation then it is solely dependant on the 
+file system you are using such as NTFS, NFS, EXT, and any other. The server places no maximum
+length on filenames or paths but it does place a limitation on the maximum message size at 
+around 4MB currently. This means if your filename is 3MB in length then you only have 1MB left 
+for data and that might slighlty impact uploading speed.
+
+The client using stashing expects the very first directory to be 246 bytes or less in length. The
+larger the stash identifier (no matter numeric or byte string) the more is subtracted from the
+255 limit (unless your OS and FS supports longer directory names). The standard client currently
+uses 64-bit big endian integers to represent the revision identifier which is unix time in seconds.
+
+Let us talk about the first directory name as it means something different that what would
+normaly be expected. When you push files you can specify the `--rpath`. This means just
+what you would imagine. It is a prefix to the remote path. So for example if you use
+`--lpath=/home/dave/documents` and `/home/dave/documents` looks like this:
+
+    /home/dave/documents
+        /workstuff/...
+        /homestuff/...
+        /manuals/...
+        /armx86x64/..
+        /companyreport.pdf
+
+If you use `--rpath=dave-documents` then the client will do this:
+
+    /dave-documents/workstuff/...
+    /dave-documents/homestuff/...
+    /dave-documents/manuals/...
+    /dave-documents/arm86x64/...
+    /dave-documents/companyreport.pdf
+
+This is very useful as it allows you to not only prefix a path, but it can also be used
+to only pull from certain remote paths. The `--rpath` serves as a target identifier and
+a remote path prefix. You can treat `--rpath` like a path, group name, target name, or
+whatever you like.
+
+The client implements stashing (alternative data streams) by prefixing something this to the path once
+the `--rpath` prefix is added. This something is the byte `0xff`. It only does it for the very first
+directory. The client also uses a 64-bit big-endian unix time in seconds after the `0xff`. So if you
+stashed a file like `/dave-documents/armx86x64/intelmanual.pdf` it will be turned into something
+like this `/\xff\x34\xe3\x23\x87dave-documents/armx86x64/intelmanual.pdf`. As you can see now the
+exact same file is stored but under a prefix.
+
+So you say that seems easy right? Well, if you dont use `--rpath` you do not get a prefix so instead
+the remote server directory would look like this:
+
+        /workstuff/...
+        /homestuff/...
+        /manuals/...
+        /armx86x64/..
+        /companyreport.pdf
+
+Which is not the greatest idea in the world, but it will work. But, how will it stash a file? Well,
+a stashed file would look like this:
+
+    \xff\x34\xe3\x23\xff\/companyreport.pdf
+    \xff\x34\xe3\x24workstuff/...
+    \xff\x34\xe3\x24homestuff/...
+    \xff\x34\xe3\x24manuals/...
+    \xff\x34\xe3\x24armx86x64/...
+
+It treated the base directories like you would expect, but for the base files it prefixed them
+with the directory name `\xff`. 
+
+The major point here is that it is a great idea to use `--rpath` even if you only do things like
+`--rpath=dave-documents`, `--rpath=companypc-0392`, or `--rpath=serverpc-9382`. However, in order
+to keep flexibility in place you can if you so desire to omit any `--rpath` but you will actually
+limit future flexibility. There are times with an omitted `--rpath` can be quite useful such as
+downloading/pulling the entire repository of files or other things (and along with filters).
+
+Let us talk a moment about meta data and how it works. The meta data is really just data except
+it describes one or more things about a file. The meta data support is partially implemented by
+the server but only for the dir list command. Other than the directory list command the server
+is completely unaware of meta data even existing. It sees each file as a sequence of bytes that
+can be read and writen to. Support for meta data for the dir list command was added to increase
+performance. You can implement meta data support with out using the dir list command. When the
+client issues a dir list command it tells the server what directory to list and it tells it how
+many bytes to read from the beginning of each file. This is as far as the server is concerned, and
+really it can be used for non meta data purposes. How this is used to up to the client software.
+The standard client uses it as meta data. At this time a directory has no meta data, but maybe
+in the future it may. This support is entirely up to the client.
+
+One example of meta-data is support for compression and client side encryption. Your communications
+with the server is protected by SSL/TLS and how ever that is configured. However, the client may
+support the ability to encrypt files locally outside of SSL/TLS in order to protect their integrity
+on the server. A good example is to prevent a system administrator from prying into your files
+which might contain sensitive data. If you encrypt the files with the client then they can be stored
+encrypted on the server. So what does this have to do with meta data? Well, meta data can help by
+allowing the client to tag this file as encrypted and even the algorithm. This can make decrypting
+the files an automated process when they are downloaded/pulled from the server. The client can inspect
+the meta data bytes and determine if the file is encrypted (or compressed) and reverse this process
+is supplied with the proper password.
+
+Also worth noting is that it is likely a good idea for your client to by default support at least
+one byte of meta data in order to signify that further meta data exists. The standard client uses
+the 7th bit of the first byte of each file to signify if valid meta data exists. Then it uses the
+next 6th through 0th bits to specify the type of meta data. The standard client uses b0000000 which
+is 7 zero bits for version one. _At this time this has not matured and the number of bytes following
+may changes. _I think I have it set to 128 bytes of meta-data per file in the latest commit._
+
+_So meta data is really helpful for the client where client means both software and user._
