@@ -391,7 +391,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 // consists of one byte repsenting succes or error
                 // then the remaining bytes of what is considered
                 // metadata
-                if metaSize > 0 {
+                if !n.IsDir() && metaSize > 0 {
                     fd, err := os.OpenFile(n.Name(), os.O_RDWR, 0)
                     if err == nil {
                         _, err := fd.Read(metaBuf)
@@ -404,6 +404,15 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                         }
                         fd.Close()
                     } else {
+                        self.MsgWrite8(0)
+                        self.MsgWrite(metaBuf)
+                    }
+                } else {
+                    // a directory has no meta-data so just
+                    // set it as invalid but write some meta
+                    // data just to fill the space and keep
+                    // the protocol simple
+                    if metaSize > 0 {
                         self.MsgWrite8(0)
                         self.MsgWrite(metaBuf)
                     }

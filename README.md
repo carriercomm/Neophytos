@@ -195,7 +195,7 @@ length on filenames or paths but it does place a limitation on the maximum messa
 around 4MB currently. This means if your filename is 3MB in length then you only have 1MB left 
 for data and that might slighlty impact uploading speed.
 
-The client using stashing expects the very first directory to be 246 bytes or less in length. The
+The client using stashing expects the very first directory to be 253 bytes or less in length at most. The
 larger the stash identifier (no matter numeric or byte string) the more is subtracted from the
 255 limit (unless your OS and FS supports longer directory names). The standard client currently
 uses 64-bit big endian integers to represent the revision identifier which is unix time in seconds.
@@ -244,11 +244,11 @@ the remote server directory would look like this:
 Which is not the greatest idea in the world, but it will work. But, how will it stash a file? Well,
 a stashed file would look like this:
 
-    \xff\x34\xe3\x23\xff\/companyreport.pdf
-    \xff\x34\xe3\x24workstuff/...
-    \xff\x34\xe3\x24homestuff/...
-    \xff\x34\xe3\x24manuals/...
-    \xff\x34\xe3\x24armx86x64/...
+    \x34\xe3\x23\x32\xff\xff/companyreport.pdf
+    \x34\xe3\x24\x32\xffworkstuff/...
+    \x34\xe3\x24\x32\xffhomestuff/...
+    \x34\xe3\x24\x32\xffmanuals/...
+    \x34\xe3\x24\x32\xffarmx86x64/...
 
 It treated the base directories like you would expect, but for the base files it prefixed them
 with the directory name `\xff`. 
@@ -290,3 +290,27 @@ is 7 zero bits for version one. _At this time this has not matured and the numbe
 may changes. _I think I have it set to 128 bytes of meta-data per file in the latest commit._
 
 _So meta data is really helpful for the client where client means both software and user._
+
+Client Side Isolated Encryption
+=====
+I call it client side isolated because the only place encryption or decryption ever takes place is on the client. I hope to have a decent plugin system in place to provide encryption. The standard client also supports mixing of encryption using filters. You can specify encryption using one of these two ways or both where one will override the other.
+
+The first way is using the command line option `--def-crypt=<algorithm>,<parameters>`. This causes the standard client to look for the encryption plugin specified by algorithm. Then pass the parameters to it that are specified and encrypt any file using this.
+
+The second way can be used in conjunction with the first way, or used alone. This way uses a filter to select the files to apply the specified encryption on. You can use this to apply more expensive encryption to more sensitive data, and at the same time apply lesser encryption or no encryption at all the some files. The filter works the same way as the filter inclusion filter. If a file match the filter that encryption with its optionions is applied to the file. An example file looks like this:
+
+    #scrypt,mypassword,0,0.125,5.0
+    file        accept      .*\.doc
+    file        accept      .*\.jpg
+    file        accept      .*\.png
+    file        accept      .*\.bmp
+    file        accept      .*\.avi
+    file        accept      .*\.mov
+    file        accept      .*\.mpg
+    #scrypt,file:/home/dave/script.password,0,0.5,30.0
+    path        accept      /home/dave/work
+
+The scrypt plugin handles all the options, and in the example above it supports providing
+the password directly in the option or you can provide a file that contains the password. 
+The password can be any sequence of bytes except `,` if provided in the filter file or it
+can be any sequence of bytes if provided as a file

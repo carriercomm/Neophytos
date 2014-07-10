@@ -288,7 +288,7 @@ def main(ct, args):
         'lpath', 'rpath', 'password', 'push', 'pull', 'sync-deleted-to-server',
         'host', 'port', 'cipher', 'filter-file', 'make-sample-filter-file',
         'password', 'authcode', 'auth-code', 'no-ssl', 'debug', 'no-sformat',
-        'sync-deleted-to-local'
+        'sync-deleted-to-local', '--crypt-key-file'
     )
 
     if len(args) == 0 or '--help' in args or '/?' in args:

@@ -38,15 +38,13 @@ class MaxMessageSizeException(Exception):
     pass
         
 class Client:
-    FileHeaderReserve        = 32
-
     class IOMode:
-        Block         = 1        # Wait for the results.
-        Async         = 2        # Return, and will check for results.
-        Callback     = 3        # Execute callback on arrival.
+        Block          = 1        # Wait for the results.
+        Async          = 2        # Return, and will check for results.
+        Callback       = 3        # Execute callback on arrival.
         Discard        = 4        # Async, but do not keep results.
         
-    def __init__(self, rhost, rport, aid, metasize = 0):
+    def __init__(self, rhost, rport, aid, metasize = 128):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.keepresult = {}
         self.callback = {}
@@ -54,19 +52,13 @@ class Client:
         self.rhost = rhost
         self.rport = rport
         self.aid = aid
-        self.sockreadgate = threading.Condition()
         self.socklockread = threading.RLock()
         self.socklockwrite = threading.RLock()
-        self.bz2compression = 0
-        self.workerfailure = False
-        self.workeralivecount = 0
-        self.lasttitleupdated = 0
-        self.workerpool = None
-        self.workpool = None
+        self.bz2compression = 0                 # not really used anymore
         self.maxmsgsz = 1024 * 1024 * 4
 
         if metasize is None:
-            metasize = 0        
+            metasize = 128
         self.metasize = metasize
 
         # determine if we are running in 32-bit or 64-bit mode
@@ -81,9 +73,9 @@ class Client:
             self.hentry = None
             # standard linux (x86 and x86_64)
             if is64:
-                libpath = './lib/hasher/hasher64.so'
+                libpath = './lib/native/native64.so'
             else:
-                libpath = './lib/hasher/hasher32.so'
+                libpath = './lib/native/native32.so'
 
             if os.path.exists(libpath):
                 try:
@@ -98,9 +90,9 @@ class Client:
         elif sys.platform.find('win') > -1:
             # windows nt (x86 and x86_64)
             if is64:
-                libpath = './lib/hasher/hasher64.dll'
+                libpath = './lib/native/native64.dll'
             else:
-                libpath = './lib/hasher/hasher32.dll'
+                libpath = './lib/native/native32.dll'
 
             if os.path.exists(libpath):
                 try:
@@ -113,7 +105,7 @@ class Client:
             else:
                 logger.warn('WARNING: MISSING DLL AS "%s" (REVERTING TO PURE PYTHON)' % libpath)
         else:
-            logger.warn('WARNING: NATIVE HASH LIBRARY NOT SUPPORTED (EXPECT SLOW HASHING)')
+            logger.warn('WARNING: NATIVE LIBRARY NOT SUPPORTED')
         
         self.lastpushedlfile = ''
         
@@ -280,9 +272,9 @@ class Client:
         type = data[0]
         data = data[1:]
 
-        # set compression level (can be sent by server at any time
-        # and client does not *have* to respect it, but the server
-        # could kick the client off if it did not)
+        # since SSL supports compression i might turn this
+        # into something else, maybe even controlling the
+        # level of SSL compression... not sure
         if type == ServerType.SetCompressionLevel:
             self.bz2compression = data[0]
             return
@@ -315,8 +307,16 @@ class Client:
                 fname = data[4 + metasize: 4 + metasize + fnamesz]
                 # see if we are using stash format
                 data = data[4 + metasize + fnamesz:]
+                # break out revision if it exists
+                if ftype == 1 and fname.find(b'\xff') > -1:
+                    revcode = fname[0:fname.find(b'\xff')]
+                    fname = fname[fname.find(b'\xff'):]
+                    if fname[0] == b'\xff':
+                        fname is None
+                else:
+                    revcode = None
                 # build list
-                list.append((fname, ftype, fmetadata))
+                list.append((fname, ftype, fmetadata, revcode))
             # return list
             return list
         if type == ServerType.FileTime:

@@ -75,13 +75,8 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         for node in result:
             # skip any other revision
             meta = node[2]
-            # if meta data make sure it is enough bytes
-            # of it, and that it is the revision 0
-            if meta is not None and len(meta) > 3:
-                rev = struct.unpack_from('>I', meta)
-                # we only want to deal with revision 0
-                if rev != 0:
-                    continue
+            # check that its not a special revision or system folder
+            if node[0].find(b'\xff)
             name = node[0]
             name = rpath + b'/' + name
             nodes.append((name, node[1]))

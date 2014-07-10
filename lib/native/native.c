@@ -1,9 +1,20 @@
-//#include <stdio.h>
+#include <stdio.h>
+#include <string.h>
 
-// windows: __declspec(dllexport) _stdcall
+#include "aes.h"
+
+/* windows: __declspec(dllexport) _stdcall */
 
 typedef unsigned char       uint8;
 typedef unsigned int        uint32;
+
+void _memset(void *dst, uint8 v, uint32 sz) {
+    uint32      x;
+
+    for (x = 0; x < sz; ++x) {
+        ((uint8*)dst)[x] = v;
+    }
+}
 
 int hash(void *_data, int length, int max) {
     uint32      seed;
@@ -37,19 +48,5 @@ int hash(void *_data, int length, int max) {
     return sz;
 }
 
-/*
 int main(int argc, char *argv[]) {
-    uint8    data[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-    int      sz;
-    int      x;
-
-    sz = hash(&data[0], sizeof(data), 4);
-
-    for (x = 0; x < sz; ++x) {
-        printf("%d ", data[x]);
-    }
-    printf("\n");
-
-    return 0;
 }
-*/
