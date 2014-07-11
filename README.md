@@ -6,7 +6,9 @@ Dependancies
 
 The dependancies are very minimal and this is intentional. I try to use only what
 is included in the Python standard library. Also, for the server I try to only use
-what is the Golang standard library.
+what is the Golang standard library. If try to implement everything in pure Python,
+but when performance suffers I will include support for native code while keeping
+the pure Python implementation around if possible.
 
 * server requires Golang to build or compile with - i am looking at providing prebuilt binaries
 * client requires Python 3.x (prefer latest version especially on Windows)
@@ -18,6 +20,9 @@ of design decisions to make regarding either one.
 
 I prefer to use Python as it provides rapid application development and is easy to use with
 an assortment of libraries, but when it comes to performance it is not always so great.
+
+I use PyQt4 for the GUI because it is a stable, modern, mature, cross-platform, simple, and
+powerful.
 
 Current State
 =====
@@ -35,7 +40,7 @@ The [X] means it has been implemented, while [ ] means still in development.
 * [ ] files can be encrypted client side (in memory) before being sent (sensitive data protected on server)
 * [X] client command line interface (95% complete; _very much usable_)
 * [ ] filter system (disabled at the moment but 90% of the support is there)
-* [ ] GUI frontend
+* [ ] broken; GUI frontend (client changes have broken the once partially working GUI)
 * [X] delta uploading (patching) - only changed parts of file are uploaded
 
 Client Tutorial
@@ -309,8 +314,16 @@ The second way can be used in conjunction with the first way, or used alone. Thi
     file        accept      .*\.mpg
     #scrypt,file:/home/dave/script.password,0,0.5,30.0
     path        accept      /home/dave/work
+    #xor,file:/home/dave/xordata
+    path        accept      /home/dave/pictures
 
 The scrypt plugin handles all the options, and in the example above it supports providing
 the password directly in the option or you can provide a file that contains the password. 
 The password can be any sequence of bytes except `,` if provided in the filter file or it
-can be any sequence of bytes if provided as a file
+can be any sequence of bytes if provided as a file.
+
+To review - when using client side encryption the server never sees the encryption key. The
+entire process happens on the client. The files are stored in their encrypted state. The encryption
+filter includes one or more filters that select the files to apply the specified encryption on. By
+being able to apply different encryption you can use slower but highly secure algorithms on
+sensitive data and faster but less secure algorithms on files that are not very sensitive.
