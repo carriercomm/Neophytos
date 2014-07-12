@@ -685,7 +685,6 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             // TODO: might want to look at reusing the buffer
             //       to prevent loading the GC with garbage 
             //       that it will have to collect
-
             buf := make([]byte, rsz)
             fo.Seek(int64(off), 0)
             cnt, err := fo.Read(buf)

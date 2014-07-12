@@ -66,6 +66,8 @@ Some of the options are:
     --no-ssl                                          uses non-SSL socket (could be buggy)
     --debug                                           enables debug output
     --no-sformat                                      disables using stash format on server
+    --efilter-file                                    encryption filter file path
+    --def-crypt                                       default encryption/decryption to use
 
 For example to push all files in a directory to the server under the name `peach`.
 
@@ -333,7 +335,12 @@ you have given the attacker that information. Indeed it may help you remember or
 how to decrypt the file but it comes at a potential cost of security. I am not a cryptography
 expert so it is hard for me to say just how this could turn out, but you should be aware of
 how the encrypted file is tagged. This system makes your encryption filter very important
-as it is the link to decrypting your files once encrypted unless you can rebuild it.
+as it is the link to decrypting your files once3 encrypted unless you can rebuild it.
+
+Also of important is the order of the filters in the file. If the first filter tagged with `apple`
+accepts a file then it exits and `apple` is applied. The `grape` nor `square` tagged encryption
+filters will not run. So the order in which you place the filters is very important in order to ensure
+that the correct encryption is applied to the file.
 
 To review - when using client side encryption the server never sees the encryption key. The
 entire process happens on the client. The files are stored in their encrypted state. The encryption

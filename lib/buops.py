@@ -598,7 +598,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 
                 if efilter is not None:
                     # get the encryption information we need
-                    einfo = efilter.check(_lpath, _lpath[_lpath.rfind('/') + 1:], False)
+                    einfo = efilter.check(_lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
 
                     # build and name some important stuff for readability
                     etag = einfo[0]
@@ -610,12 +610,14 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                     # this because i think it makes it a little easier to optimize
                     # the instance
                     if pluguid not in eplugs:
-                        plug = getPM().getPlugin(plugid)(c, plugopts)
-                        eplugs[pluguid] = plug
-                    _fo = eplugs[pluguid].beginRead(_lpath)
+                        eplugs[pluguid] = getPM().getPlugin(plugid)(c, plugopts)
+                    plug = eplugs[pluguid]
                 else:
                     # use null encryption plugin
-                    getPM().getPlugin('crypt.null')(c, None)
+                    if 'null-default' in eplugs:
+                        eplugs['null-default'] = getPM().getPlugin('crypt.null')(c, None)
+                    plug = eplugs['null-default']
+                _fo = plug.beginRead(_lpath)
                 job.append(_fo)
             else:
                 # get existing shared state container

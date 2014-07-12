@@ -1,18 +1,21 @@
 import os
 import os.path
-import sys
-import pprint
-import re
-import threading
-import time
+import sys                      
+import pprint                               # not used anymore..
+import re                                   # not directly used
+import threading                            # not used anymore
+import time                                 # not used anymore
 
-from lib import misc
-from lib import output
+from lib import misc                        # ... likely old unused junk.. need removal really..
+from lib import output                      # serves as tcp status server.. needs to be rebuilt and
+                                            # possibly integrated into or with crossterm for remote
+                                            # output
 
-from lib.filter import Filter
+from lib.filter import Filter               # single filter created from file normally
+from lib.efilters import EncryptionFilters  # encryption filters created from encryption filter file
 
-import lib.crossterm as crossterm
-import lib.flycatcher as flycatcher     # debugging tool
+import lib.crossterm as crossterm           # cross-platform console API
+import lib.flycatcher as flycatcher         # debugging tool
 
 '''
     The fly filter has to be setup before modules are loaded, because
@@ -192,6 +195,8 @@ def showHelp():
     opts['--no-ssl'] = 'disables SSL/TLS'
     opts['--debug'] = 'displays debug messages; likely to a file called .stdout'
     opts['--no-sformat'] = 'does not use stash file format on server'
+    opts['--efilter-file'] = '(optional) encryption filter file'
+    opts['--def-crypt'] = '(optional) encryption or default encryption to use if no match in encryption filter file'
 
     for k in opts:
         print(k.ljust(20), opts[k])
@@ -205,7 +210,7 @@ def main(ct, args):
         'lpath', 'rpath', 'password', 'push', 'pull', 'sync-deleted-to-server',
         'host', 'port', 'cipher', 'filter-file', 'make-sample-filter-file',
         'password', 'authcode', 'auth-code', 'no-ssl', 'debug', 'no-sformat',
-        'sync-deleted-to-local', '--crypt-key-file'
+        'sync-deleted-to-local', 'efilter-file', 'def-crypt'
     )
 
     if len(args) == 0 or '--help' in args or '/?' in args:
@@ -308,11 +313,14 @@ def main(ct, args):
         'Filter':               sw.catchFilter,             # called to filter a file or dir
     }
 
+    efilters = EncryptionFilters(setopts.get('efilter-file', None), setopts.get('def-crypt', None))
+
     if 'push' in setopts:
         print('push')
         lib.buops.Push(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['ssl'], setopts['sformat'], catches
+            setopts['rpath'], filter, setopts['ssl'], setopts['sformat'], catches,
+            efilters
         )
         return 
     if 'pull' in setopts:
