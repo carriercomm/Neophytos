@@ -7,7 +7,7 @@ import os.path
 
 pm = None
 
-def getPluginMan():
+def getPM():
     global pm
 
     if pm is None:

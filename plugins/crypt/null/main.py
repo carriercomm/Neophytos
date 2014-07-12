@@ -48,13 +48,13 @@ class Null:
         This is called to initialize the plugin module. It is called
         for each client session.
     '''
-    def __init__(self, client):
+    def __init__(self, client, options):
         pass
     '''
         Called when the operation on the file specified
         with `lpath` begins an encryption operation.
     '''
-    def beginRead(self, lpath, options):
+    def beginRead(self, lpath):
         return NullFileEncryptObject(lpath)
     '''
         Called when the operation on the file specified

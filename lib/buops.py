@@ -9,44 +9,10 @@ from lib import output
 from lib.client import Client
 from lib.client import Client2
 from lib.filter import Filter
-from lib.pluginman import getPluginMan
+from lib.pluginman import getPM
 
 import lib.flycatcher as flycatcher
 logger = flycatcher.getLogger('BuOps')
-
-class EncryptionFilters:
-    def __init__(self, file):
-        fd = open(file, 'rb')
-        lines = fd.readlines()
-        fd.close()
-
-        filters = []
-        for line in lines:
-            line = line.strip()
-            if line[0] == '#':
-                parts = line.split(',')
-                options = parts[2:]
-                tag = parts[0]
-                plugin = parts[1]
-                filter = Filter()
-                filters.append((tag, plugin, options, filter))
-            if header is None:
-                continue
-            filter.parseAndAddFilterLine(line)
-
-        self.filters = filters
-
-    '''
-        Try to find a filter that matches and then return
-        the tag, plugin name, and options. If no matches
-        then return none and the default encryption plugin
-        can be used.
-    '''
-    def check(self, lpath, node, isDir):
-        for filter in self.filters:
-            if filter.check(lpath, node, isDir):
-                return (tag, plugin, options)
-        return None
 
 '''
     This is used to share state between the asynchronous sub-jobs
@@ -88,8 +54,6 @@ def CallCatch(catches, signal, *args):
 def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True):
     if rpath is None:
         rpath = b'/'
-
-    pm = getPluginMan()
 
     sac = bytes(sac, 'utf8')
     c = Client2(rhost, rport, sac, sformat)
@@ -251,7 +215,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 '''
     PUSH
 '''
-def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True, catches = {}):
+def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True, catches = {}, efilter = None):
     if rpath is None:
         rpath = b'/'
 
@@ -273,6 +237,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     #print('local-hash', _lhash)
     #sys.stdout.flush()
     #exit()
+
+    # encryption plugin instances of options
+    eplugs = {}
     
     jobDirEnum = []              # to be enumerated
     jobPendingFiles = []         # files pending processing
@@ -323,24 +290,28 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         _offset = pkg[4]
         _size = pkg[5]
         _shrstate = pkg[6]
+        _fo = pkg[7]
 
         if _success == 0:
             print('HASH-ERROR:%s' % _rpath)
             exit()
             return
 
-        fd = open(_lpath, 'rb')
-        fd.seek(_offset)
-        _data = fd.read(_size)
-        fd.seek(_offset)
-        _lhash = fd.read(_size)
+        _data = _fo.read(_offset, _size)
+        _lhash = _fo.read(_offset, _size)
+        #fd = open(_lpath, 'rb')
+        #fd.seek(_offset)
+        #_data = fd.read(_size)
+        #fd.seek(_offset)
+        #_lhash = fd.read(_size)
+        #fd.close()
+
         # function is BAD because it modifies an immutable object, if the
         # call is pure python then it returns a new bytes object but if
         # the call is to C library then it modifies it in place - this is
         # why i assigned the return value so it works for both pure python
         # and an native library call
         _lhash = c.HashKmc(_lhash, 128)
-        fd.close()
 
         if _size < 0:
             print('_size LESS THAN ZERO!?!?!')
@@ -357,6 +328,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             if _shrstate.opCount < 1:
                 CallCatch(catches, 'Finish', _rpath, _lpath, _offset, _size)
                 CallCatch(catches, 'PatchFinish', _shrstate)
+                _fo.finish()
             return
 
         # if the hashes are the same do nothing
@@ -425,6 +397,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             c.FileSetTime(_rpath, int(ct), int(ct), Client.IOMode.Discard)
             CallCatch(catches, 'Finish', _rpath, _lpath, _offset, _size)
             CallCatch(catches, 'PatchFinish', _shrstate)
+            _fo.finish()
     
     # statistics
     databytesout = 0
@@ -622,9 +595,32 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 shrstate.init = True
                 job.append(shrstate)
                 jobPatchOperations.append(shrstate)
+
+                if efilter is not None:
+                    # get the encryption information we need
+                    einfo = efilter.check(_lpath, _lpath[_lpath.rfind('/') + 1:], False)
+
+                    # build and name some important stuff for readability
+                    etag = einfo[0]
+                    plugid = einfo[1]
+                    plugopts = einfo[2]
+                    pluguid = '%s.%s' % (plugid, plugopts)
+
+                    # initialize an instance per unique set of options; i choose
+                    # this because i think it makes it a little easier to optimize
+                    # the instance
+                    if pluguid not in eplugs:
+                        plug = getPM().getPlugin(plugid)(c, plugopts)
+                        eplugs[pluguid] = plug
+                    _fo = eplugs[pluguid].beginRead(_lpath)
+                else:
+                    # use null encryption plugin
+                    getPM().getPlugin('crypt.null')(c, None)
+                job.append(_fo)
             else:
                 # get existing shared state container
                 shrstate = job[5]
+                _fo = job[6]
 
             # hash 32MB chunks (server is threaded so it should be okay)
             csz = 1024 * 1024 * 32
