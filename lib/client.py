@@ -22,6 +22,31 @@ from lib.misc import *
 import lib.flycatcher as flycatcher
 logger = flycatcher.getLogger('client')
 
+'''
+    See to8byte7bit.
+'''
+def from8byte7bit(data):
+    val = 0
+    x = 7
+    y = 0
+    while x > -1:
+        val |= (data[y] & 0x7f) << (7 * x)
+        x = x - 1
+        y = y + 1
+    return val
+
+'''
+    This stores a 56-bit integer into 8 bytes
+    using only 7 lower bits of each byte and
+    setting the 7th (most significant bit) to
+    one to prevent any byte from being zero
+'''
+def to8byte7bit(val):
+    out = []
+    for x in range(7, -1, -1):
+        out.append(((val >> (x * 7)) & 0x7f) | 0x80)
+    return bytes(out)
+
 class UnknownMessageTypeException(Exception):
     pass
 
@@ -217,13 +242,11 @@ class Client:
                 # let us block and wait for a message
                 # to arrive or we can send anything out
                 # if needed
-                logger.debug('looking for.. blocking on select')
                 if self.getBytesToSend() > 0:
                     w = [self.sock]
                 else:
                     w = []
                 r, w, e = select.select([self.sock], w, [self.sock], 1)
-                logger.debug('%s-%s-%s' % (r, w, e))
                 if w:
                     # send any data while waiting if buffered up
                     self.send()
@@ -308,11 +331,16 @@ class Client:
                 # see if we are using stash format
                 data = data[4 + metasize + fnamesz:]
                 # break out revision if it exists
-                if ftype == 1 and fname.find(b'\xff') > -1:
-                    revcode = fname[0:fname.find(b'\xff')]
-                    fname = fname[fname.find(b'\xff'):]
-                    if fname[0] == b'\xff':
-                        fname is None
+                if ftype == 0 and fname[0] == b'\xff':
+                    # we use an 8 byte big endian integer
+                    # except we only use the lower 7 bits
+                    # of each byte yielding a 56 bit integer
+                    # with the 7th bit of each byte set to
+                    # one to prevent a zero value since we
+                    # expect the FS/OS not support a null
+                    # value in the filename
+                    revcode = from8byte7bit(fname[1:])
+                    fname = fname[9:]
                 else:
                     revcode = None
                 # build list
@@ -424,7 +452,6 @@ class Client:
         # ensure the next reads tries to get the header
         self.datasz = None
 
-        logger.debugNEOL('M')
         # return the data
         return self.datasv, self.datav, data
         
@@ -485,7 +512,7 @@ class Client:
         if mode == Client.IOMode.Block:
             #print('blocking by handling messages')
             #print('blocking for vector:%s' % vector)
-            res = self.HandleMessages(None, lookfor = vector)
+            res = self.HandleMessages(lookfor = vector)
             #print('    returned with res:%s' % (res,))
             return res
         return vector
@@ -546,8 +573,6 @@ class Client:
             # pop from the beginning of the queue
             data = self.datatosend.pop(0)
 
-            logger.debug('data-pop:%s' % len(data))
-
             self.__recv()
             
             # try to send it
@@ -555,7 +580,6 @@ class Client:
             while totalsent < len(data):
                 try:
                     sent = self.sock.write(data[totalsent:])
-                    logger.debug('sent:%s totalsent:%s' % (sent, totalsent))
                     # track all the bytes sent out at this very moment
                     self.allbytesout += sent
                 except ssl.SSLWantWriteError:
@@ -586,25 +610,6 @@ class Client:
         return self.allbytesout / (ct - self.bytesoutst)
 
     '''
-        The server is expected to support a file name using any character
-        except '/' and '\x00'. It is expected to support at least 255
-        byte length filename. This function mainly just cleans the path up
-        removing what the server would remove but helping decrease processing
-        on the server side.
-
-        The history of this function was it encoded the file name to in order
-        to store some metadata in the filename. This presented a problem because
-        on ext4 we are limited to a filename length of 255 bytes. This makes it
-        impossible to cleanly handle some files on a users machine that may be
-        255 bytes or even close. So this function should be named sanitizePath
-        instead. 
-
-        The metadata is now supported using the metasize argument of this class,
-        and stores metadata at the front of each file. This room is automatically
-        reserved by the functions below. You can pass a negative offset however
-        to force the reading of metadata. The DirList function also supports reading
-        the metadata for each file which makes it faster than sending requests for 
-        each file to read the metadata.
     '''
     def GetServerPathForm(self, path):
         # 1. prevent security hole (helps reduce server CPU load if these exist)
@@ -622,7 +627,7 @@ class Client:
         # revision path
         ptype = type(path)
         if ptype is tuple or ptype is list:
-            rev = int(path[1])
+            rev = path[1]
             path = path[0]
             if rev != 0:
                 # check if path contains a base directory
@@ -632,12 +637,12 @@ class Client:
                     # assign path with out the base
                     path = path[path.find(b'/'):]
                     # create the base using special revision format
-                    base = b'\xff'.join(b'0', base)
+                    base = b'\xff'.join(struct.pack('>Q', rev), base)
                     # create the new path
                     path = b'/'.join((base, path))
                 else:
                     # no base directory so we have to create one
-                    base = b'\xff\xff'
+                    base = b''.join(b'\xff', self.to8byte7bit(rev) , b'\xff/', base)
                     path = b'/'.join((base, path))
         return path
     
@@ -682,6 +687,7 @@ class Client:
         return self.WriteMessage(struct.pack('>BH', ClientType.FileMove, len(srcfid)) + srcfid + dstfid, mode, callback)
     def FileHash(self, fid, offset, length, mode, callback = None):
         fid = self.GetServerPathForm(fid)
+        offset += self.metasize
         return self.WriteMessage(struct.pack('>BQQ', ClientType.FileHash, offset, length) + fid, mode, callback)
     def FileTime(self, fid, mode, callback = None):
         fid = self.GetServerPathForm(fid)

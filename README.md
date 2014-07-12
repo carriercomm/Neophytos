@@ -200,10 +200,11 @@ length on filenames or paths but it does place a limitation on the maximum messa
 around 4MB currently. This means if your filename is 3MB in length then you only have 1MB left 
 for data and that might slighlty impact uploading speed.
 
-The client using stashing expects the very first directory to be 253 bytes or less in length at most. The
+The client using stashing expects the very first directory to be 253 bytes at most. The
 larger the stash identifier (no matter numeric or byte string) the more is subtracted from the
 255 limit (unless your OS and FS supports longer directory names). The standard client currently
-uses 64-bit big endian integers to represent the revision identifier which is unix time in seconds.
+uses a 64-bit big endian integer to represent the revision identifier which is unix time 
+in seconds. This is done by not using the value 255 in any byte position.
 
 Let us talk about the first directory name as it means something different that what would
 normaly be expected. When you push files you can specify the `--rpath`. This means just
@@ -249,14 +250,14 @@ the remote server directory would look like this:
 Which is not the greatest idea in the world, but it will work. But, how will it stash a file? Well,
 a stashed file would look like this:
 
-    \x34\xe3\x23\x32\xff\xff/companyreport.pdf
-    \x34\xe3\x24\x32\xffworkstuff/...
-    \x34\xe3\x24\x32\xffhomestuff/...
-    \x34\xe3\x24\x32\xffmanuals/...
-    \x34\xe3\x24\x32\xffarmx86x64/...
+    \xff\x34\xe3\x23\x32\xff/companyreport.pdf
+    \xff\x34\xe3\x24\x32workstuff/...
+    \xff\x34\xe3\x24\x32homestuff/...
+    \xff\x34\xe3\x24\x32manuals/...
+    \xff\x34\xe3\x24\x32armx86x64/...
 
 It treated the base directories like you would expect, but for the base files it prefixed them
-with the directory name `\xff`. 
+with the directory name `\xff`. So it essentially named the directory `\xff`. 
 
 The major point here is that it is a great idea to use `--rpath` even if you only do things like
 `--rpath=dave-documents`, `--rpath=companypc-0392`, or `--rpath=serverpc-9382`. However, in order
@@ -304,7 +305,7 @@ The first way is using the command line option `--def-crypt=<algorithm>,<paramet
 
 The second way can be used in conjunction with the first way, or used alone. This way uses a filter to select the files to apply the specified encryption on. You can use this to apply more expensive encryption to more sensitive data, and at the same time apply lesser encryption or no encryption at all the some files. The filter works the same way as the filter inclusion filter. If a file match the filter that encryption with its optionions is applied to the file. An example file looks like this:
 
-    #scrypt,mypassword,0,0.125,5.0
+    #apple,scrypt,0,0.125,5.0,mypassword
     file        accept      .*\.doc
     file        accept      .*\.jpg
     file        accept      .*\.png
@@ -312,15 +313,27 @@ The second way can be used in conjunction with the first way, or used alone. Thi
     file        accept      .*\.avi
     file        accept      .*\.mov
     file        accept      .*\.mpg
-    #scrypt,file:/home/dave/script.password,0,0.5,30.0
+    #grape,scrypt,0,0.5,30.0,file:/home/dave/script.password
     path        accept      /home/dave/work
-    #xor,file:/home/dave/xordata
+    #square,xor,file:/home/dave/xordata
     path        accept      /home/dave/pictures
 
 The scrypt plugin handles all the options, and in the example above it supports providing
 the password directly in the option or you can provide a file that contains the password. 
 The password can be any sequence of bytes except `,` if provided in the filter file or it
-can be any sequence of bytes if provided as a file.
+can be any sequence of bytes if provided as a file. 
+
+You should also notice the words `apple`, `grape`, and `square`. These tag the file to help
+reassociate it with the options needed to decrypt it. The options can be considered part of
+the password and therefore are not stored with the file unless specified to do so. In that
+case you would not want to use non-file passwords because they would be stored along with
+the file. It is up to you as to how much information you include in the tag. For example
+if you are using `scrypt,mypassword,0,0.125,5.0` and you name your tag `scrypt-apple`
+you have given the attacker that information. Indeed it may help you remember or determine
+how to decrypt the file but it comes at a potential cost of security. I am not a cryptography
+expert so it is hard for me to say just how this could turn out, but you should be aware of
+how the encrypted file is tagged. This system makes your encryption filter very important
+as it is the link to decrypting your files once encrypted unless you can rebuild it.
 
 To review - when using client side encryption the server never sees the encryption key. The
 entire process happens on the client. The files are stored in their encrypted state. The encryption

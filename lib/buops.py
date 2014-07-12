@@ -8,9 +8,45 @@ import sys
 from lib import output
 from lib.client import Client
 from lib.client import Client2
+from lib.filter import Filter
+from lib.pluginman import getPluginMan
 
 import lib.flycatcher as flycatcher
 logger = flycatcher.getLogger('BuOps')
+
+class EncryptionFilters:
+    def __init__(self, file):
+        fd = open(file, 'rb')
+        lines = fd.readlines()
+        fd.close()
+
+        filters = []
+        for line in lines:
+            line = line.strip()
+            if line[0] == '#':
+                parts = line.split(',')
+                options = parts[2:]
+                tag = parts[0]
+                plugin = parts[1]
+                filter = Filter()
+                filters.append((tag, plugin, options, filter))
+            if header is None:
+                continue
+            filter.parseAndAddFilterLine(line)
+
+        self.filters = filters
+
+    '''
+        Try to find a filter that matches and then return
+        the tag, plugin name, and options. If no matches
+        then return none and the default encryption plugin
+        can be used.
+    '''
+    def check(self, lpath, node, isDir):
+        for filter in self.filters:
+            if filter.check(lpath, node, isDir):
+                return (tag, plugin, options)
+        return None
 
 '''
     This is used to share state between the asynchronous sub-jobs
@@ -53,6 +89,8 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     if rpath is None:
         rpath = b'/'
 
+    pm = getPluginMan()
+
     sac = bytes(sac, 'utf8')
     c = Client2(rhost, rport, sac, sformat)
     c.Connect(essl = ssl)
@@ -76,7 +114,6 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             # skip any other revision
             meta = node[2]
             # check that its not a special revision or system folder
-            if node[0].find(b'\xff)
             name = node[0]
             name = rpath + b'/' + name
             nodes.append((name, node[1]))
@@ -223,6 +260,19 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     c.Connect(essl = ssl)
     # produce remote and local paths
     lpbsz = len(lpath)
+
+
+    #logger.debug('test')
+    #print('testing')
+    #c.FileTrun(b'/grape', 5, mode = Client.IOMode.Block)
+    #c.FileWrite(b'/grape', 0, b'hello', mode = Client.IOMode.Block)
+    #print('read', c.FileRead(b'/grape', 0, 5, mode = Client.IOMode.Block))
+    #print('hash', c.FileHash(b'/grape', 0, 5, mode = Client.IOMode.Block))
+    #_lhash = b'hello'
+    #_lhash = c.HashKmc(_lhash, 128)
+    #print('local-hash', _lhash)
+    #sys.stdout.flush()
+    #exit()
     
     jobDirEnum = []              # to be enumerated
     jobPendingFiles = []         # files pending processing
@@ -481,11 +531,15 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 _lpath = b'/'.join((dej, node))
                 if os.path.isdir(_lpath):
                     # delay this..
+                    print('checking dir', node)
                     if CallCatch(catches, 'Filter', _lpath, node, True):
+                        print('    accepted')
                         jobDirEnum.append(_lpath)
                     continue
+                print('checking file', node)
                 if CallCatch(catches, 'Filter', _lpath, node, False):
                     jobPendingFiles.append(_lpath)
+                    print('    accepted')
         # drop what we completed
         jobDirEnum = jobDirEnum[x + 1:]
 

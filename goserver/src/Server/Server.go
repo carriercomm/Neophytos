@@ -670,6 +670,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 self.MsgEnd()
                 return nil
             }
+
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[16:]))
             fo, err := os.OpenFile(path, os.O_RDWR, 0)
             defer fo.Close()
@@ -687,7 +688,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 
             buf := make([]byte, rsz)
             fo.Seek(int64(off), 0)
-            _, err = fo.Read(buf)
+            cnt, err := fo.Read(buf)
             if err != nil {
                 fmt.Printf("read failed on [%s] at [%x] for sz:%x with [%s]\n", path, off, rsz, err)
                 panic(fmt.Sprintf("during hash error:%s", err))
@@ -695,6 +696,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 self.MsgEnd()
                 return nil
             }
+            fmt.Printf("buf[0]:%x cnt:%x\n", buf[0], cnt)
             // hash
             buf = HashKmc(buf, 128)
             self.MsgWrite8(1)
