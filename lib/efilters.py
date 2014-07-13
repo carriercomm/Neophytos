@@ -19,7 +19,7 @@ class EncryptionFilters:
         self.default = None
         if default is not None:
             parts = default.split(',')
-            options = parts[2:]
+            options = ','.join(parts[2:])
             tag = parts[0]
             plugin = parts[1]
             self.default = (tag, plugin, options, None)
@@ -35,7 +35,7 @@ class EncryptionFilters:
                 line = line.strip()
                 if line[0] == '#':
                     parts = line[1:].split(',')
-                    options = parts[2:]
+                    options = ','.join(parts[2:])
                     tag = parts[0]
                     plugin = parts[1]
                     filter = Filter()

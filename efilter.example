@@ -1,0 +1,8 @@
+#scrypt-a,crypt.scrypt,pass:mypassword,0,0.125,5
+file        accept          .*\.c
+file        accept          .*\.h
+file        accept          .*\.py
+file        accept          .*\.sh
+
+#xor-a,crypt.xor,file:./xordata
+file        accept          .*

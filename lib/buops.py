@@ -596,27 +596,29 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 job.append(shrstate)
                 jobPatchOperations.append(shrstate)
 
+                '''
+                    This _fo object replaces the old code that used to open a file. The _fo
+                    is short for file object. It provides the functionality of reading and
+                    writing to a file except the implementation can do additional things.
+
+                    See ./plugins/ and especially ./plugins/crypt for examples of the 
+                    implementation of this.
+                '''
                 if efilter is not None:
                     # get the encryption information we need
                     einfo = efilter.check(_lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
-
                     # build and name some important stuff for readability
                     etag = einfo[0]
                     plugid = einfo[1]
                     plugopts = einfo[2]
-                    pluguid = '%s.%s' % (plugid, plugopts)
-
-                    # initialize an instance per unique set of options; i choose
-                    # this because i think it makes it a little easier to optimize
-                    # the instance
-                    if pluguid not in eplugs:
-                        eplugs[pluguid] = getPM().getPlugin(plugid)(c, plugopts)
-                    plug = eplugs[pluguid]
+                    plugtag = '%s.%s' % (plugid, plugopts)
+                    plug = getPM().getPluginInstance(plugid, plugtag, (c, plugopts,))
                 else:
-                    # use null encryption plugin
-                    if 'null-default' in eplugs:
-                        eplugs['null-default'] = getPM().getPlugin('crypt.null')(c, None)
-                    plug = eplugs['null-default']
+                    # this should rarely be used.. the caller will likely be providing
+                    # the efilter object when calling this function, but it is here
+                    # in the event that they do not..
+                    plug = getPM().getPluginInstance('crypt.null', '', (c, []))
+
                 _fo = plug.beginRead(_lpath)
                 job.append(_fo)
             else:
@@ -626,22 +628,28 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 
             # hash 32MB chunks (server is threaded so it should be okay)
             csz = 1024 * 1024 * 32
+            # get actual size due to what we have remaining of the file
             _tsz = min(csz, _lsize - _curoff)
 
             # increment number of operations ongoing
             shrstate.inc()
 
             # create job and request with callback
-            subjob = [_rpath, _lpath, _rsize, _lsize, _curoff, _tsz, shrstate]
+            subjob = [_rpath, _lpath, _rsize, _lsize, _curoff, _tsz, shrstate, _fo]
             c.FileHash(_rpath, _curoff, _tsz, Client.IOMode.Callback, (__eventHashReply, subjob))
 
+            # determine and track if we are finished
             job[4] = job[4] + _tsz
             if job[4] >= _lsize:
-                # do not increment x after removing it
+                # do not increment x after removing it; this
+                # feels kind of hacky but it does work right
+                # now at least but i think its on the edge
+                # of being bad code
                 shrstate.init = False
                 del jobPatch[x]
                 jobPatchLimit = jobPatchLimit - 1
                 continue
+
             # increment x since we did not remove anything
             x = x = 1
 
@@ -750,14 +758,38 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _rsize = uj[2]
             _lsize = uj[3]
             _curoff = uj[4]
+
+            if len(uj) < 6:
+                if efilter is not None:
+                    # get the encryption information we need
+                    einfo = efilter.check(_lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+                    # build and name some important stuff for readability
+                    etag = einfo[0]
+                    plugid = einfo[1]
+                    plugopts = einfo[2]
+                    plugtag = '%s.%s' % (plugid, plugopts)
+                    plug = getPM().getPluginInstance(plugid, plugtag, (c, plugopts,))
+                else:
+                    # this should rarely be used.. the caller will likely be providing
+                    # the efilter object when calling this function, but it is here
+                    # in the event that they do not..
+                    plug = getPM().getPluginInstance('crypt.null', '', (c, []))
+
+                _fo = plug.beginRead(_lpath)
+                uj.append(_fo)
+            else:
+                _fo = uj[5]
+
+
             _chunksize = 1024 * 1024 * 4
             # see what we can send
             _rem = min(_lsize - _curoff, _chunksize)
             # open local file and read chunk
-            _fd = open(_lpath, 'rb')
-            _fd.seek(_curoff)
-            _data = _fd.read(_rem)
-            _fd.close()
+            #_fd = open(_lpath, 'rb')
+            #_fd.seek(_curoff)
+            #_data = _fd.read(_rem)
+            #_fd.close()
+            _data = _fo.read(_curoff, _rem)
 
             CallCatch(catches, 'Write', _rpath, _lpath, _curoff, _chunksize)
             

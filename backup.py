@@ -313,7 +313,10 @@ def main(ct, args):
         'Filter':               sw.catchFilter,             # called to filter a file or dir
     }
 
-    efilters = EncryptionFilters(setopts.get('efilter-file', None), setopts.get('def-crypt', None))
+    # if no default encryption specified then make sure it uses the `crypt.null` plugin, which
+    # gives it something to treat like an encryption object inside the buops module... the file
+    # can be None and it just wont use anything exception the default crypt specified
+    efilters = EncryptionFilters(setopts.get('efilter-file', None), setopts.get('def-crypt', ',crypt.null'))
 
     if 'push' in setopts:
         print('push')

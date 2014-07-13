@@ -1,0 +1,2 @@
+dir        reject      ^temp$
+any        accept      .*
