@@ -777,6 +777,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 
                 _fo = plug.beginRead(_lpath)
                 uj.append(_fo)
+                # write in the meta-data the tag
             else:
                 _fo = uj[5]
 
