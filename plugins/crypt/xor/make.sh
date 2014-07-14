@@ -13,4 +13,4 @@
 #       or a different arch thus keeping everything properly named
 #
 #
-gcc cryptxor.c -o cryptxor.so
+gcc cryptxor.c -o cryptxor.so -fPIC -shared

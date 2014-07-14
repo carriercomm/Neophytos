@@ -1,13 +1,15 @@
+#include <stdlib.h>
 #include <stdio.h>
+
+typedef unsigned long long  uint64;
+typedef unsigned char       uint8;
+typedef long long           int64;
 
 typedef struct _CRYPTXOR {
     FILE        *fo;
     FILE        *xfo;
     uint64      xfosz;
 } CRYPTXOR;
-
-typedef unsigned long long  uint64;
-typedef unsigned char       uint8;
 
 int cryptxor_start(CRYPTXOR *s, char *file, char *xfile) {
     s->fo = fopen(file, "rb");
@@ -71,6 +73,7 @@ int cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     uint8       *xbuf;
     uint8       *obuf;
     uint64      x, lx;
+    int64       cnt;
 
     /* seek to position in our output file */
     fseek(s->fo, o, 0);
@@ -87,16 +90,16 @@ int cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     /* set remaining data */
     rem = dsz;
     while (rem > 0) {
-        cnt = fread(xbuf, rem, 1, s->xfo)
+        cnt = fread(xbuf, rem, 1, s->xfo);
 
-        if (cnt == 0) {
+        if (cnt < 1) {
             /* seek back to the beginning of the file */
             fseek(s->xfo, 0, 0);
             continue;
         }
 
         for (x = 0; x < cnt; ++x) {
-            odata[lx + x] = data[lx + x] ^ xbuf[x];
+            obuf[lx + x] = data[lx + x] ^ xbuf[x];
         }
 
         lx += cnt;
@@ -104,7 +107,7 @@ int cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     }
 
     /* write decrypted chunk to the file specified by the offset */
-    fwrite(odata, dsz, 1, s->fo);
+    fwrite(obuf, dsz, 1, s->fo);
 
     /* free the buffers used */
     free(xbuf);

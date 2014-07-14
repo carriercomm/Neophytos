@@ -66,8 +66,8 @@ Some of the options are:
     --no-ssl                                          uses non-SSL socket (could be buggy)
     --debug                                           enables debug output
     --no-sformat                                      disables using stash format on server
-    --efilter-file                                    encryption filter file path
-    --def-crypt                                       default encryption/decryption to use
+    --efilter-file                        (optional)  encryption filter file path
+    --def-crypt                           (optional)  default encryption/decryption to use
 
 For example to push all files in a directory to the server under the name `peach`.
 

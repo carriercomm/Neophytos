@@ -1,2 +1,2 @@
 #!/bin/sh
-gcc native.c -nostdlib --freestanding -fPIC -shared -nostdlib -o native64.so
+gcc native.c -nostdlib --freestanding -fPIC -shared -o native64.so
