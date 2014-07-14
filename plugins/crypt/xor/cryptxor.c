@@ -2,8 +2,17 @@
 #include <stdio.h>
 
 typedef unsigned long long  uint64;
+typedef unsigned int        uint32;
+typedef int                 int32;
 typedef unsigned char       uint8;
 typedef long long           int64;
+
+#ifdef _WINDOWS
+#define EXPORT __declspec(dllexport) __cdecl
+//#define EXPORT __declspec(dllexport) __stdcall
+#else
+#define EXPORT
+#endif
 
 typedef struct _CRYPTXOR {
     FILE        *fo;
@@ -11,47 +20,74 @@ typedef struct _CRYPTXOR {
     uint64      xfosz;
 } CRYPTXOR;
 
-int cryptxor_start(CRYPTXOR *s, char *file, char *xfile) {
-    s->fo = fopen(file, "rb");
-    s->xfo = fopen(xfile, "rb");
+int EXPORT cryptxor_start(CRYPTXOR *s, char *file, char *xfile, CRYPTXOR  *g) {
+    memset(s, 0, sizeof(CRYPTXOR));
 
-    fseek(s->xfo, 0, 2);
-    s->xfosz = ftell(s->xfo);
+    /* if global exist copy onto local */
+    if (g) {
+        memcpy(s, g, sizeof(CRYPTXOR));
+    }
+
+    if (file) {
+        s->fo = fopen(file, "rb");
+    }
+
+    /* for global init we just want to open xfile */
+    if (file && !s->fo) {
+       printf("fo:failed to open '%s'\n", file);
+       return 0;
+    }
+
+    /* is it already open? */
+    if (!s->xfo) {
+        s->xfo = fopen(xfile, "rb");
+        fseek(s->xfo, 0, SEEK_END);
+        s->xfosz = ftell(s->xfo);
+        fseek(s->xfo, 0, SEEK_SET);
+    }
+
+    if (!s->xfo) {
+       printf("xfo:failed to open '%s'\n", xfile);
+       fclose(s->fo);
+       return 0;
+    }
+
+    return 1;
 }
 
 /* 
     reads the data from the file and encryptions it and hands
     the encrypted data back to the caller using `out`
 */
-int cryptxor_read(CRYPTXOR *s, uint64 o, uint64 l, char *out) {
-    uint8       *buf;
+int EXPORT cryptxor_read(CRYPTXOR *s, uint64 o, uint64 l, uint8 *out) {
     uint64      rem;
     uint8       *xbuf;
     uint64      x, y;
     int64       cnt;
 
     /* read target data into memory from the file */
-    fseek(s->fo, o, 0);
+    fseek(s->fo, o, SEEK_SET);
     fread(out, l, 1, s->fo);
 
     /* offset into our xor stream */
-    fseek(s->xfo, o - ((o / s->xfosz) * s->xfosz), 0);
+    fseek(s->xfo, o - ((o / s->xfosz) * s->xfosz), SEEK_SET);
 
     xbuf = (uint8*)malloc(l);
     rem = l;
     x = 0;
+    cnt = 1;
     while (rem > 0) {
         /* read the biggest chunk we can from the xor stream */
-        cnt = fread(xbuf, rem, 1, s->xfo);
+        cnt = fread(xbuf, 1, rem, s->xfo);
 
-        if (cnt == 0) {
+        if (cnt < 1) {
             /* seek back to the beginning of the file */
-            fseek(s->xfo, 0, 0);
+            fseek(s->xfo, 0, SEEK_SET);
             continue;
         }
 
         /* encrypt the data */
-        for (y = 0; x < cnt; ++x, ++y) {
+        for (y = 0; y < cnt; ++x, ++y) {
             out[x] = out[x] ^ xbuf[y];
         }
 
@@ -68,7 +104,7 @@ int cryptxor_read(CRYPTXOR *s, uint64 o, uint64 l, char *out) {
     are unable to decrypt until all has been written but this one
     has a byte:byte relationship)
 */
-int cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
+int EXPORT cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     uint64      rem;
     uint8       *xbuf;
     uint8       *obuf;
@@ -76,10 +112,10 @@ int cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     int64       cnt;
 
     /* seek to position in our output file */
-    fseek(s->fo, o, 0);
+    fseek(s->fo, o, SEEK_SET);
 
     /* offset into our xor stream */
-    fseek(s->xfo, o - ((o / s->xfosz) * s->xfosz), 0);
+    fseek(s->xfo, o - ((o / s->xfosz) * s->xfosz), SEEK_SET);
 
     /* allocate a buffer to hold XOR key stream */
     xbuf = (uint8*)malloc(dsz);
@@ -90,11 +126,11 @@ int cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     /* set remaining data */
     rem = dsz;
     while (rem > 0) {
-        cnt = fread(xbuf, rem, 1, s->xfo);
+        cnt = fread(xbuf, 1, rem, s->xfo);
 
         if (cnt < 1) {
             /* seek back to the beginning of the file */
-            fseek(s->xfo, 0, 0);
+            fseek(s->xfo, 0, SEEK_SET);
             continue;
         }
 
@@ -107,14 +143,19 @@ int cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     }
 
     /* write decrypted chunk to the file specified by the offset */
-    fwrite(obuf, dsz, 1, s->fo);
+    fwrite(obuf, 1, dsz, s->fo);
 
     /* free the buffers used */
     free(xbuf);
     free(obuf);
+
+    return 1;
 }
 
-int cryptxor_finish(CRYPTXOR *s) {
+int EXPORT cryptxor_finish(CRYPTXOR *s, CRYPTXOR *g) {
     fclose(s->fo);
-    fclose(s->xfo);
+    if (g) {
+        fclose(s->xfo);
+    }
+    return 1;
 }
