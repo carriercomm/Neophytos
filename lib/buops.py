@@ -44,6 +44,8 @@ def TruncateFile(lpath, size):
     logger.debug('<trun>:%s' % lpath)
 
 def CallCatch(catches, signal, *args):
+    if catches is None:
+        return
     if signal not in catches:
         if 'Uncaught' in catches:
             return catches['Uncaught'](*args)    
@@ -215,16 +217,16 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 '''
     PUSH
 '''
-def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True, catches = {}, efilter = None):
+def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True, catches = None, efilter = None):
     if rpath is None:
         rpath = b'/'
 
     sac = bytes(sac, 'utf8')
     c = Client2(rhost, rport, sac, sformat, metasize = 128)
     c.Connect(essl = ssl)
+
     # produce remote and local paths
     lpbsz = len(lpath)
-
 
     #logger.debug('test')
     #print('testing')
@@ -310,7 +312,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         # call is pure python then it returns a new bytes object but if
         # the call is to C library then it modifies it in place - this is
         # why i assigned the return value so it works for both pure python
-        # and an native library call
+        # and an native library call but i need to fix this shit very soon,
+        # also its eating precious CPU with the double call above if its
+        # using an encryption plugin
         _lhash = c.HashKmc(_lhash, 128)
 
         if _size < 0:
@@ -366,10 +370,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 # start the queries
                 logger.debug('patching-split:%s:%x:%x (a:%x:%x) (b:%x:%x)' % (_lpath, _offset, _size, _aoff, _alen, _boff, _blen))
                 # either execute it or delay it
-                subjob = [_rpath, _lpath, _rsize, _lsize, _aoff, _alen, _shrstate]
+                subjob = [_rpath, _lpath, _rsize, _lsize, _aoff, _alen, _shrstate, _fo]
                 jobPatchQueryDelayed.append((_rpath, _aoff, _alen, subjob))
 
-                subjob = [_rpath, _lpath, _rsize, _lsize, _boff, _blen, _shrstate]
+                subjob = [_rpath, _lpath, _rsize, _lsize, _boff, _blen, _shrstate, _fo]
                 jobPatchQueryDelayed.append((_rpath, _boff, _blen, subjob))
 
                 # just an estimate of how much we are about to use
@@ -455,7 +459,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         # if our output buffer is empty, we have no jobs, and we are not 
         # waiting on any requests
         if c.getBytesToSend() < 1 and getJobCount() < 1 and c.waitCount() < 1 and sentEcho is False:
-            logger.debug('sending echo')
             sentEcho = True
             c.Echo(Client.IOMode.Callback, (__eventEcho, echo))
         
@@ -505,12 +508,14 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 if os.path.isdir(_lpath):
                     # delay this..
                     print('checking dir', node)
-                    if CallCatch(catches, 'Filter', _lpath, node, True):
+                    res = CallCatch(catches, 'Filter', _lpath, node, True)
+                    if res or res is None:
                         print('    accepted')
                         jobDirEnum.append(_lpath)
                     continue
                 print('checking file', node)
-                if CallCatch(catches, 'Filter', _lpath, node, False):
+                res = CallCatch(catches, 'Filter', _lpath, node, False)
+                if res or res is None:
                     jobPendingFiles.append(_lpath)
                     print('    accepted')
         # drop what we completed
@@ -703,6 +708,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 c.FileTime(_rpath, Client.IOMode.Callback, (__eventFileTime, pkg))
             else:
                 # first make the remote size match the local size
+                print('truncate', _rpath, _lsize)
                 c.FileTrun(_rpath, _lsize, Client.IOMode.Discard)
                 if max(_rsize, _lsize) < 1:
                     CallCatch(catches, 'Finished')
@@ -796,11 +802,11 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             
             c.FileWrite(_rpath, _curoff, _data, Client.IOMode.Discard)
             # advance our current offset
-            uj[4] = _curoff + _rem
+            uj[4] = _curoff + len(_data)
             # if we reached the EOF then drop it
             if uj[4] >= _lsize:
                 tr.append(uj)
-            databytesout = databytesout + _rem
+            databytesout = databytesout + len(_data)
             if c.getBytesToSend() > buflimit:
                 break
             cjc = cjc + 1
@@ -816,8 +822,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             jobUpload.remove(uj)
             stat_uploaded = stat_uploaded + 1
         continue
-    raise Exception('DONE DONE')
     c.close()
+    # we are done!
+    return
 
 def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None, stash = True, ssl = True, sformat = True):
     if rpath is None:

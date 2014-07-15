@@ -7,6 +7,15 @@
     .. well you get the point - so i created this little
     helper that makes all that much easier to do
 '''
+import sys
+from ctypes import *
+
+import lib.flycatcher as flycatcher
+logger = flycatcher.getLogger('libload')
+
+is64 = None
+isLinux = None
+isWindows = None
 
 class UnsupportedPlatformException():
     pass
@@ -20,17 +29,21 @@ class UnsupportedPlatformException():
     try to load x86_64 which would be incorrect.
 '''
 def loadLibrary(basepath, basename):
+    global is64
+    global isLinux
+    global isWindows
+
     is64 = sys.maxsize > 2 ** 32
 
     isLinux = sys.platform.find('linux') > -1
-    isWindow = sys.platform.find('win') > -1
+    isWindows = sys.platform.find('win') > -1
 
     if not isLinux and not isWindows:
         raise UnsupportedPlatformException()
 
     if isLinux:
         ext = 'so'
-    if iswindows:
+    if isWindows:
         ext = 'dll'
 
     if is64:
@@ -38,12 +51,16 @@ def loadLibrary(basepath, basename):
     else:
         arch = 'x86'
 
-    libpath = '%s/%s_%s.%s' % (basepath, basename, arch, ext)
+    libpath = '%s/%s.%s.%s' % (basepath, basename, arch, ext)
 
-    if isLinux:
-        hdll = cdll.LoadLibrary(libpath)
-    else:
-        hdll = windll.LoadLibrary(libpath)
+    try:
+        if isLinux:
+            hdll = cdll.LoadLibrary(libpath)
+        else:
+            hdll = cdll.LoadLibrary(libpath)
+    except:
+        logger.warn('could not load "%s"' % libpath)
+        return None
 
     # linux:    self.hentry = self.hdll['hash']
     # windows:  self.hentry = CFUNCTYPE(c_int)(('hash', self.hdll))
@@ -57,3 +74,4 @@ def loadLibrary(basepath, basename):
 '''
 def getExportFunction(hdll, symname):
     return hdll[symname]
+

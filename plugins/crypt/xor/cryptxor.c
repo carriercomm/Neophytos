@@ -7,12 +7,16 @@ typedef int                 int32;
 typedef unsigned char       uint8;
 typedef long long           int64;
 
+/* MSVC support for Windows DLL builds */
 #ifdef _WINDOWS
 #define EXPORT __declspec(dllexport) __cdecl
-//#define EXPORT __declspec(dllexport) __stdcall
 #else
 #define EXPORT
 #endif
+
+/* optimization to support small keys and what is considered a small key */
+#define SMALLKEYSUPPORT
+#define SMALLKEY        (1024 * 1024 * 4)
 
 typedef struct _CRYPTXOR {
     FILE        *fo;
@@ -72,13 +76,47 @@ int EXPORT cryptxor_read(CRYPTXOR *s, uint64 o, uint64 l, uint8 *out) {
     /* offset into our xor stream */
     fseek(s->xfo, o - ((o / s->xfosz) * s->xfosz), SEEK_SET);
 
-    xbuf = (uint8*)malloc(l);
+    #ifdef SMALLKEYSUPPORT
+    /* this is an optimization for when our key data is fairly small */
+    if (s->xfosz < SMALLKEY) { /* 4MB is threshold for considering a small key */
+        /* this can be further optimized by storing xbuf in our state! */
+        xbuf = (uint8*)malloc(s->xfosz);
+        fread(xbuf, 1, s->xfosz, s->xfo);
+
+        rem = l;
+        x = 0;
+        while (rem > 0) {
+            /* loop our key over the data stopping before
+               the end of our key OR the end of the data */
+            for (y = 0; y < s->xfosz && y < rem; ++x, ++y) {
+                out[x] = out[x] ^ xbuf[y];
+            }
+            /* subtract the amount we processed */
+            rem -= y;
+        }
+        free(xbuf);
+        return 1;
+    }
+    #endif
+
+    /* a key could be VERY large.. and this should handle it decently well by
+       not loading the entire key into memory but only a enough of it to work
+       on the data we have..
+
+       if you use this on a small key it will be SLOW because of the continous
+       calling of fseek to go back to the beginning which eats a lot of CPU, so
+       make sure to use SMALLKEYSUPPORT and set SMALLKEY to something reasonably
+       large
+    */
+
+    /* it can only be s->xfosz in size at maximum */
+    xbuf = (uint8*)malloc(SMALLKEY);
     rem = l;
     x = 0;
     cnt = 1;
     while (rem > 0) {
-        /* read the biggest chunk we can from the xor stream */
-        cnt = fread(xbuf, 1, rem, s->xfo);
+        /* read the biggest chunk we can from the xor stream (no more than 4MB at a time) */
+        cnt = fread(xbuf, 1, min(rem, SMALLKEY), s->xfo);
 
         if (cnt < 1) {
             /* seek back to the beginning of the file */
