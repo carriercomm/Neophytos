@@ -217,7 +217,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
 '''
     PUSH
 '''
-def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True, catches = None, efilter = None):
+def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, catches = None):
     if rpath is None:
         rpath = b'/'
 
@@ -600,7 +600,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                 shrstate.init = True
                 job.append(shrstate)
                 jobPatchOperations.append(shrstate)
-
                 '''
                     This _fo object replaces the old code that used to open a file. The _fo
                     is short for file object. It provides the functionality of reading and
@@ -609,21 +608,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
                     See ./plugins/ and especially ./plugins/crypt for examples of the 
                     implementation of this.
                 '''
-                if efilter is not None:
-                    # get the encryption information we need
-                    einfo = efilter.check(_lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
-                    # build and name some important stuff for readability
-                    etag = einfo[0]
-                    plugid = einfo[1]
-                    plugopts = einfo[2]
-                    plugtag = '%s.%s' % (plugid, plugopts)
-                    plug = getPM().getPluginInstance(plugid, plugtag, (c, plugopts,))
-                else:
-                    # this should rarely be used.. the caller will likely be providing
-                    # the efilter object when calling this function, but it is here
-                    # in the event that they do not..
+                plug = CallCatch(catches, 'EncryptFilter', _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+                if plug is None:
+                    # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
-
                 _fo = plug.beginRead(_lpath)
                 job.append(_fo)
             else:
@@ -766,21 +754,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _curoff = uj[4]
 
             if len(uj) < 6:
-                if efilter is not None:
-                    # get the encryption information we need
-                    einfo = efilter.check(_lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
-                    # build and name some important stuff for readability
-                    etag = einfo[0]
-                    plugid = einfo[1]
-                    plugopts = einfo[2]
-                    plugtag = '%s.%s' % (plugid, plugopts)
-                    plug = getPM().getPluginInstance(plugid, plugtag, (c, plugopts,))
-                else:
-                    # this should rarely be used.. the caller will likely be providing
-                    # the efilter object when calling this function, but it is here
-                    # in the event that they do not..
+                plug = CallCatch(catches, 'EncryptFilter', _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+                if plug is None:
+                    # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
-
                 _fo = plug.beginRead(_lpath)
                 uj.append(_fo)
                 # write in the meta-data the tag

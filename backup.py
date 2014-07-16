@@ -61,8 +61,12 @@ flycatcher.setFilterFunction(flyFilter)
 import lib.buops                        # backup operations
 
 class Catcher:
-    def __init__(self, ct, filterFile):
+    def __init__(self, ct, filterFile, efilterFile, defcryptstring):
         self.ct = ct
+
+        # ensure default encryption filter object is created
+        self.efilters = EncryptionFilters(efilterfile, defcryptstring)
+
         if filterFile is not None:
             self.filter = Filter(filterFile)
         else:
@@ -103,6 +107,22 @@ class Catcher:
         self.acceptedCount = 0
         self.rejectedCount = 0
 
+    def catchEncryptFilter(self, lpath, node, isDir):
+        if self.efilters is not None:
+            # get the encryption information we need
+            einfo = self.efilters.check(lpath, node, isDir)
+            # build and name some important stuff for readability
+            etag = einfo[0]
+            plugid = einfo[1]
+            plugopts = einfo[2]
+            plugtag = '%s.%s' % (plugid, plugopts)
+            plug = getPM().getPluginInstance(plugid, plugtag, (c, plugopts,))
+        else:
+            # this should rarely be used.. the caller will likely be providing
+            # the efilter object when calling this function, but it is here
+            # in the event that they do not..
+            plug = getPM().getPluginInstance('crypt.null', '', (c, []))
+        return plug
     def catchFilter(self, lpath, node, isDir):
         result = self.filter.check(lpath, node, isDir)
         if result:
@@ -289,7 +309,7 @@ def main(ct, args):
         showHelp()
         return
 
-    sw = Catcher(ct, filterFile)
+    sw = Catcher(ct, filterFile, setopts.get('efilter-file', None), setopts.get('def-crypt', ',crypt.null'))
 
     '''
         A catch is basically a callback, but were are not really going to be
@@ -312,11 +332,6 @@ def main(ct, args):
         'PatchFinish':          sw.catchPatchFinish,        # when patch operation finishes
         'Filter':               sw.catchFilter,             # called to filter a file or dir
     }
-
-    # if no default encryption specified then make sure it uses the `crypt.null` plugin, which
-    # gives it something to treat like an encryption object inside the buops module... the file
-    # can be None and it just wont use anything exception the default crypt specified
-    efilters = EncryptionFilters(setopts.get('efilter-file', None), setopts.get('def-crypt', ',crypt.null'))
 
     if 'push' in setopts:
         print('push')

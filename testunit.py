@@ -7,9 +7,32 @@ import os
 import sys
 import os.path
 import shutil
+import ctypes
 
 from lib.client import Client2
 from lib import buops
+
+pyrandgenbytes_hdll = None
+pyrandgenbytes_hfunc = None
+
+def pyrandgenbytes(sz):
+    global pyrandgenbytes_hdll
+    global pyrandgenbytes_hfunc
+
+    if pyrandgenbytes_hfunc is False:
+        return os.urandom(sz)
+
+    if pyrandgenbytes_hdll is None:
+        #pyrandgenbytes_hdll = ctypes.cdll.LoadLibrary('%s/pyrandgenbytes.so' % os.getcwd())
+        pyrandgenbytes_hdll = ctypes.CDLL('%s/pyrandgenbytes.so' % os.getcwd())
+        if pyrandgenbytes_hdll is None:
+            pyrandgenbytes_hfunc = False
+            return os.urandom(sz)
+        pyrandgenbytes_hfunc = pyrandgenbytes_hdll['pyrandgenbytes']
+
+    buf = ctypes.create_string_buffer(sz)
+    pyrandgenbytes_hfunc(buf, ctypes.c_uint32(sz))
+    return bytes(buf)
 
 def unitTestHashKmc():
     c = Client2(None, None, None, None)
@@ -114,7 +137,7 @@ def makeRandomNodes(path, maxSpace = 1024 * 1024 * 100, maxFiles = 100, maxPathL
         # write data into file
         try:
             fd = open(xfile, 'wb')
-            data = os.urandom(fsz)
+            data = pyrandgenbytes(fsz)
             fd.write(data)
             fd.close()
             print('made-file:%s' % xfile)
@@ -202,9 +225,12 @@ def unitTestBackupOps():
                 shutil.rmtree('./temp/local')
             if os.path.exists('./temp/remote'):
                 shutil.rmtree('./temp/remote')
+            if os.path.exists('./temp/pulled'):
+                shutil.rmtree('./temp/pulled')
             # create temp directorys
             os.makedirs('./temp/local')
             os.makedirs('./temp/remote')
+            os.makedirs('./temp/pulled')
 
             print('building random file tree (may take a while..)')
             makeRandomNodes('./temp/local')
@@ -214,12 +240,22 @@ def unitTestBackupOps():
         if True:
             buops.Push(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
-                b'', None, True, True, None, None
+                b'', True, True, None
             )
         # verify directories are the same and file contents are equal
-        compareTreeToTree('./temp/local', './temp/remote')
+
+        if True:
+            compareTreeToTree('./temp/local', './temp/remote')
 
         # 17240826
+
+        # perform a pull operation and verify files and contents
+        buops.Pull(
+            'localhost', 4322, 'ok492L3Dx92Xs029W', b'./temp/pulled',
+            b'', filter = None, ssl = True, sformat = True
+        )
+
+        exit()
         
         # issue a pull operation
         # verify pull operation results of files and contents
