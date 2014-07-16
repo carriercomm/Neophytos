@@ -359,8 +359,14 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
 
     switch (cmd) {
         case CmdClientDirList:
+            var path            string
+
             metaSize := Read16MSB(msg, 0)
-            path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[8:]))
+            if len(msg) < 2 {
+                path = self.config.DiskPath
+            } else {
+                path = fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[2:]))
+            }
             //fmt.Printf("DirList:%s\n", path)
             nodes, err := ioutil.ReadDir(path)
 
@@ -371,6 +377,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             if err != nil {
                 // could not access directory because it does not exist.. or other things..
                 self.MsgWrite8(0)
+                self.MsgWrite16MSB(0)
                 self.MsgEnd()
                 return nil
             }
@@ -751,10 +758,10 @@ func (self *ServerClient) Finalize() {
 // handles a single client connection
 func (self *ServerClient) ClientEntry(conn net.Conn) {
     var buf            []byte
-    var btop        uint32
+    var btop           uint32
     var err            error
-    var count        int
-    var vector        uint64
+    var count          int
+    var vector         uint64
     var msg            []byte
 
     // extra 128 bytes for header
@@ -768,8 +775,8 @@ func (self *ServerClient) ClientEntry(conn net.Conn) {
     defer pprof.WriteHeapProfile(f)
     defer func () {
         // prevent panic from shutting entire server down
-        p := recover()
-        fmt.Printf("error: %s\n", p)
+        //p := recover()
+        //fmt.Printf("error: %s\n", p)
     } ()
     defer conn.Close()
 
