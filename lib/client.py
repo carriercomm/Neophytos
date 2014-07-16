@@ -170,8 +170,7 @@ class Client:
         
         if not self.ssl:
             # get public key
-            vector = self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), Client.IOMode.Async)
-            s, v, pubkey = self.HandleMessages(lookfor = vector)
+            s, v, pubkey = vector = self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), Client.IOMode.Block)
             type, esz = struct.unpack_from('>BH', pubkey)
             e = pubkey[3:3 + esz]
             p = pubkey[3 + esz:]
@@ -184,7 +183,7 @@ class Client:
         data = struct.pack('>B', ClientType.Login) + self.aid
         vector = self.WriteMessage(data, Client.IOMode.Async)
         result = self.HandleMessages(lookfor = vector)
-        
+        print('got login')
         # initialize the time we starting recording the number of bytes sent
         self.bytesoutst = time.time()
         if result:
@@ -354,7 +353,12 @@ class Client:
         if type == ServerType.FileWrite:
             return struct.unpack_from('>B', data)[0]
         if type == ServerType.FileSize:
-            return struct.unpack_from('>BQ', data)
+            success, size = struct.unpack_from('>BQ', data)
+            # our general rule of thumb is to pretend that meta-data
+            # does not exist, unless we specifically check for it or
+            # access it
+            size -= self.metasize
+            return (success, size)
         if type == ServerType.FileTrun:
             code = struct.unpack_from('>B', data)[0]
             # this is a special situation where they have reached their quota
