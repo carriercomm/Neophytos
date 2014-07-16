@@ -32,7 +32,7 @@ class PatchJobSharedState:
 def TruncateFile(lpath, size):
     if os.path.exists(lpath) is False:
         # get base path and ensure directory structure is created
-        base = lpath[0:lpath.rfind('/')]
+        base = lpath[0:lpath.rfind(b'/')]
         if os.path.exists(base) is False:
             os.makedirs(base)
         
@@ -53,13 +53,18 @@ def CallCatch(catches, signal, *args):
     return catches[signal](*args)
 
 
-def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sformat = True):
+def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
     if rpath is None:
         rpath = b'/'
 
+    # the default metadata size
+    metasize = 128
+
     sac = bytes(sac, 'utf8')
-    c = Client2(rhost, rport, sac, sformat)
+    c = Client2(rhost, rport, sac, sformat, metasize = metasize)
+    print('connecting')
     c.Connect(essl = ssl)
+    print('connected')
 
     rpbsz = len(rpath)
     
@@ -74,6 +79,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
     def __eventDirEnum(pkg, result, vector):
         rpath = pkg[0]
         nodes = pkg[1]
+        print('__eventDirEnum', rpath)
         if result is None:
             return
         for node in result:
@@ -118,14 +124,16 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         pkg['echo'] = True
     
     # first enumerate the remote directory
+    print('dirlist for "%s"' % rpath)
     _nodes = c.DirList(rpath, Client.IOMode.Block)
     
     nodes = []
+    print('calling event')
     __eventDirEnum((rpath, nodes), _nodes, 0)
     
     sentEcho = False
     while echo['echo'] is False:
-        c.HandleMessages(0, None)
+        c.handleOrSend()
 
         quecount = len(nodes) + len(jobFileTime) + len(jobFileSize) + len(jobDownload)
         if quecount == 0 and c.waitCount() == 0 and sentEcho is False:
@@ -140,10 +148,11 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             node = nodes.pop(0)
             
             _rpath = node[0]
-            _lpath = '%s/%s' % (lpath, node[0][rpbsz:].decode('utf8'))
+            #_lpath = '%s/%s' % (lpath, node[0][rpbsz:].decode('utf8'))
+            _lpath = lpath + b'/' + node[0][rpbsz:]
             # if directory issue enumerate call
             if node[1] == 1:
-                logger.debug('requestingdirenum:%s' % _rpath)
+                print('requestingdirenum:%s' % _rpath)
                 pkg = (_rpath, nodes)
                 c.DirList(_rpath, Client.IOMode.Callback, (__eventDirEnum, pkg))
                 continue
@@ -194,7 +203,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
         
         # iterate download operations
         tr = []
-        chunksize = 1024 * 1024 * 4
+        chunksize = 1024 * 1024 * 4     # default to 4MB chunk
         for job in jobDownload:
             _rpath = job[0]
             _lpath = job[1]
@@ -202,14 +211,14 @@ def Pull(rhost, rport, sac, lpath, rpath = None, filter = None, ssl = True, sfor
             _curoff = job[3]
             # determine amount we can read and choose maximum
             _rem = _rsize - _curoff
-            if _rem > chunksize:
-                _rem = chunksize
+            rsz = min(_rem, chunksize)
             pkg = (_lpath, _curoff)
-            c.FileRead(_rpath, _curoff, chunksize, Client.IOMode.Callback, (__eventFileRead, pkg))
-            if _curoff + _rem >= _rsize:
+            c.FileRead(_rpath, _curoff, rsz, Client.IOMode.Callback, (__eventFileRead, pkg))
+            if _curoff + rsz >= _rsize:
                 tr.append(job)
                 logger.debug('finish:%s' % (_lpath))
-            job[3] = _curoff + _rem
+                continue
+            job[3] = _curoff + rsz
         # remove completed jobs
         for t in tr:
             jobDownload.remove(t)
@@ -221,8 +230,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
     if rpath is None:
         rpath = b'/'
 
+    metasize = 128
+
     sac = bytes(sac, 'utf8')
-    c = Client2(rhost, rport, sac, sformat, metasize = 128)
+    c = Client2(rhost, rport, sac, sformat, metasize = metasize)
     c.Connect(essl = ssl)
 
     # produce remote and local paths
@@ -696,7 +707,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
                 c.FileTime(_rpath, Client.IOMode.Callback, (__eventFileTime, pkg))
             else:
                 # first make the remote size match the local size
-                print('truncate', _rpath, _lsize)
+                print('truncate; rpath:%s lsize:%s rsize:%s' % (_rpath, _lsize, _rsize))
                 c.FileTrun(_rpath, _lsize, Client.IOMode.Discard)
                 if max(_rsize, _lsize) < 1:
                     CallCatch(catches, 'Finished')

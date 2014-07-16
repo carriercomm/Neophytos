@@ -188,7 +188,7 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
                 if foa.tell() - lmetasize != fob.tell() - rmetasize:
                     print('fpath:%s rpath:%s' % (fpath, frpath))
                     print('file size no match with %s:%s' % (foa.tell() - lmetasize, fob.tell() - rmetasize))
-                    exit()
+                    raise Exception('File Size Does Not Match')
 
                 sz = foa.tell()
                 rem = sz
@@ -199,8 +199,7 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
                     a = foa.read(min(1024 * 1024 * 4, rem))
                     b = fob.read(min(1024 * 1024 * 4, rem))
                     if a != b:
-                        print('data not same')
-                        exit()
+                        raise Exception('Data Not Same')
                     #for x in range(0, len(a)):
                     #    if a[x] != b[x]:
                             #fd = open('tempa', 'wb')
@@ -244,18 +243,21 @@ def unitTestBackupOps():
             )
         # verify directories are the same and file contents are equal
 
-        if True:
-            compareTreeToTree('./temp/local', './temp/remote')
+        #if True:
+        #    compareTreeToTree('./temp/local', './temp/remote')
+        '''
 
-        # 17240826
+        '''
 
         # perform a pull operation and verify files and contents
-        buops.Pull(
-            'localhost', 4322, 'ok492L3Dx92Xs029W', b'./temp/pulled',
-            b'', filter = None, ssl = True, sformat = True
-        )
+        if True:
+            buops.Pull(
+                'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/pulled',
+                b'', ssl = True, sformat = True
+            )
 
-        exit()
+        if True:
+            compareTreeToTree('./temp/local', './temp/pulled')
         
         # issue a pull operation
         # verify pull operation results of files and contents

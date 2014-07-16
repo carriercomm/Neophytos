@@ -89,10 +89,11 @@ class Client:
         # determine if we are running in 32-bit or 64-bit mode
         is64 = sys.maxsize > 2 ** 32
 
+
+        # REPLACE THIS USING LIB/LIBLOAD MODULE!!
         # load library appropriate for the operating system, if the
         # system is not supported we will use our Python implementation
         # although it is *much* slower..
-        print('sys.platform:%s', sys.platform)
         self.hentry = None
         if sys.platform.find('linux') > -1:
             self.hentry = None
@@ -169,6 +170,17 @@ class Client:
         self.ssl = essl
         
         if not self.ssl:
+            '''
+                This is a little of a mess. It is basically the support
+                for a non-SSL connection. I would like to just have this
+                not do any encryption at all for systems that do not for
+                some reason support SSL. I am not really going to try to
+                implement anything because cryptography is very tough to
+                get right so in this case im just providing the framework
+                where someone else can come in and fix it up one day whos
+                a lot smarter than me. Hence, why this code path still 
+                exists. It basically just uses a normal socket.
+            '''
             # get public key
             s, v, pubkey = vector = self.WriteMessage(struct.pack('>B', ClientType.GetPublicKey), Client.IOMode.Block)
             type, esz = struct.unpack_from('>BH', pubkey)
@@ -181,9 +193,7 @@ class Client:
             self.WriteMessage(struct.pack('>B', ClientType.SetupCrypt) + key, Client.IOMode.Discard)
 
         data = struct.pack('>B', ClientType.Login) + self.aid
-        vector = self.WriteMessage(data, Client.IOMode.Async)
-        result = self.HandleMessages(lookfor = vector)
-        print('got login')
+        result = self.WriteMessage(data, Client.IOMode.Block)
         # initialize the time we starting recording the number of bytes sent
         self.bytesoutst = time.time()
         if result:
@@ -314,7 +324,7 @@ class Client:
             if result == 0:
                 return None
             
-            data = data[1:]
+            data = data[3:]
 
             list = []
             while len(data) > 0:
@@ -343,7 +353,7 @@ class Client:
                 else:
                     revcode = None
                 # build list
-                list.append((fname, ftype, fmetadata, revcode))
+                list.append((fname, ftype, metadata, revcode))
             # return list
             return list
         if type == ServerType.FileTime:
@@ -622,6 +632,9 @@ class Client:
         # remove duplicate path separators
         while path.find(b'//') > -1:
             path = path.replace(b'//', b'/')
+        # if nothing left then just exit
+        if len(path) < 1:
+            return path
         # remove leading slash if present
         if path[0] == b'/':
             path = path[1:]
@@ -652,6 +665,7 @@ class Client:
     
     def DirList(self, xdir, mode, callback = None, metasize = None):
         xdir = self.GetServerPathForm(xdir)
+        print('xdir', xdir)
         if metasize is None:
             metasize = self.metasize
         return self.WriteMessage(struct.pack('>BH', ClientType.DirList, metasize) + xdir, mode, callback)
