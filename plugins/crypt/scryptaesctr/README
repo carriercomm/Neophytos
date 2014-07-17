@@ -1,0 +1,5 @@
+I have modified this distribution of the scrypt library. It now does not need the Python headers which is a plus on systems where they are not installed. It does require:
+
+	* standard C library
+	* libcrypto on linux or equivilent
+	* equivent to libcrypto on Windows
