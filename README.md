@@ -277,7 +277,8 @@ client issues a dir list command it tells the server what directory to list and 
 many bytes to read from the beginning of each file. This is as far as the server is concerned, and
 really it can be used for non meta data purposes. How this is used to up to the client software.
 The standard client uses it as meta data. At this time a directory has no meta data, but maybe
-in the future it may. This support is entirely up to the client.
+in the future it may. This support is entirely up to the client but could be assisted by the
+server however I would like to keep the complexity on the client.
 
 One example of meta-data is support for compression and client side encryption. Your communications
 with the server is protected by SSL/TLS and how ever that is configured. However, the client may
@@ -292,10 +293,11 @@ is supplied with the proper password.
 
 Also worth noting is that it is likely a good idea for your client to by default support at least
 one byte of meta data in order to signify that further meta data exists. The standard client uses
-the 7th bit of the first byte of each file to signify if valid meta data exists. Then it uses the
-next 6th through 0th bits to specify the type of meta data. The standard client uses b0000000 which
-is 7 zero bits for version one. _At this time this has not matured and the number of bytes following
-may changes. _I think I have it set to 128 bytes of meta-data per file in the latest commit._
+the first byte of the meta data to specify its version or type. This allows backwards compatibility
+if changes are introduced and a path for upgrading existing data if needed.
+
+* VERSION1 BYTE 0xAA
+* 0xAD through 0xAF are RESERVED
 
 _So meta data is really helpful for the client where client means both software and user._
 

@@ -12,6 +12,10 @@ import lib.flycatcher as flycatcher
 logger = flycatcher.getLogger('client')
 
 class EncryptionFilters:
+    '''
+        fpath           file path to the encryption filter file (can be None)
+        default         encryption string just like used in encryption filter file (can be None)
+    '''
     def __init__(self, fpath = None, default = None):
         # this is used for the default encryption when nothing
         # match the filters from the filter file; if no filter

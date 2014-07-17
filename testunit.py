@@ -187,6 +187,7 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
                 fob.seek(0, 2)          # account for default meta-data
                 if foa.tell() - lmetasize != fob.tell() - rmetasize:
                     print('fpath:%s rpath:%s' % (fpath, frpath))
+                    print('foa.tell():%s lmetasize:%s fob.tell():%s rmetasize:%s' % (foa.tell(), lmetasize, fob.tell(), rmetasize))
                     print('file size no match with %s:%s' % (foa.tell() - lmetasize, fob.tell() - rmetasize))
                     raise Exception('File Size Does Not Match')
 
@@ -257,7 +258,8 @@ def unitTestBackupOps():
             )
 
         if True:
-            compareTreeToTree('./temp/local', './temp/pulled')
+            # no meta size since we pulled and compare to local
+            compareTreeToTree('./temp/local', './temp/pulled', 0, 0)
         
         # issue a pull operation
         # verify pull operation results of files and contents

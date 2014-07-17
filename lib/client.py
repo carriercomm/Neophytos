@@ -669,11 +669,19 @@ class Client:
         if metasize is None:
             metasize = self.metasize
         return self.WriteMessage(struct.pack('>BH', ClientType.DirList, metasize) + xdir, mode, callback)
+    def FileReadMeta(self, fid, offset, length, mode, callback = None):
+        _fid = self.GetServerPathForm(fid)
+        # notice the difference to FileRead (has meta-data size offset)
+        return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + _fid, mode, callback)
     def FileRead(self, fid, offset, length, mode, callback = None):
         _fid = self.GetServerPathForm(fid)
         # compensate for metadata length
         offset += self.metasize
         return self.WriteMessage(struct.pack('>BQQ', ClientType.FileRead, offset, length) + _fid, mode, callback)
+    def FileWriteMeta(self, fid, offset, data, mode, callback = None):
+        fid = self.GetServerPathForm(fid)
+        # notice the difference to FileWrite (has meta-data size offset)
+        return self.WriteMessage(struct.pack('>BQHB', ClientType.FileWrite, offset, len(fid), self.bz2compression) + fid + data, mode, callback)
     def FileWrite(self, fid, offset, data, mode, callback = None):
         fid = self.GetServerPathForm(fid)
         # compensate for metadata length

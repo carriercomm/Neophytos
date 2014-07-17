@@ -43,13 +43,28 @@ def TruncateFile(lpath, size):
     os.close(fd)
     logger.debug('<trun>:%s' % lpath)
 
+'''
+    The CallCatchEx was created because I needed a way to hand back
+    a default return value instead of None. I also needed to maintain
+    backwards compatibility with existing code so I created this additional
+    function.
+'''
 def CallCatch(catches, signal, *args):
+    return CallCatchEx(catches, signal, None, *args)
+def CallCatchEx(catches, signal, defret, *args):
     if catches is None:
-        return
+        return defret
     if signal not in catches:
         if 'Uncaught' in catches:
-            return catches['Uncaught'](*args)    
-        return
+            ret = catches['Uncaught'](*args)
+            # if uncaught decided to return something
+            # then let that be returned, but if it did
+            # nothing then do not override the defret
+            if ret is None:
+                return defret
+            # return what uncaught returned
+            return ret
+        return defret
     return catches[signal](*args)
 
 
@@ -83,12 +98,16 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
         if result is None:
             return
         for node in result:
-            # skip any other revision
+            # skip any other revision but current
+            if node[3] is not None:
+                continue
+            # grab the meta data and determine the encoding/encryption tag if any
             meta = node[2]
+            tag = meta[1:1+32].strip(b'\x00')
             # check that its not a special revision or system folder
             name = node[0]
             name = rpath + b'/' + name
-            nodes.append((name, node[1]))
+            nodes.append((name, node[1], tag))
     def __eventFileTime(pkg, result, vector):
         jobFileTime.append((pkg, result))
     
@@ -157,13 +176,14 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
                 c.DirList(_rpath, Client.IOMode.Callback, (__eventDirEnum, pkg))
                 continue
             # if file issue time check
-            pkg = (_rpath, _lpath)
+            pkg = (_rpath, _lpath, node[2])
             c.FileTime(_rpath, Client.IOMode.Callback, (__eventFileTime, pkg))
         
         # iterate time responses
         for job in jobFileTime:
             _rpath = job[0][0]
             _lpath = job[0][1]
+            _etag = job[0][2]       # etag from meta-data
             _rmtime = job[1]
             if os.path.exists(_lpath):
                 stat = os.stat(_lpath)
@@ -177,7 +197,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
             # truncate the local file
             if _rmtime >= _lmtime:
                 logger.debug('date failed for %s with local:%s remote:%s' % (_lpath, _lmtime, _rmtime))
-                pkg = (_rpath, _lpath, _lsize)
+                pkg = (_rpath, _lpath, _lsize, _etag)
                 print('<request-time>:%s' % _lpath)
                 c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
         jobFileTime = []
@@ -187,6 +207,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
             _rpath = job[0][0]
             _lpath = job[0][1]
             _lsize = job[0][2]
+            _etag = job[0][3]
             _rsize = job[1]
             # if size different truncate local file to match
             if _rsize[0] != 1:
@@ -197,7 +218,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
                 # truncate local file
                 TruncateFile(_lpath, _rsize)
             # queue a download operation
-            pkg = [_rpath, _lpath, _rsize, 0]
+            pkg = [_rpath, _lpath, _rsize, 0, _etag]
             jobDownload.append(pkg)
         jobFileSize = []
         
@@ -209,6 +230,14 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
             _lpath = job[1]
             _rsize = job[2]
             _curoff = job[3]
+            _etag = job[4]
+            if len(job) < 6:
+                # create file modifier instance as file object using
+                # the etag to associate the decryption needed
+                
+            else:
+                _fo = job[5]
+
             # determine amount we can read and choose maximum
             _rem = _rsize - _curoff
             rsz = min(_rem, chunksize)
@@ -619,12 +648,20 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
                     See ./plugins/ and especially ./plugins/crypt for examples of the 
                     implementation of this.
                 '''
-                plug = CallCatch(catches, 'EncryptFilter', _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+                tag, plug = CallCatchEx(catches, 'EncryptFilter', ('', None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
                 if plug is None:
                     # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
+                    tag = ''
                 _fo = plug.beginRead(_lpath)
                 job.append(_fo)
+                # make sure the correct metadata type/version (VERSION 1) byte is written
+                c.FileWriteMeta(_rpath, 0, b'\xAA', Client.IOMode.Discard)
+                # write in the encryption tag (for automated reversal using encryption filter file)
+                btag = bytes(tag, 'utf8')
+                if len(btag) > 32:
+                    raise Exception('The encryption tag "%s" is longer than 32 bytes!' % tag)
+                c.FileWriteMeta(_rpath, 1, btag.ljust(32, b'\x00'), Client.IOMode.Discard)
             else:
                 # get existing shared state container
                 shrstate = job[5]
@@ -765,13 +802,20 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
             _curoff = uj[4]
 
             if len(uj) < 6:
-                plug = CallCatch(catches, 'EncryptFilter', _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+                tag, plug = CallCatchEx(catches, 'EncryptFilter', ('', None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
                 if plug is None:
                     # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
+                    tag = ''
                 _fo = plug.beginRead(_lpath)
                 uj.append(_fo)
-                # write in the meta-data the tag
+                # make sure the correct metadata type/version (VERSION 1) byte is written
+                c.FileWriteMeta(_rpath, 0, b'\xAA', Client.IOMode.Discard)
+                # write in the encryption tag (for automated reversal using encryption filter file)
+                btag = bytes(tag, 'utf8')
+                if len(btag) > 32:
+                    raise Exception('The encryption tag "%s" is longer than 32 bytes!' % tag)
+                c.FileWriteMeta(_rpath, 1, btag.ljust(32, b'\x00'), Client.IOMode.Discard)
             else:
                 _fo = uj[5]
 

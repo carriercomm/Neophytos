@@ -121,8 +121,9 @@ class Catcher:
             # this should rarely be used.. the caller will likely be providing
             # the efilter object when calling this function, but it is here
             # in the event that they do not..
+            etag = b''
             plug = getPM().getPluginInstance('crypt.null', '', (c, []))
-        return plug
+        return (etag, plug)
     def catchFilter(self, lpath, node, isDir):
         result = self.filter.check(lpath, node, isDir)
         if result:
