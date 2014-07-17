@@ -349,3 +349,78 @@ entire process happens on the client. The files are stored in their encrypted st
 filter includes one or more filters that select the files to apply the specified encryption on. By
 being able to apply different encryption you can use slower but highly secure algorithms on
 sensitive data and faster but less secure algorithms on files that are not very sensitive.
+
+Encryption Plugins
+=====
+
+There are some standard plugins packaged by default. Some may contain any needed binaries, and
+others may require you to build the binary for them to be usable.
+
+##### NULL
+This plugin is not generaly used directly. It essentially applies no transformation to the data.
+##### XOR
+This is a very simple and basic repeating XOR. If it repeats depends on the length of you data. It
+is highly vulnerable if the attacker can know or guess the plain text. If guessed the attacker 
+essentially gains the key and therefore gains access to any other file. This means your weakest link
+causes the remaining to fall. This should only be used to prevent casual non-technical users or
+system administrators from snooping your data. _The only advantage if even significant is the speed
+at which it can encrypt. So if you are CPU bound on encrypting and your network link can handle
+more then this could give you that boost you are looking for while still preventing casual prying
+eyes from your data._
+##### SCRYPT 
+The main advantage to this is that you can use short _rememerable_ passwords. It essentially computes
+a larger password from your smaller password. It does this in such a way that it is not technically
+feasible for the attacker to try to guess your small password, instead they must guess the larger
+generated password. The larger password is generated at run-time and is not stored anywhere. After
+generating your larger password the AES-CTR-256 cipher is used to encrypt your data. The AES-CTR-256
+uses a 64 byte password (uses 255 values per byte). This 64 byte password is generated from your short
+password. So using a password longer than 64 characters or byte is likely to bring no real gain to the
+security. The purpose of scrypt is mainly to allow you to use a _rememerable_ password. _If it were
+possible for humans to remember 64 bytes then scrypt would be useless._
+##### AESCTR256
+This essentially skips the scrypt step of making a larger password and directly uses the password you
+supply. You can use a file to supply the password using this method if you so desire. I mainly included
+this for those who wish to reduce the time required for stretching their password with scrypt.
+##### AESCTR1024
+##### I need something that is not likely to be broken in my life time...
+So at this point your looking for something that can pretty much give you enough security that
+it can be reasonably assumed that the encryption will not be broken in your life time, right? Well,
+your best bet is to use AESCTR1024. That should be impossible to brute force, unless
+some structural weakness exists in the AES-CTR algorithm and if one does exist it very well may still
+be enough of a key size to still hold up to the onslaught that would surely ensue from such a weakness
+that would cripple the entire world I would imagine. So at least if your in trouble now that someone
+has your data you likely should have no worries because the whole world is in trouble.
+
+So, now on to the more important problem. You likely should feel confident at this point that your about
+to completely overkill encryption to the point you should have no trouble sleeping at night, but before
+you relax let me explain how your encryption will be broken. The AESCTRL1024 will require you to store
+a key in a file because it is very difficult if not impossible for you to remember it and it is infeasible
+to write it down (although you could) but that would mean you would have to enter it in. So let me explain
+the two different methods in which an attacker would gain this key.
+
+The first method is the attacker gains access to the key file. Now that nice 1024-bit key becomes about as
+good as a 1-bit key because hes not going to have to do any work to decrypt your data. So how could he get
+the file? Well, if you store it on your computer he could sit down at it and copy it. Also, a trojan could
+be used via an exploit to your system or whatever system the key is stored on. This would yield the ability
+to access the key likely and reduce your restful night.
+
+The second method relies on the fact that instead of storing the file on the system you kinda take it with
+you on say a USB stick, or maybe you have a circuit implanted inside your skull and a piece of hardware
+on your computer that recieves the key from your head then enters it into the program or provides it to the
+program. Sounds great right? Well, there is one catch. If the attacker has gained access to your system from
+a software point of view and has elevated priviledges then he could essentially snoop that file or data up
+as the program is using it to encrypt or decrypt data. Of course this is much harder than the attacker just
+sitting down and copying the file it is still a very real threat.
+
+So the point is the 1024-bit key basically eliminated brute force, dictionary attacks, and random guessing. 
+What it did not eliminate was the problem of a comprimised system. The point inside the point is that you
+should, even if using AESCTR256 (256-bit key), pay more attention to securing your system. Also, to note is
+the fact that if the attacker has access to the system he likely has access to the data. 
+
+_The only contrast to
+this is if you used the key one time to encrypt and backup your data then deleted the original data and never
+plug your key back into that system again. In this case, short from destroying the key, your data is almost
+perfectly safe for your life time._
+
+
+
