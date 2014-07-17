@@ -59,7 +59,7 @@
 static int pickparams(size_t, double, double,
     int *, uint32_t *, uint32_t *);
 static int checkparams(size_t, double, double, int, uint32_t, uint32_t);
-static int getsalt(uint8_t[32]);
+static int getsalt(uint8_t*, size_t sz);
 
 static int
 pickparams(size_t maxmem, double maxmemfrac, double maxtime,
@@ -165,12 +165,11 @@ checkparams(size_t maxmem, double maxmemfrac, double maxtime,
 }
 
 static int
-getsalt(uint8_t salt[32])
+getsalt(uint8_t *salt, size_t buflen)
 {
 	int fd;
 	ssize_t lenread;
 	uint8_t * buf = salt;
-	size_t buflen = 32;
 
 #ifndef _WIN32
 	/* Open /dev/urandom. */
@@ -228,30 +227,57 @@ err0:
 #endif
 }
 
-int
-scryptkdf(
-	uint8_t *passwd, size_t passwdlen, uint8_t *dk, size_t dklen,
-	double maxmem, double maxmemfrac, double maxtime
-) {
-	uint8_t 	salt[32];
-	uint64_t	N;
+struct SPARAMS {
 	uint32_t	r;
 	uint32_t	p;
 	int			logN;
+};
+
+int getparamsize() {
+	return sizeof(struct SPARAMS);
+}
+/*
+	This will:
+		If pick is true:
+			generate a derived key and the parameters from a password
+		if pick i false:
+			recover the drived key from the password and parameters
+*/
+int
+scryptkdf(
+	uint8_t *passwd, size_t passwdlen, uint8_t *dk, size_t dklen, size_t saltsz,
+	double maxmem, double maxmemfrac, double maxtime, struct SPARAMS *params, 
+	uint8_t recover
+) {
+	uint64_t	N;
 	int			rc;
+	uint8_t		*salt;
 
-	/* Pick values for N, r, p. */
-	if ((rc = pickparams(maxmem, maxmemfrac, maxtime,
-	    &logN, &r, &p)) != 0)
-		return (rc);
-	N = (uint64_t)(1) << logN;
+	salt = (uint8_t*)&params[1];
 
-	/* Get some salt. */
-	if ((rc = getsalt(salt)) != 0)
-		return (rc);
+	if (!recover) {
+		printf("@generating\n");
+		/* Pick values for N, r, p. */
+		if ((rc = pickparams(maxmem, maxmemfrac, maxtime,
+		    &params->logN, &params->r, &params->p)) != 0)
+			return (rc);
+		N = (uint64_t)(1) << params->logN;
+
+		/* Get some salt. */
+		if ((rc = getsalt(salt, 32)) != 0)
+			return (rc);
+	} else {
+		printf("@recovering\n");
+		if ((rc = checkparams(maxmem, maxmemfrac, maxtime, params->logN, params->r, params->p)) != 0)
+			return (rc);
+
+		N = (uint64_t)(1) << params->logN;
+	}
+
+	printf("passwd:%s N:%x r:%x p:%x dklen:%x\n", passwd, N, params->r, params->p, dklen);
 
 	/* Generate the derived keys. */
-	if (crypto_scrypt(passwd, passwdlen, salt, 32, N, r, p, dk, dklen))
+	if (crypto_scrypt(passwd, passwdlen, salt, 32, N, params->r, params->p, dk, dklen))
 		return (3);
 
 	return 0;
@@ -282,7 +308,7 @@ scryptenc_setup(uint8_t header[96], uint8_t *dk,
 		N = (uint64_t)(1) << logN;
 
 		/* Get some salt. */
-		if ((rc = getsalt(salt)) != 0)
+		if ((rc = getsalt(salt, 32)) != 0)
 			return (rc);
 
 		/* Generate the derived keys. */
@@ -426,6 +452,54 @@ scryptenc_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
 	return (0);
 }
 
+int exp_AES_set_encrypt_key(uint8_t *key_enc, size_t keysz, AES_KEY *aeskey) {
+	return AES_set_encrypt_key(key_enc, keysz, aeskey);
+}
+
+int exp_getpointersize() {
+	return sizeof(uintptr_t);
+}
+
+int exp_getaeskeysize() {
+	return sizeof(AES_KEY);
+}
+
+int exp_crypto_aesctr_init(uint8_t *AESptr, AES_KEY *aeskey) {
+	struct crypto_aesctr	*AES;
+
+	AES = crypto_aesctr_init(aeskey, 0);
+
+	if (AES == NULL) {
+		return 1;
+	}
+
+	/* copy pointer into buffer */
+	memcpy(AESptr, &AES, sizeof(struct crypto_aesctr*));
+
+	return 0;
+}
+
+int exp_crypto_aesctr_stream(uint8_t *AESptr, uint8_t *ibuf, uint8_t *obuf, size_t buflen) {
+	struct crypto_aesctr	*AES;
+
+	/* restore pointer */
+	memcpy(&AES, AESptr, sizeof(struct crypto_aesctr*));
+
+	crypto_aesctr_stream(AES, ibuf, obuf, buflen);
+	
+	return 0;
+}
+
+int exp_crypto_aesctr_free(uint8_t *AESptr) {
+	struct crypto_aesctr	*AES;
+
+	memcpy(&AES, AESptr, sizeof(struct crypto_aesctr*));
+
+	crypto_aesctr_free(AES);
+
+	return 0;
+}
+
 /**
  * scryptdec_buf(inbuf, inbuflen, outbuf, outlen, passwd, passwdlen,
  *     maxmem, maxmemfrac, maxtime):
@@ -497,6 +571,37 @@ scryptdec_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
 
 	/* Success! */
 	return (0);
+}
+
+int
+scryptenc_path(uint8_t *inpath, uint8_t *outpath
+    const uint8_t * passwd, size_t passwdlen,
+    size_t maxmem, double maxmemfrac, double maxtime,
+    uint8_t *dk, uint8_t gendk)
+{
+	FILE		*_inpath;
+	FILE		*_outpath;
+	int			res;
+
+	_inpath = fopen(inpath, "rb");
+	if (!_inpath) {
+		return 1;
+	}
+	_outpath = fopen(outpath, "wb");
+	if (!_outpath) {
+		return 2;
+	}
+
+	res = scryptdenc_file(
+		_inpath, _outpath, passwd, passwdlen, 
+		maxmem, maxmemfrac, maxtime, dk, gendk
+	);
+
+	/* release resources */
+	fclose(_inpath);
+	fclose(_outpath);
+
+	return res;
 }
 
 /**
@@ -572,6 +677,37 @@ scryptenc_file(FILE * infile, FILE * outfile,
 	*/
 	/* Success! */
 	return (0);
+}
+
+int
+scryptdec_path(uint8_t *inpath, uint8_t *outpath
+    const uint8_t * passwd, size_t passwdlen,
+    size_t maxmem, double maxmemfrac, double maxtime,
+    uint8_t *dk, uint8_t gendk)
+{
+	FILE		*_inpath;
+	FILE		*_outpath;
+	int			res;
+
+	_inpath = fopen(inpath, "rb");
+	if (!_inpath) {
+		return 1;
+	}
+	_outpath = fopen(outpath, "wb");
+	if (!_outpath) {
+		return 2;
+	}
+
+	res = scryptdec_file(
+		_inpath, _outpath, passwd, passwdlen, 
+		maxmem, maxmemfrac, maxtime, dk, gendk
+	);
+
+	/* release resources */
+	fclose(_inpath);
+	fclose(_outpath);
+
+	return res;
 }
 
 /**

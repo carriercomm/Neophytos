@@ -128,6 +128,7 @@ class Xor:
         # a temporary file with a unique name if needed
         # and go from there
         if self.fod[0] == 'data':
+            os.makedirs('./temp/cryptxor')
             lxtemp = './temp/crypxor/%s.xor' % (int(time.time() * 1000))
             lxtemp = bytes(lxtemp, 'utf8')
             fo = open(lxtemp, 'wb')
@@ -166,7 +167,11 @@ def getPlugins():
 
     # ensure that the class can load properly, and if so then
     # add it to the list of plugins we are exportings
-    _loadLibrary()
+    try:
+        _loadLibrary()
+    except:
+        # return nothing
+        return (,)
 
     return (
         ('crypt.xor', Xor),
