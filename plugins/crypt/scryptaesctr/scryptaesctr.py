@@ -27,6 +27,8 @@ if _hdll is not None:
     _hexp_getpointersize = libload.getExportFunction(_hdll, 'exp_getpointersize')
     _hexp_AES_set_encrypt_key = libload.getExportFunction(_hdll, 'exp_AES_set_encrypt_key')
     _hexp_getaeskeysize = libload.getExportFunction(_hdll, 'exp_getaeskeysize')
+else:
+    raise Exception('OOPS - DEBUGGING')
 
 '''
     int exp_crypto_aesctr_free(uint8_t *AESptr) {
@@ -170,7 +172,7 @@ def hscryptenc_path(inpath, outpath, password, maxmem, maxmemfrac, maxtime, dk):
     else:
         dkgen = 0
 
-    return scryptenc_path(
+    return _hscryptenc_path(
         c_char_p(inpath), c_char_p(outpath),
         c_char_p(password), c_size_t(len(password)),
         c_size_t(maxmem), c_double(maxmemfrac), c_double(maxtime),
@@ -185,7 +187,7 @@ def hscryptdec_path(inpath, outpath, password, maxmem, maxmemfrac, maxtime, dk):
     else:
         dkgen = 0
 
-    return scryptdec_path(
+    return _hscryptdec_path(
         c_char_p(inpath), c_char_p(outpath),
         c_char_p(password), c_size_t(len(password)),
         c_size_t(maxmem), c_double(maxmemfrac), c_double(maxtime),
@@ -223,10 +225,12 @@ class Scrypt:
             v = ':'.join(kv[1]) 
 
             if k == 'file':
-                self.fod = ('file', v)
+                fo = open(v, 'rb')
+                self.pw = fo.read()
+                fo.close()
                 continue
             if k == 'data':
-                self.fod = ('data', v)
+                self.pw = bytes(v, 'utf8')
                 continue
 
             logger.warn('ignore option "%s"' % k)
@@ -236,28 +240,168 @@ class Scrypt:
         # read that data from the temporary file and delete it
         # when done
         try:
-            os.makedirs('./temp/cryptxor')
+            os.makedirs('./temp/scryptaesctr')
         except:
             pass
-        lxtemp = './temp/crypxor/%s.xor' % (int(time.time() * 1000))
+        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
         lxtemp = bytes(lxtemp, 'utf8')
-        fout = open(lxtemp, 'wb')
-        fin = open(lpath, 'rb')
 
-        def _deletefile():
-            os.remove(tmpfile)
-        return XorFileEncryptObject(lpath, self.xpath, self.state)
+        hscryptenc_path(bytes(lpath, 'utf8'), lxtemp, self.pw, 1024 * 1024 * 512, 0.5, 3, None)
 
-    def beginWrite(self, lpath):
+        fo = open(lxtemp, 'rb')
+
+        #scryptaesctr.hscryptenc_path(b'input', b'output', b'mypassword', 1024 * 1024 * 512, 0.5, 3, None)
+        #scryptaesctr.hscryptdec_path(b'output', b'output2', b'mypassword', 1024 * 1024 * 512, 0.5, 3, None)
+        def _read(self, offset, length):
+            fo.seek(offset)
+            return fo.read(length)
+
+        def _finish(self):
+            fo.close()
+            os.remove(lxtemp)
+
+        return ReadWriteObject(_read, None, _finish)
+
+    def beginWrite(xself, lpath):
         # build an object to read the data into a temporary file
         # and when done decrypt it and create the decrypted file
         # or truncate the existing
-        return XorFileDecryptObject(lpath, self.xpath, self.state)
+        try:
+            os.makedirs('./temp/scryptaesctr')
+        except:
+            pass
 
+        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
+        lxtemp = bytes(lxtemp, 'utf8')
+
+        fo = open(lxtemp, 'wb')
+
+        def _write(self, offset, data):
+            fo.seek(offset)
+            return fo.write(data)
+
+        def _finish(self):
+            fo.close()
+            # decrypt the file into the local file specified
+            hscryptdec_path(lxtemp, lpath, xself.pw, 1024 * 1024 * 512, 0.5, 6, None)
+            os.remove(lxtemp)
 
 class AESCTR256:
-    pass
+    def __init__(self, client, options):
+        options = options.split(',')
 
+        for option in options:
+            kv = option.split(':')
+            if len(kv) < 2:
+                continue
+            k = kv[0]
+            v = kv[1]
+
+            if k == 'file':
+                fo = open(v, 'rb')
+                self.key = fo.read()
+                fo.close()
+                continue
+
+            logger.warn('ignore option "%s"' % k)
+
+    def beginRead(xself, lpath):
+        # encrypt the file and store it in a temporary file then
+        # read that data from the temporary file and delete it
+        # when done
+        try:
+            os.makedirs('./temp/scryptaesctr')
+        except:
+            pass
+        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
+        lxtemp = bytes(lxtemp, 'utf8')
+
+        # do encryption first ahead of time
+        xself.aesctrencpath(bytes(lpath, 'utf8'), lxtemp)
+
+        fo = open(lxtemp, 'rb')
+
+        #scryptaesctr.hscryptenc_path(b'input', b'output', b'mypassword', 1024 * 1024 * 512, 0.5, 3, None)
+        #scryptaesctr.hscryptdec_path(b'output', b'output2', b'mypassword', 1024 * 1024 * 512, 0.5, 3, None)
+        def _read(self, offset, length):
+            fo.seek(offset)
+            return fo.read(length)
+
+        def _finish(self):
+            fo.close()
+            os.remove(lxtemp)
+
+        return ReadWriteObject(_read, None, _finish)
+
+    def beginWrite(xself, lpath):
+        # build an object to read the data into a temporary file
+        # and when done decrypt it and create the decrypted file
+        # or truncate the existing
+        try:
+            os.makedirs('./temp/scryptaesctr')
+        except:
+            pass
+
+        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
+        lxtemp = bytes(lxtemp, 'utf8')
+
+        fo = open(lxtemp, 'wb')
+
+        def _write(self, offset, data):
+            fo.seek(offset)
+            return fo.write(data)
+
+        def _finish(self):
+            fo.close()
+            # do decryption
+            xself.aesctrencpath(lxtemp, lpath)
+            os.remove(lxtemp)
+    '''
+        This takes two files. One is input, and the other
+        is output. The output file is created or truncated.
+        The input file is NOT modified. It will either 
+        encrypt an unencrypted file, or decrypt an encrypted
+        file. It works both ways with the same key.
+
+        aesctrincpath('myfile', 'myencryptedfile') <--- encryption
+        aesctrincpath('myencryptedfile', 'myfile') <--- decryption
+    '''
+    def aesctrencpath(self, ifile, ofile):
+        fi = open(ifile, 'rb')
+        fo = open(ofile, 'wb')
+
+        ksz = len(self.key)
+
+        # drop excess key size
+        if ksz >= 32:
+            key = self.key[0:32]
+        elif ksz >= 16:
+            key = self.key[0:16]
+        elif ksz >= 8:
+            key = self.key[0:8]
+        else:
+            raise Exception('The AES key must be at least 64 bits in length.')
+
+        rcode, aeskey = hAES_set_encrypt_key(key)
+        if rcode != 0:
+            raise Exception('It looks like there was an error setting the AES encryption key.')
+        rcode, aesptr = hcrypto_aesctr_init(aeskey)
+
+        # loop through file data in multiples of key sizes
+        while True:
+            # 4MB reads seem decent enough in memory usage and performance
+            pdata = fi.read(1024 * 1024 * 4)
+            # read data until we reach EOF
+            if not pdata:
+                # exit at EOF
+                break
+            _, edata = hcrypto_aesctr_stream(aesptr, pdata)
+            # write encrypted data to the file
+            fo.write(edata)
+
+        hcrypto_aesctr_free(aesptr)
+        fi.close()
+        fo.close()
 
 def getPlugins():
     # if the library could not be loaded then we have no support

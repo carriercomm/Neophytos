@@ -58,7 +58,8 @@ def loadLibrary(basepath, basename):
             hdll = cdll.LoadLibrary(libpath)
         else:
             hdll = cdll.LoadLibrary(libpath)
-    except:
+    except Exception as e:
+        raise e
         logger.warn('could not load "%s"' % libpath)
         return None
 

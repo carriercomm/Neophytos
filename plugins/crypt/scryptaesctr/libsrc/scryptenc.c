@@ -574,7 +574,7 @@ scryptdec_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
 }
 
 int
-scryptenc_path(uint8_t *inpath, uint8_t *outpath
+scryptenc_path(uint8_t *inpath, uint8_t *outpath,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
     uint8_t *dk, uint8_t gendk)
@@ -592,7 +592,7 @@ scryptenc_path(uint8_t *inpath, uint8_t *outpath
 		return 2;
 	}
 
-	res = scryptdenc_file(
+	res = scryptenc_file(
 		_inpath, _outpath, passwd, passwdlen, 
 		maxmem, maxmemfrac, maxtime, dk, gendk
 	);
@@ -680,7 +680,7 @@ scryptenc_file(FILE * infile, FILE * outfile,
 }
 
 int
-scryptdec_path(uint8_t *inpath, uint8_t *outpath
+scryptdec_path(uint8_t *inpath, uint8_t *outpath,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
     uint8_t *dk, uint8_t gendk)
