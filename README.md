@@ -354,7 +354,10 @@ Encryption Plugins
 =====
 
 There are some standard plugins packaged by default. Some may contain any needed binaries, and
-others may require you to build the binary for them to be usable.
+others may require you to build the binary for them to be usable. At the moment all the plugins
+use a binary backing because Python is just a tad too slow for heavy integer crunching in loops.
+
+_You are welcome to development your own plugins and submit them for inclusion here!_
 
 ##### NULL
 This plugin is not generaly used directly. It essentially applies no transformation to the data.
@@ -381,11 +384,44 @@ possible for humans to remember 64 bytes then scrypt would be useless._
 This essentially skips the scrypt step of making a larger password and directly uses the password you
 supply. You can use a file to supply the password using this method if you so desire. I mainly included
 this for those who wish to reduce the time required for stretching their password with scrypt.
-##### AESCTR1024
-##### I need something that is not likely to be broken in my life time...
+
+##### What encryption plugin should I use?
+Well, this depends on how secure you want your data to be. At the moment the AESCTR256 _should_ be 
+really strong if you use a decently random key. The difference in SCRYPT and AESCTR256 is that
+the SCRYPT takes a short password and through a memory and CPU intensive process produces a long
+key that is 256-bits in length _then_ it performs the AESCTR256. Also, the scrypt produces a different
+key across invocation resulting in different keys used to encrypt different files which might make
+it more difficult for an attacker but could be entirely overkill. So your best encryption is likely
+going to be using SCRYPT with a 64-byte input (essentially letting it transform it). But, your more
+practicle encryption might instead be using AESCTR256 with a file containing 32 bytes of randomly
+generated data. For example on Linux you can do `dd if=/dev/urandom of=mykey bs=1 count=32`. This
+will produce a 256-bit key file for usage with AESCTR256 plugin. This is practical and fast meaning
+you wont speed a tremendous amount of time encrypting your files. The SCRYPT plugin on the other hand
+will take considerable time on each file as it generates a key from your key and there is still the
+possibility of it being broken in the future because it is less mature than AES. So for lots of
+truely sensitive data I would likely use the AESCTR256 because it offers a good balance of proof
+through time with testing over the years, speed, and strength. 
+
+However, SCRYPT has the potential to
+produce different keys for each file therefore if there is no undiscovered weakness in SCRYPT it
+could essentially provide more strength by requiring the attacker to discover multiple keys instead
+of just a single key and you can use a shorter (longer the better) passwords that you can remember
+in your head instead of having to store anywhere.
+
+I mainly strive to provide the plugins to perform encryption and leave it to YOU to ultimately
+make the decision on how to protect your data, because I am unable to provide assurance that the
+algorithm, implementation, and way in which you use it will ultimately be secure enough for your
+needs not only today but in years to come.
+
+##### I need something that is not likely to be broken in my life time... 
+_This section talks about using AES-CTR-1024 which is not supported at this time. The AES-CTR-256 is
+very strong and should be used, but this section mainly tries to show how even with the strongest
+encryption in the universe your still at the mercy of the system you use it on. If your system is
+comprimised then your key and your data should be considered commprised rendering encryption ineffective._
+
 So at this point your looking for something that can pretty much give you enough security that
 it can be reasonably assumed that the encryption will not be broken in your life time, right? Well,
-your best bet is to use AESCTR1024. That should be impossible to brute force, unless
+your best bet is to use AES-CTR-1024. That should be impossible to brute force, unless
 some structural weakness exists in the AES-CTR algorithm and if one does exist it very well may still
 be enough of a key size to still hold up to the onslaught that would surely ensue from such a weakness
 that would cripple the entire world I would imagine. So at least if your in trouble now that someone
@@ -393,7 +429,7 @@ has your data you likely should have no worries because the whole world is in tr
 
 So, now on to the more important problem. You likely should feel confident at this point that your about
 to completely overkill encryption to the point you should have no trouble sleeping at night, but before
-you relax let me explain how your encryption will be broken. The AESCTRL1024 will require you to store
+you relax let me explain how your encryption will be broken. The AES-CTRL-1024 will require you to store
 a key in a file because it is very difficult if not impossible for you to remember it and it is infeasible
 to write it down (although you could) but that would mean you would have to enter it in. So let me explain
 the two different methods in which an attacker would gain this key.
@@ -414,8 +450,10 @@ sitting down and copying the file it is still a very real threat.
 
 So the point is the 1024-bit key basically eliminated brute force, dictionary attacks, and random guessing. 
 What it did not eliminate was the problem of a comprimised system. The point inside the point is that you
-should, even if using AESCTR256 (256-bit key), pay more attention to securing your system. Also, to note is
-the fact that if the attacker has access to the system he likely has access to the data. 
+should, even if using AES-CTR-256 (256-bit key), pay more attention to securing your system. Also, to note is
+the fact that if the attacker has access to the system he likely has access to the data. Sure maybe the NSA
+will not be able to break the encryption, but the point being they might just knock on your door and place
+you into custody and demand the keys - so keep that in mind. 
 
 _The only contrast to
 this is if you used the key one time to encrypt and backup your data then deleted the original data and never
