@@ -12,6 +12,11 @@ import ctypes
 from lib.client import Client2
 from lib import buops
 
+from lib.pluginman import getPM
+
+from lib.efilters import EncryptionFilters  # encryption filters created from encryption filter file
+from lib.filter import Filter               # single filter created from file normally
+
 pyrandgenbytes_hdll = None
 pyrandgenbytes_hfunc = None
 
@@ -102,7 +107,7 @@ def makeRandomList(sz, charset):
         out.append(charset[random.randint(0, len(charset) - 1)])
     return out
 
-def makeRandomNodes(path, maxSpace = 1024 * 1024 * 100, maxFiles = 100, maxPathLength = 38):
+def makeRandomNodes(path, maxSpace = 1024 * 1024 * 2, maxFiles = 20, maxPathLength = 38):
     cs = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']
 
     files = {}
@@ -220,47 +225,106 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
 def unitTestBackupOps():
     for run in range(0, 100):
         # remove temp directories if they exist
-        if True:
+        if False:                                   # remove local
             if os.path.exists('./temp/local'):
                 shutil.rmtree('./temp/local')
-            if os.path.exists('./temp/remote'):
-                shutil.rmtree('./temp/remote')
-            if os.path.exists('./temp/pulled'):
-                shutil.rmtree('./temp/pulled')
-            # create temp directorys
             os.makedirs('./temp/local')
-            os.makedirs('./temp/remote')
-            os.makedirs('./temp/pulled')
-
             print('building random file tree (may take a while..)')
             makeRandomNodes('./temp/local')
+
+        if False:                                    # remove server storage location
+            if os.path.exists('./temp/remote'):
+                shutil.rmtree('./temp/remote')
+            os.makedirs('./temp/remote')
+        if True:                                   # remove pulled
+            if os.path.exists('./temp/pulled'):
+                shutil.rmtree('./temp/pulled')
+            os.makedirs('./temp/pulled')
+
+        class Catcher:
+            def __init__(self, ct, filterfile, efilterfile, defcryptstring):
+                self.ct = ct
+
+                # ensure default encryption filter object is created
+                self.efilters = EncryptionFilters(efilterfile, defcryptstring)
+
+                if filterfile is not None:
+                    self.filter = Filter(filterfile)
+                else:
+                    self.filter = None
+
+            def catchDecryptByTag(self, tag):
+                # we need to search throuh our encryption filter
+                # and attempt to determine the plugin and options
+                # to pass for reversal of the encryption
+                return self.efilters.reverse(tag)
+
+            def catchEncryptFilter(self, lpath, node, isDir):
+                print('catchEncryptFilter called for lpath:"%s"' % lpath)
+                if self.efilters is not None:
+                    print('    efilters is not None')
+                    # get the encryption information we need
+                    einfo = self.efilters.check(lpath, node, isDir)
+                    print('einfo:"%s"' % (einfo,))
+                    # build and name some important stuff for readability
+                    etag = einfo[0]
+                    plugid = einfo[1]
+                    plugopts = einfo[2]
+                    plugtag = '%s.%s' % (plugid, plugopts)
+                    plug = getPM().getPluginInstance(plugid, plugtag, (None, plugopts))
+                else:
+                    # this should rarely be used.. the caller will likely be providing
+                    # the efilter object when calling this function, but it is here
+                    # in the event that they do not..
+                    etag = b''
+                    plug = getPM().getPluginInstance('crypt.null', '', (None, []))
+                    plugopts = (c, [])
+                print('    returned etag:%s plug:%s plugopts:%s' % (etag, plug, plugopts))
+                return (etag, plug, plugopts)
+
+
+        # filter-file
+        # efilter-file
+        # defencstring
+
+        fo = open('./temp/efilter', 'w')
+        fo.close()
+
+        fo = open('./temp/filter', 'w')
+        fo.write('any     accept    .*\n')
+        fo.close()
+
+        sw = Catcher(None, './temp/filter', './temp/efilter', 'apple,crypt.xor,data:okok')
+        catches = {
+            'DecryptByTag':         sw.catchDecryptByTag,       #
+            'EncryptFilter':        sw.catchEncryptFilter,      #
+        }
+
         # create account file
         # start the server
         # issue a push operation (most basic operation.. no filters.. no catches..)
-        if True:
+        if False:
             buops.Push(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
-                b'', True, True, None
+                b'', True, True, catches = catches
             )
         # verify directories are the same and file contents are equal
 
         #if True:
         #    compareTreeToTree('./temp/local', './temp/remote')
-        '''
-
-        '''
 
         # perform a pull operation and verify files and contents
         if True:
             buops.Pull(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/pulled',
-                b'', ssl = True, sformat = True
+                b'', True, True, catches = catches
             )
 
         if True:
             # no meta size since we pulled and compare to local
             compareTreeToTree('./temp/local', './temp/pulled', 0, 0)
-        
+
+        exit()
         # issue a pull operation
         # verify pull operation results of files and contents
         # delete some random local directory files

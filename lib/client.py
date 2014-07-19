@@ -330,6 +330,7 @@ class Client:
             while len(data) > 0:
                 # parse header
                 fnamesz, ftype, metaValid = struct.unpack_from('>HBB', data)
+
                 # grab meta data
                 if metaValid:
                     metadata = data[4:4 + metasize]
@@ -352,6 +353,7 @@ class Client:
                     fname = fname[9:]
                 else:
                     revcode = None
+                print('fname:%s metaValid:%s metadata:%s' % (fname, metaValid, metadata))
                 # build list
                 list.append((fname, ftype, metadata, revcode))
             # return list

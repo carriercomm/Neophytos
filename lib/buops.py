@@ -68,7 +68,7 @@ def CallCatchEx(catches, signal, defret, *args):
     return catches[signal](*args)
 
 
-def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
+def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, catches = None):
     if rpath is None:
         rpath = b'/'
 
@@ -103,7 +103,10 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
                 continue
             # grab the meta data and determine the encoding/encryption tag if any
             meta = node[2]
-            tag = meta[1:1+32].strip(b'\x00')
+            if meta is not None:
+                tag = meta[1:1+32].strip(b'\x00')
+            else:
+                tag = None
             # check that its not a special revision or system folder
             name = node[0]
             name = rpath + b'/' + name
@@ -125,17 +128,24 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
         data = result[1]
         _lpath = pkg[0]
         _off = pkg[1]
+        _fo = pkg[2]
+
         logger.debug('write:%s:%x' % (_lpath, _off))
+
+        print('@@@@WRITE')
+        _fo.write(_off, data)
+        print('@@@@@')
+
         # hey.. just keep on moving..
-        try:
-            fd = open(_lpath, 'r+b')
-            fd.seek(_off)
-            fd.write(data)
-            fd.close()
-        except Exception as e:
-            print('exception writing to %s' % (_lpath))
-            print(e)
-            exit()
+        #try:
+        #    fd = open(_lpath, 'r+b')
+        #    fd.seek(_off)
+        #    fd.write(data)
+        #    fd.close()
+        #except Exception as e:
+        #    print('exception writing to %s' % (_lpath))
+        #    print(e)
+        #    exit()
         
     echo = { 'echo': False }
         
@@ -165,7 +175,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
             # but this will ensure more expected order
             # of operations..
             node = nodes.pop(0)
-            
+
             _rpath = node[0]
             #_lpath = '%s/%s' % (lpath, node[0][rpbsz:].decode('utf8'))
             _lpath = lpath + b'/' + node[0][rpbsz:]
@@ -231,17 +241,42 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True):
             _rsize = job[2]
             _curoff = job[3]
             _etag = job[4]
+
+            '''
+                We are going to download this file. We know the etag which is
+                used by modification plugins to alter the file for encryption
+                or compression for example. So we need to try to match the tag
+                back with the plugin and the options for it. Then create a 
+                write object so as it is written it is unmodified back to it's
+                original form.
+            '''
             if len(job) < 6:
-                # create file modifier instance as file object using
-                # the etag to associate the decryption needed
-                
+                _etag = _etag.decode('utf8', 'ignore')
+                _, _plugid, _plugopts = CallCatchEx(catches, 'DecryptByTag', (None, None, None), _etag)
+
+                if _ is None and _etag is not None and len(_etag) > 0:
+                    # well, we apparently have no entry for this file so we
+                    # need to alert the user or the calling code that there
+                    # is a problem that needs to be addressed
+                    raise Exception('Tag specified as "%s" but no plugin found.' % _etag)
+
+                if _ is None:
+                    # just use the null plugin
+                    _ = None
+                    _plugid = 'crypt.null'
+                    _plugopts = (None, [])
+
+                print('etag:%s _:%s plugid:%s plugopts:%s' % (_etag, _, _plugid, _plugopts))
+                plug = getPM().getPluginInstance(_plugid, _etag, (None, _plugopts,))
+                _fo = plug.beginwrite(_lpath)
+                job.append(_fo)
             else:
                 _fo = job[5]
 
             # determine amount we can read and choose maximum
             _rem = _rsize - _curoff
             rsz = min(_rem, chunksize)
-            pkg = (_lpath, _curoff)
+            pkg = (_lpath, _curoff, _fo)
             c.FileRead(_rpath, _curoff, rsz, Client.IOMode.Callback, (__eventFileRead, pkg))
             if _curoff + rsz >= _rsize:
                 tr.append(job)
@@ -648,12 +683,15 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
                     See ./plugins/ and especially ./plugins/crypt for examples of the 
                     implementation of this.
                 '''
-                tag, plug = CallCatchEx(catches, 'EncryptFilter', ('', None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
-                if plug is None:
+                tag, plugid, plugopts = CallCatchEx(catches, 'EncryptFilter', ('', None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+                if plugid is None:
                     # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
                     tag = ''
-                _fo = plug.beginRead(_lpath)
+                else:
+                    #def getPluginInstance(self, plugid, tag, options = (), koptions = {}):
+                    plug = getPM().getPluginInstance(plugid, tag, plugopts)
+                _fo = plug.beginread(_lpath)
                 job.append(_fo)
                 # make sure the correct metadata type/version (VERSION 1) byte is written
                 c.FileWriteMeta(_rpath, 0, b'\xAA', Client.IOMode.Discard)
@@ -710,6 +748,27 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
             if _lsize > 1024 * 1024 * 200:
                 continue
             ###############################################
+
+            '''
+                We have to get the modified size of the local file
+                since we will be comparing this to the remote. For
+                the NULL modification plugin it will be exactly the
+                same, but for others it will be different. So we do
+                that here. The plugin instance is cached by the plugin
+                manager (PM).
+            '''
+            tag, plug, plugopts = CallCatchEx(catches, 'EncryptFilter', (None, None, None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+            print('encryptfilter returned tag:%s plugid:%s plugopts:%s' % (tag, plug, plugopts))
+            if tag is None:
+                # if none specified then default to null
+                plug = getPM().getPluginInstance('crypt.null', '', (c, []))
+
+            if plug is None:
+                raise Exception('Apparently, we are missing a plugin referenced by "%s".' % plugid)
+
+            _esize = plug.getencryptedsize(_lpath)
+            _lsize = _esize
+
             _rpath = rpath + _lpath[lpbsz:]
             stat_checked = stat_checked + 1
             pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
@@ -801,13 +860,20 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
             _lsize = uj[3]
             _curoff = uj[4]
 
+            '''
+                Here we have to determine what modification plugin to use
+                and then get an instance of it, and use that instance to
+                do read operations instead of directly on the file.
+            '''
             if len(uj) < 6:
-                tag, plug = CallCatchEx(catches, 'EncryptFilter', ('', None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+                tag, plug, plutopts = CallCatchEx(catches, 'EncryptFilter', (None, None, None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
                 if plug is None:
                     # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
                     tag = ''
-                _fo = plug.beginRead(_lpath)
+                print('$$$$$$$$$$$$$$$')
+                _fo = plug.beginread(_lpath)
+                print('$$$$$$$$$$$$$$$')
                 uj.append(_fo)
                 # make sure the correct metadata type/version (VERSION 1) byte is written
                 c.FileWriteMeta(_rpath, 0, b'\xAA', Client.IOMode.Discard)
@@ -818,8 +884,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
                 c.FileWriteMeta(_rpath, 1, btag.ljust(32, b'\x00'), Client.IOMode.Discard)
             else:
                 _fo = uj[5]
-
-
+            '''
+                At this point we have the modification plugin instance
+                read object and we are treating it like a normal file.
+            '''
             _chunksize = 1024 * 1024 * 4
             # see what we can send
             _rem = min(_lsize - _curoff, _chunksize)
@@ -828,10 +896,12 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
             #_fd.seek(_curoff)
             #_data = _fd.read(_rem)
             #_fd.close()
+
+
             _data = _fo.read(_curoff, _rem)
 
             CallCatch(catches, 'Write', _rpath, _lpath, _curoff, _chunksize)
-            
+
             c.FileWrite(_rpath, _curoff, _data, Client.IOMode.Discard)
             # advance our current offset
             uj[4] = _curoff + len(_data)

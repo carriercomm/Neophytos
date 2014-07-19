@@ -51,6 +51,15 @@ class EncryptionFilters:
 
         self.filters = filters
 
+    def reverse(self, tag):
+        """ Return the (plugintype, options) for the given tag or None if not found. """
+        print('CHECK; tag:%s def:%s' % (tag, self.default[0]))
+        if tag == self.default[0]:
+            return (True, self.default[1], self.default[2])
+        for filter in self.filters:
+            if filter[0] == tag:
+                return (True, filter[1], filter[2])
+        return (None, None, None)
     '''
         Try to find a filter that matches and then return
         the tag, plugin name, and options. If no matches

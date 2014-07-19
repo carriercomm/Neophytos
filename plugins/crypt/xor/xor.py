@@ -18,29 +18,26 @@ class XorFileEncryptObject:
     def __init__(self, lpath, xpath, gstate):
         self.lpath = lpath
         self.xpath = xpath
-
-        # the init routine will copy the gstate into
-        # the local state when we pass it in like this
-        self.state = _callInit(self.lpath, 0, gstate)
+        self.state = _callinit(self.lpath, 0, gstate, 0)
 
     def read(self, offset, length):
-        return _callRead(self.state, offset, length)
+        return _callread(self.state, offset, length)
 
     def finish(self):
-        # let the library code cleanup anything it needs to cleanup
-        # mainly for XOR it should just be closing the files that it
-        # has opened
-        _callFinish(self.state)
+        _callfinish(self.state)
 
 # yeah.. i used inheritance.. it reduced copy and paste
-class XorFileDecryptObject(XorFileEncryptObject):
-    # override this method and throw an exception to
-    # prevent programmer error..
-    def read(self):
-        raise Exception('Not Supported')
-    # implement new method
+class XorFileDecryptObject:
+    def __init__(self, lpath, xpath, gstate):
+        self.lpath = lpath
+        self.xpath = xpath
+        self.state = _callinit(self.lpath, 0, gstate, 1)
+
     def write(self, offset, data):
-        return _callWrite(self.state, offset, data)
+        return _callwrite(self.state, offset, data)
+
+    def finish(self):
+        _callfinish(self.state)
 
 hdll = None
 hstart = None
@@ -48,7 +45,7 @@ hread = None
 hwrite = None
 hfinish = None
 
-def _loadLibrary():
+def _loadlibrary():
     global hdll
     global hstart
     global hread
@@ -63,7 +60,7 @@ def _loadLibrary():
         hfinish = libload.getExportFunction(hdll, 'cryptxor_finish')
 
 # initialize the state
-def _callInit(fpath, xfpath, gstate = None):
+def _callinit(fpath, xfpath, gstate = None, write = 0):
     global hstart
     # made it a little bigger than needed.. room to grow
     if gstate is None:
@@ -72,18 +69,18 @@ def _callInit(fpath, xfpath, gstate = None):
     # it seems sometimes the file is created but the library fails
     # to open it but if you try a few times it finally opens the
     # file
-    logger.debug('fpath:%s xfpath:%s' % (fpath, xfpath))
+    logger.debug('_callinit: fpath:%s xfpath:%s' % (fpath, xfpath))
     if fpath is not None:
         fpath = ctypes.c_char_p(fpath)
     else:
         fpath = ctypes.c_void_p(0)
 
-    ret = hstart(state, fpath, ctypes.c_char_p(xfpath), gstate)
+    ret = hstart(state, fpath, ctypes.c_char_p(xfpath), gstate, ctypes.c_uint8(write))
     if ret == 0:
         raise Exception('XOR INIT EXCEPTION')
     return state
 
-def _callRead(state, offset, length):
+def _callread(state, offset, length):
     global hread
     obuf = ctypes.create_string_buffer(length)
     logger.debug('state:%s offset:%s length:%s' % (state, offset, length))
@@ -91,11 +88,11 @@ def _callRead(state, offset, length):
     obuf = bytes(obuf)
     return obuf
 
-def _callWrite(state, offset, data):
+def _callwrite(state, offset, data):
     global hwrite
     hwrite(state, ctypes.c_uint64(offset), ctypes.c_char_p(data), ctypes.c_uint64(len(data)))
     
-def _callFinish(state):
+def _callfinish(state):
     global hfinish
     hfinish(state, ctypes.c_void_p(0));
 
@@ -128,7 +125,10 @@ class Xor:
         # a temporary file with a unique name if needed
         # and go from there
         if self.fod[0] == 'data':
-            os.makedirs('./temp/cryptxor')
+            try:
+                os.makedirs('./temp/cryptxor')
+            except:
+                pass
             lxtemp = './temp/crypxor/%s.xor' % (int(time.time() * 1000))
             lxtemp = bytes(lxtemp, 'utf8')
             fo = open(lxtemp, 'wb')
@@ -141,23 +141,22 @@ class Xor:
             self.usedtemp = False
 
         # initialize global state (pass None for global state and zero for lpath)
-        self.state = _callInit(None, self.xpath, None)
+        self.state = _callinit(None, self.xpath, None)
 
-    '''
-        Called when the operation on the file specified
-        with `lpath` begins an encryption operation.
-    '''
-    def beginRead(self, lpath):
+    def getencryptedsize(self, lpath, opts = None):
+        """ Return the bytes in size of the encrypted file. """
+        return os.stat(lpath).st_size
+
+    def beginread(self, lpath):
+        """ Return a read object. """
         return XorFileEncryptObject(lpath, self.xpath, self.state)
-    '''
-        Called when the operation on the file specified
-        with 'lpath' begins an decryption operation.
-    '''
-    def beginWrite(self, lpath):
+
+    def beginwrite(self, lpath):
+        """ Return a write object. """
         return XorFileDecryptObject(lpath, self.xpath, self.state)
 
 
-def getPlugins():
+def getplugins():
     # clear out temp directory files
     try:
         shutil.rmtree('./temp/cryptxor/')
@@ -168,10 +167,11 @@ def getPlugins():
     # ensure that the class can load properly, and if so then
     # add it to the list of plugins we are exportings
     try:
-        _loadLibrary()
-    except:
+        _loadlibrary()
+    except Exception as e:
         # return nothing
-        return (,)
+        raise e
+        return tuple()
 
     return (
         ('crypt.xor', Xor),

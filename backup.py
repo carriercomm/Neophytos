@@ -107,6 +107,12 @@ class Catcher:
         self.acceptedCount = 0
         self.rejectedCount = 0
 
+    def catchDecryptByTag(self, tag):
+        # we need to search throuh our encryption filter
+        # and attempt to determine the plugin and options
+        # to pass for reversal of the encryption
+        return self.efilters.reverse(tag)
+
     def catchEncryptFilter(self, lpath, node, isDir):
         if self.efilters is not None:
             # get the encryption information we need
@@ -123,7 +129,8 @@ class Catcher:
             # in the event that they do not..
             etag = b''
             plug = getPM().getPluginInstance('crypt.null', '', (c, []))
-        return (etag, plug)
+            plugopts = (c, [])
+        return (etag, plug, plugopts)
     def catchFilter(self, lpath, node, isDir):
         result = self.filter.check(lpath, node, isDir)
         if result:
@@ -332,10 +339,11 @@ def main(ct, args):
         'LongestPatchOp':       sw.catchLongestPatchOp,     # longest living patch operation
         'PatchFinish':          sw.catchPatchFinish,        # when patch operation finishes
         'Filter':               sw.catchFilter,             # called to filter a file or dir
+        'DecryptByTag':         sw.catchDecryptByTag,       #
+        'EncryptFilter':        sw.catchEncryptFilter,      #
     }
 
     if 'push' in setopts:
-        print('push')
         lib.buops.Push(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
             setopts['rpath'], filter, setopts['ssl'], setopts['sformat'], catches,

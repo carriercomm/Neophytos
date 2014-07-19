@@ -367,6 +367,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             } else {
                 path = fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[2:]))
             }
+
             //fmt.Printf("DirList:%s\n", path)
             nodes, err := ioutil.ReadDir(path)
 
@@ -399,13 +400,14 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 // then the remaining bytes of what is considered
                 // metadata
                 if !n.IsDir() && metaSize > 0 {
-                    fd, err := os.OpenFile(n.Name(), os.O_RDWR, 0)
+                    fd, err := os.OpenFile(fmt.Sprintf("%s/%s", path, n.Name()), os.O_RDWR, 0)
                     if err == nil {
                         _, err := fd.Read(metaBuf)
                         if err == nil {
                             self.MsgWrite8(1)
                             self.MsgWrite(metaBuf)
                         } else {
+                            fmt.Printf("reading meta data:%s\n", err)
                             self.MsgWrite8(0)
                             self.MsgWrite(metaBuf)
                         }
@@ -440,6 +442,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             off := Read64MSB(msg, 0)
             rsz := Read64MSB(msg, 8)
             path := fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[16:]))
+            fmt.Printf("read:%s\n", path)
             fo, err := os.OpenFile(path, os.O_RDWR, 0)
             defer fo.Close()
             if err != nil {

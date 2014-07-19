@@ -1,5 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
+#include <string.h>
 
 typedef unsigned long long  uint64;
 typedef unsigned int        uint32;
@@ -24,16 +26,22 @@ typedef struct _CRYPTXOR {
     uint64      xfosz;
 } CRYPTXOR;
 
-int EXPORT cryptxor_start(CRYPTXOR *s, char *file, char *xfile, CRYPTXOR  *g) {
+int EXPORT cryptxor_start(CRYPTXOR *s, char *file, char *xfile, CRYPTXOR  *g, uint8 write) {
     memset(s, 0, sizeof(CRYPTXOR));
 
     /* if global exist copy onto local */
     if (g) {
+        printf("copying global to local\n");
         memcpy(s, g, sizeof(CRYPTXOR));
     }
 
     if (file) {
-        s->fo = fopen(file, "rb");
+        printf("opening file:%s\n", file);
+        if (write) {
+            s->fo = fopen(file, "wb");
+        } else {
+            s->fo = fopen(file, "rb");
+        }
     }
 
     /* for global init we just want to open xfile */
@@ -44,6 +52,7 @@ int EXPORT cryptxor_start(CRYPTXOR *s, char *file, char *xfile, CRYPTXOR  *g) {
 
     /* is it already open? */
     if (!s->xfo) {
+        printf("opening xfile:%s\n", xfile);
         s->xfo = fopen(xfile, "rb");
         fseek(s->xfo, 0, SEEK_END);
         s->xfosz = ftell(s->xfo);
@@ -58,6 +67,8 @@ int EXPORT cryptxor_start(CRYPTXOR *s, char *file, char *xfile, CRYPTXOR  *g) {
 
     return 1;
 }
+
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 /* 
     reads the data from the file and encryptions it and hands
@@ -146,7 +157,7 @@ int EXPORT cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     uint64      rem;
     uint8       *xbuf;
     uint8       *obuf;
-    uint64      x, lx;
+    uint64      x, lx, y;
     int64       cnt;
 
     /* seek to position in our output file */
@@ -156,15 +167,44 @@ int EXPORT cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     fseek(s->xfo, o - ((o / s->xfosz) * s->xfosz), SEEK_SET);
 
     /* allocate a buffer to hold XOR key stream */
-    xbuf = (uint8*)malloc(dsz);
+    xbuf = (uint8*)malloc(SMALLKEY);
     obuf = (uint8*)malloc(dsz);
+
+    #ifdef SMALLKEYSUPPORT
+    /* this is an optimization for when our key data is fairly small */
+    if (s->xfosz < SMALLKEY) { /* 4MB is threshold for considering a small key */
+        /* this can be further optimized by storing xbuf in our state! */
+        xbuf = (uint8*)malloc(s->xfosz);
+        fread(xbuf, 1, s->xfosz, s->xfo);
+
+        rem = dsz;
+        x = 0;
+        while (rem > 0) {
+            /* loop our key over the data stopping before
+               the end of our key OR the end of the data */
+            for (y = 0; y < s->xfosz && y < rem; ++x, ++y) {
+                obuf[x] = data[x] ^ xbuf[y];
+            }
+            /* subtract the amount we processed */
+            rem -= y;
+        }
+
+        x = fwrite(obuf, 1, dsz, s->fo);
+        printf("WROTE %x bytes\n", x);
+
+        free(obuf);
+        free(xbuf);
+        return 1;
+    }
+    #endif
+
 
     /* set local offset */
     lx = 0;
     /* set remaining data */
     rem = dsz;
     while (rem > 0) {
-        cnt = fread(xbuf, 1, rem, s->xfo);
+        cnt = fread(xbuf, 1, SMALLKEY, s->xfo);
 
         if (cnt < 1) {
             /* seek back to the beginning of the file */
@@ -181,7 +221,7 @@ int EXPORT cryptxor_write(CRYPTXOR *s, uint64 o, uint8 *data, uint64 dsz) {
     }
 
     /* write decrypted chunk to the file specified by the offset */
-    fwrite(obuf, 1, dsz, s->fo);
+    fwrite(obuf, dsz, 1, s->fo);
 
     /* free the buffers used */
     free(xbuf);

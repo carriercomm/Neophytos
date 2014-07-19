@@ -380,13 +380,55 @@ uses a 64 byte password (uses 255 values per byte). This 64 byte password is gen
 password. So using a password longer than 64 characters or byte is likely to bring no real gain to the
 security. The purpose of scrypt is mainly to allow you to use a _rememerable_ password. _If it were
 possible for humans to remember 64 bytes then scrypt would be useless._
-##### AESCTR256
+##### AESCTR
 This essentially skips the scrypt step of making a larger password and directly uses the password you
 supply. You can use a file to supply the password using this method if you so desire. I mainly included
-this for those who wish to reduce the time required for stretching their password with scrypt.
+this for those who wish to reduce the time required for stretching their password with scrypt. You can
+provide it with 8 bytes for a 64-bit key, 16 bytes for a 128-bit key, and 32 bytes for a 256-bit key.
+
+An input file with more than 32 bytes will just have anything after the 32nd byte ignored and not used 
+so there is no gain in using a key file larger than 32 bytes unless there is a another reason for it to
+have more than 32 bytes.
+
+_Your underlying cryptography library backing the AES functions on your OS may support key sizes larger
+than 256-bit or arbitrary key sizes but at this time the plugin does not try to enumerate this support
+and is hard coded to only support 64, 128, and 256 bit key sizes and expects that support._
+##### AESCTRMULTI
+This is essentially the same as AESCTR except it can make use of more than 32 bytes in a keyfile. It will
+only use a multiple of 32 bytes. It should reject or error on a key file less than 64 bytes. So it can
+use 64, 96, 128, 160, 192, 224, 256, 288 byte chunks and so forth. If you had a 287 byte file it would
+only use 224 bytes for the key. This is because it takes the file and splits it up into 32 byte chunks, and
+if there a sequence of bytes less than 32 at the end (for example a file with 287 bytes) it will just discard
+those 31 bytes and will _NOT_ pad in order to not introduce a weak key.
+
+_So for example your 288 byte file becomes 9 individual 256-bit AES-CTR keys._
+
+When the plugin is presented with a file to encrypt it random selects one of the sub-keys (the entire file or portion
+of the file used is considered the key) using a cryptographically secure random generator provided by your OS
+and selected by the Python standard library's `os` module. It then uses this sub-key to encrypt the file with
+256-bit AES-CTR. The output is prefixed with the index of this sub-key. 
+
+You must use the same key file for decryption as you used for encryption because any changes will cause the
+wrong key to be used. So treat the key file as a whole key. I only explained how it is broken up for the more
+technical users to be able to understand what is happening.
+
+Also, the protection affording by for example a 288-bit AESCTRMULTI key is not the same as afforded by a
+288 byte (2304-bit) key is not the same as the protection by a 288 byte (2304-bit) AES-CTR key. With this
+in mind an example if say for example that tomorrow a system is built that can brute force 256-bit AES-CTR
+in one year. This means that your 2304-bit AES-CTR-MULTI key could be broken by this machine in 9 years but
+a 2304-bit AES-CTR key might still be atronomical to break for this machine. But, this is dependant on the
+attacker breaking the encryption on the key index block at the beginning of the file.
+
+After randomly selecting a sub-key and encrypting the file an additional 32 bytes are created that hold
+the first 4 bytes which hold the sub-key index in big endian then the remaining 28 bytes are random. This
+32 byte block is then encrypted using the first sub-key. So an attacker must first recover the first sub-key
+then they must recover the remaining sub-keys to recover the plain text for all files. By making each file
+encrypted with a different key the attacker is unable to make the relationship between plaintext and ciphertext
+for known files because they do not know which sub-key was used making AES even more resistant to a plaintext
+attack.
 
 ##### What encryption plugin should I use?
-Well, this depends on how secure you want your data to be. At the moment the AESCTR256 _should_ be 
+Well, this depends on how secure you want your data to be. At the moment the AESCTR using _should_ be 
 really strong if you use a decently random key. The difference in SCRYPT and AESCTR256 is that
 the SCRYPT takes a short password and through a memory and CPU intensive process produces a long
 key that is 256-bits in length _then_ it performs the AESCTR256. Also, the scrypt produces a different
@@ -412,6 +454,10 @@ I mainly strive to provide the plugins to perform encryption and leave it to YOU
 make the decision on how to protect your data, because I am unable to provide assurance that the
 algorithm, implementation, and way in which you use it will ultimately be secure enough for your
 needs not only today but in years to come.
+
+Another alternative and possibly stronger plugin to use is the aesctrmulti. This essentially takes
+a file as input and divides the file into 256-bit keys. It will not pad a key. So if you have a file
+with 255 bits you will get one key and have the equivilent to the AESCTR
 
 ##### I need something that is not likely to be broken in my life time... 
 _This section talks about using AES-CTR-1024 which is not supported at this time. The AES-CTR-256 is

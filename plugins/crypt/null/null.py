@@ -2,6 +2,7 @@
     This encryption plugin is used when none is specified. It does
     not encryption anything. It is just like a place holder.
 '''
+import os
 
 '''
     The read and write file objects help protect the
@@ -50,21 +51,24 @@ class Null:
     '''
     def __init__(self, client, options):
         pass
+
+    def getencryptedsize(self, lpath, opts = None):
+        return os.stat(lpath).st_size
     '''
         Called when the operation on the file specified
         with `lpath` begins an encryption operation.
     '''
-    def beginRead(self, lpath):
+    def beginread(self, lpath):
         return NullFileEncryptObject(lpath)
     '''
         Called when the operation on the file specified
         with 'lpath' begins an decryption operation.
     '''
-    def beginWrite(self, lpath):
+    def beginwrite(self, lpath):
         return NullFileDecryptObject(lpath)
 
 
-def getPlugins():
+def getplugins():
     return (
         ('crypt.null', Null),
     )
