@@ -13,6 +13,8 @@ import os
 import math
 import time
 
+gvector = 0
+
 '''
     THIS SECTION BUILDS THE INTERFACE TO THE NATIVE LIBRARY
 '''
@@ -251,6 +253,7 @@ class Scrypt:
             logger.warn('ignore option "%s"' % k)
 
     def beginread(self, lpath):
+        global gvector
         # encrypt the file and store it in a temporary file then
         # read that data from the temporary file and delete it
         # when done
@@ -258,8 +261,9 @@ class Scrypt:
             os.makedirs('./temp/')
         except:
             pass
-        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
+        lxtemp = './temp/scrypt.%s.tmp' % (gvector)
         lxtemp = bytes(lxtemp, 'utf8')
+        gvector = gvector + 1
 
         hscryptenc_path(lpath, lxtemp, self.pw, 1024 * 1024 * 512, 0.5, 3, None)
 
@@ -279,9 +283,10 @@ class Scrypt:
 
     def getencryptedsize(self, lpath):
         """ Return the expected encrypted size. """
-        return int(math.ceil(os.stat(lpath).st_size / 32) + 128)
+        return os.stat(lpath).st_size + 128
 
     def beginwrite(xself, lpath):
+        global gvector
         # build an object to read the data into a temporary file
         # and when done decrypt it and create the decrypted file
         # or truncate the existing
@@ -290,8 +295,9 @@ class Scrypt:
         except:
             pass
 
-        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
+        lxtemp = './temp/scrypt.%s.tmp' % (gvector)
         lxtemp = bytes(lxtemp, 'utf8')
+        gvector = gvector + 1
 
         fo = open(lxtemp, 'wb')
 
@@ -302,8 +308,19 @@ class Scrypt:
         def _finish(self):
             fo.close()
             # decrypt the file into the local file specified
-            hscryptdec_path(lxtemp, lpath, xself.pw, 1024 * 1024 * 512, 0.5, 6, None)
-            os.remove(lxtemp)
+            ret = hscryptdec_path(lxtemp, lpath, xself.pw, 1024 * 1024 * 512, 0.5, 3000, None)
+            print('ret:%s _finish lxtemp:%s lpath:%s' % (ret, lxtemp, lpath))
+
+            xfo = open(lpath, 'rb')
+            xfo.seek(0, 2)
+            if xfo.tell() == 0:
+                print('     ZERO FROM "%s"' % lxtemp)
+                ret = hscryptdec_path(lxtemp, lxtemp + b'.UU', xself.pw, 1024 * 1024 * 512, 0.5, 3000, None)
+                print('     RET:%s' % ret)
+                exit()
+
+            #hscryptdec_path(lxtemp, lxtemp + b'.u', xself.pw, 1024 * 1024 * 512, 0.5, 6, None)
+            #os.remove(lxtemp)
 
         return ReadWriteObject(None, _write, _finish)
 

@@ -589,6 +589,7 @@ scryptenc_path(uint8_t *inpath, uint8_t *outpath,
 	}
 	_outpath = fopen(outpath, "wb");
 	if (!_outpath) {
+		fcloe(_inpath);
 		return 2;
 	}
 
@@ -695,6 +696,7 @@ scryptdec_path(uint8_t *inpath, uint8_t *outpath,
 	}
 	_outpath = fopen(outpath, "wb");
 	if (!_outpath) {
+		fclose(_inpath);
 		return 2;
 	}
 

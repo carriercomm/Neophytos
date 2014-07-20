@@ -139,8 +139,16 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
 
         _opcount[0] -= 1
 
-        if _opcount[0] < 1:
+        '''
+            The [0] is the current operation count and [1]
+            is the init flag. If the init flag is True then
+            the system is still creating pending requests 
+            and therefore we should not terminate based on
+            an operation count of zero.
+        '''
+        if _opcount[0] < 1 and _opcount[1] is False:
             # we are finished
+            print('FINISH:%s' % _lpath)
             _fo.finish()
 
         # hey.. just keep on moving..
@@ -277,7 +285,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
                 plug = getPM().getPluginInstance(_plugid, _etag, (None, _plugopts,))
                 _fo = plug.beginwrite(_lpath)
                 job.append(_fo)
-                _opcount = [0]
+                _opcount = [0, True]
                 job.append(_opcount)
             else:
                 _fo = job[5]
@@ -290,10 +298,18 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
             _rem = _rsize - _curoff
             rsz = min(_rem, chunksize)
             pkg = (_lpath, _curoff, _fo, _opcount)
+            # this should *not* read messages and execute callbacks, because
+            # if it does then technically it could call the callback before
+            # we have set the init flag to False meaning the file never gets
+            # closed
             c.FileRead(_rpath, _curoff, rsz, Client.IOMode.Callback, (__eventFileRead, pkg))
             if _curoff + rsz >= _rsize:
                 tr.append(job)
                 logger.debug('finish:%s' % (_lpath))
+                # set the init flag to False so the callback
+                # code knows when the count reaches zero that
+                # the file is done
+                _opcount[1] = False
                 continue
             job[3] = _curoff + rsz
         # remove completed jobs
@@ -702,7 +718,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
                     tag = ''
                 else:
-                    #def getPluginInstance(self, plugid, tag, options = (), koptions = {}):
                     plug = getPM().getPluginInstance(plugid, tag, plugopts)
                 _fo = plug.beginread(_lpath)
                 job.append(_fo)
@@ -780,6 +795,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
                 raise Exception('Apparently, we are missing a plugin referenced by "%s".' % plugid)
 
             _esize = plug.getencryptedsize(_lpath)
+            print('_lpath:%s _esize:%s _lsize:%s' % (_lpath, _esize, _lsize))
             _lsize = _esize
 
             _rpath = rpath + _lpath[lpbsz:]
@@ -911,19 +927,33 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
             #_fd.close()
 
 
+            print('uploading _lpath:%s _curoff:%s _rem:%s' % (_lpath, _curoff, _rem))
             _data = _fo.read(_curoff, _rem)
+
+            # if no more data then stop and terminate this job
+            if not _data:
+                tr.append(uj)
+                continue
 
             CallCatch(catches, 'Write', _rpath, _lpath, _curoff, _chunksize)
 
             c.FileWrite(_rpath, _curoff, _data, Client.IOMode.Discard)
             # advance our current offset
             uj[4] = _curoff + len(_data)
+
+            # (UNUSED) -- old code not we check if _data is empty
             # if we reached the EOF then drop it
             if uj[4] >= _lsize:
                 tr.append(uj)
+            
+            # keep accounting for the bytes sent for statistics
             databytesout = databytesout + len(_data)
+
+            # dont overfill our buffers just exit
             if c.getBytesToSend() > buflimit:
                 break
+
+            # keep track of number of jobs processed (i think old code)
             cjc = cjc + 1
 
         # remove finished jobs

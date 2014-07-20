@@ -157,13 +157,6 @@ class Xor:
 
 
 def getplugins():
-    # clear out temp directory files
-    try:
-        shutil.rmtree('./temp/cryptxor/')
-        os.makedirs('./temp/crypxor/')
-    except:
-        pass
-
     # ensure that the class can load properly, and if so then
     # add it to the list of plugins we are exportings
     try:

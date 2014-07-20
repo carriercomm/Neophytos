@@ -233,14 +233,14 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
 def unitTestBackupOps():
     for run in range(0, 100):
         # remove temp directories if they exist
-        if False:                                   # remove local
+        if True:                                   # remove local
             if os.path.exists('./temp/local'):
                 shutil.rmtree('./temp/local')
             os.makedirs('./temp/local')
             print('building random file tree (may take a while..)')
-            makeRandomNodes('./temp/local')
+            makeRandomNodes('./temp/local', maxFiles = 25)
 
-        if False:                                    # remove server storage location
+        if True:                                    # remove server storage location
             if os.path.exists('./temp/remote'):
                 shutil.rmtree('./temp/remote')
             os.makedirs('./temp/remote')
@@ -311,7 +311,7 @@ def unitTestBackupOps():
         # create account file
         # start the server
         # issue a push operation (most basic operation.. no filters.. no catches..)
-        if False:
+        if True:
             buops.Push(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
                 b'', True, True, catches = catches
@@ -334,7 +334,6 @@ def unitTestBackupOps():
             time.sleep(2)
             compareTreeToTree('./temp/local', './temp/pulled', 0, 0)
 
-        exit()
         # issue a pull operation
         # verify pull operation results of files and contents
         # delete some random local directory files
