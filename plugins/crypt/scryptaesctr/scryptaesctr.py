@@ -13,6 +13,9 @@ import os
 import math
 import time
 
+import lib.flycatcher as flycatcher
+logger = flycatcher.getLogger('plugin.crypt.scryptaesctr')
+
 gvector = 0
 
 '''
@@ -309,18 +312,7 @@ class Scrypt:
             fo.close()
             # decrypt the file into the local file specified
             ret = hscryptdec_path(lxtemp, lpath, xself.pw, 1024 * 1024 * 512, 0.5, 3000, None)
-            print('ret:%s _finish lxtemp:%s lpath:%s' % (ret, lxtemp, lpath))
-
-            xfo = open(lpath, 'rb')
-            xfo.seek(0, 2)
-            if xfo.tell() == 0:
-                print('     ZERO FROM "%s"' % lxtemp)
-                ret = hscryptdec_path(lxtemp, lxtemp + b'.UU', xself.pw, 1024 * 1024 * 512, 0.5, 3000, None)
-                print('     RET:%s' % ret)
-                exit()
-
-            #hscryptdec_path(lxtemp, lxtemp + b'.u', xself.pw, 1024 * 1024 * 512, 0.5, 6, None)
-            #os.remove(lxtemp)
+            os.remove(lxtemp)
 
         return ReadWriteObject(None, _write, _finish)
 
@@ -354,10 +346,10 @@ class AESCTRMULTI:
 
             if k == 'file':
                 self.keyfile = v
-                self.fo = open(self.keyfile, 'rb')
-                self.fo.seek(0, 2)
-                self.keysz = self.fo.tell()
-                self.skc = int(self.keysz / 32)
+                self.kfo = open(self.keyfile, 'rb')
+                self.kfo.seek(0, 2)
+                self.keysz = self.kfo.tell()
+                self.skc = self.keysz // 32
                 continue
 
             logger.warn('ignore option "%s"' % k)
@@ -370,18 +362,19 @@ class AESCTRMULTI:
 
     def beginread(xself, lpath):
         """ Return read object for file specified by path. """
-        # encrypt the file and store it in a temporary file then
-        # read that data from the temporary file and delete it
-        # when done
+        global gvector
         try:
             os.makedirs('./temp/')
         except:
             pass
-        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
+
+        global gvector
+        lxtemp = './temp/%s.tmp' % (gvector)
         lxtemp = bytes(lxtemp, 'utf8')
+        gvector = gvector + 1
 
         # do encryption first ahead of time
-        xself.aesctrencmultipath(bytes(lpath, 'utf8'), lxtemp)
+        xself.aesctrencmultipath(lpath, lxtemp)
 
         fo = open(lxtemp, 'rb')
 
@@ -399,20 +392,19 @@ class AESCTRMULTI:
 
     def getencryptedsize(self, lpath):
         """ Return the expected encrypted size. """
-        return int(math.ceil(os.stat(lpath).st_size / 32))
+        return os.stat(lpath).st_size + 32
 
     def beginwrite(xself, lpath):
+        global gvector
         """ Return write object for file specified by path. """
-        # build an object to read the data into a temporary file
-        # and when done decrypt it and create the decrypted file
-        # or truncate the existing
         try:
             os.makedirs('./temp/')
         except:
             pass
 
-        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
+        lxtemp = './temp/%s.tmp' % (gvector)
         lxtemp = bytes(lxtemp, 'utf8')
+        gvector = gvector + 1
 
         fo = open(lxtemp, 'wb')
 
@@ -423,8 +415,10 @@ class AESCTRMULTI:
         def _finish(self):
             fo.close()
             # do decryption
-            xself.aesctrmultiencpath(lxtemp, lpath)
+            xself.aesctrdecmultipath(lxtemp, lpath)
             os.remove(lxtemp)
+
+        return ReadWriteObject(None, _write, _finish)
 
     def aesctrencmultipath(self, ifile, ofile):
         """ Return no value but encrypts ifile and writes output to ofile. """
@@ -434,15 +428,15 @@ class AESCTRMULTI:
 
         ski = int((rsel / 0xFFFFFFFF) * self.skc)
 
-        self.fo.seek(0)
-        fsk = self.fo.read(32)              # read first sub-key
+        self.kfo.seek(0)
+        fsk = self.kfo.read(32)              # read first sub-key
 
         # seek to the sub-key index
-        self.fo.seek(int(ski * 32))
+        self.kfo.seek(int(ski * 32))
         # read the sub-key
-        sk = self.fo.read(32)
+        sk = self.kfo.read(32)
 
-        AESCTR.aesctrencpath(None, ifile, ofile, key = sk, iseek = 0, oseek = 32)
+        ret = AESCTR.aesctrencpath(None, ifile, ofile, key = sk, iseek = 0, oseek = 32)
 
         print('ski:%s' % ski)
         ski = struct.pack('>I', ski) + os.urandom(28)
@@ -464,8 +458,8 @@ class AESCTRMULTI:
         fblock = fo.read(32)
         fo.close()
 
-        self.fo.seek(0)                     
-        fsk = self.fo.read(32)              # read first sub-key
+        self.kfo.seek(0)                     
+        fsk = self.kfo.read(32)              # read first sub-key
 
         print('fblock', fblock)
 
@@ -476,8 +470,8 @@ class AESCTRMULTI:
 
         print('ski:%s' % ski)
 
-        self.fo.seek(ski * 32)
-        sk = self.fo.read(32)               # read selected sub-key
+        self.kfo.seek(ski * 32)
+        sk = self.kfo.read(32)               # read selected sub-key
 
         if len(sk) < 32:
             raise Exception('Error on AESMULTI decrypt. The sub-key index was out of range? Read returned less than 32-bytes!')
@@ -515,15 +509,15 @@ class AESCTR:
 
     def beginread(xself, lpath):
         """ Returns read object. """
-        # encrypt the file and store it in a temporary file then
-        # read that data from the temporary file and delete it
-        # when done
+        global gvector
         try:
             os.makedirs('./temp/')
         except:
             pass
-        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
+
+        lxtemp = './temp/%s.tmp' % (gvector)
         lxtemp = bytes(lxtemp, 'utf8')
+        gvector = gvector + 1
 
         # do encryption first ahead of time
         xself.aesctrencpath(bytes(lpath, 'utf8'), lxtemp)
@@ -542,13 +536,15 @@ class AESCTR:
 
     def beginwrite(xself, lpath):
         """ Returns write object. """
+        global gvector
         try:
             os.makedirs('./temp/')
         except:
             pass
 
-        lxtemp = './temp/scryparesctr/%s.tmp' % (int(time.time() * 1000))
+        lxtemp = './temp/%s.tmp' % (gvector)
         lxtemp = bytes(lxtemp, 'utf8')
+        gvector = gvector + 1
 
         fo = open(lxtemp, 'wb')
 
@@ -560,7 +556,7 @@ class AESCTR:
             fo.close()
             # do decryption
             xself.aesctrencpath(lxtemp, lpath)
-            os.remove(lxtemp)
+            #os.remove(lxtemp)
 
     def aesctrencpath(self, ifile, ofile, key = None, iseek = 0, oseek = 0):
         """Encrypt ifile writing output to ofile.
@@ -595,7 +591,7 @@ class AESCTR:
         else:
             raise Exception('The AES key must be at least 64 bits in length.')
 
-        rcode, aeskey = hAES_set_encrypt_key(key)
+        rcode, aeskey = haes_set_encrypt_key(key)
         if rcode != 0:
             raise Exception('It looks like there was an error setting the AES encryption key.')
         rcode, aesptr = hcrypto_aesctr_init(aeskey)
