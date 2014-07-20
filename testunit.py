@@ -8,6 +8,7 @@ import sys
 import os.path
 import shutil
 import ctypes
+import time
 
 from lib.client import Client2
 from lib import buops
@@ -165,6 +166,8 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
     dirstc = []
     dirstc.append(lpath)
 
+    failed = False
+
     while len(dirstc) > 0:
         _dirstc = []
         for cdir in dirstc:
@@ -192,9 +195,11 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
                 fob.seek(0, 2)          # account for default meta-data
                 if foa.tell() - lmetasize != fob.tell() - rmetasize:
                     print('fpath:%s rpath:%s' % (fpath, frpath))
-                    print('foa.tell():%s lmetasize:%s fob.tell():%s rmetasize:%s' % (foa.tell(), lmetasize, fob.tell(), rmetasize))
-                    print('file size no match with %s:%s' % (foa.tell() - lmetasize, fob.tell() - rmetasize))
-                    raise Exception('File Size Does Not Match')
+                    print('  foa.tell():%s lmetasize:%s fob.tell():%s rmetasize:%s' % (foa.tell(), lmetasize, fob.tell(), rmetasize))
+                    print('  file size no match with %s:%s' % (foa.tell() - lmetasize, fob.tell() - rmetasize))
+                    #raise Exception('File Size Does Not Match')
+                    failed = True
+                    continue
 
                 sz = foa.tell()
                 rem = sz
@@ -205,7 +210,8 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
                     a = foa.read(min(1024 * 1024 * 4, rem))
                     b = fob.read(min(1024 * 1024 * 4, rem))
                     if a != b:
-                        raise Exception('Data Not Same')
+                        print('  Data Not Same')
+                        failed = True
                     #for x in range(0, len(a)):
                     #    if a[x] != b[x]:
                             #fd = open('tempa', 'wb')
@@ -220,6 +226,8 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
                     rem = rem - len(a)
         # 
         dirstc = _dirstc
+    if failed:
+        raise Exception('Test Failed')
 #s chapter
 
 def unitTestBackupOps():
@@ -294,7 +302,7 @@ def unitTestBackupOps():
         fo.write('any     accept    .*\n')
         fo.close()
 
-        sw = Catcher(None, './temp/filter', './temp/efilter', 'apple,crypt.xor,data:okok')
+        sw = Catcher(None, './temp/filter', './temp/efilter', 'apple,crypt.scrypt,data:okok')
         catches = {
             'DecryptByTag':         sw.catchDecryptByTag,       #
             'EncryptFilter':        sw.catchEncryptFilter,      #
@@ -321,7 +329,9 @@ def unitTestBackupOps():
             )
 
         if True:
-            # no meta size since we pulled and compare to local
+            # give it a chance to update the FS especially if it is
+            # a non-standard file system...
+            time.sleep(2)
             compareTreeToTree('./temp/local', './temp/pulled', 0, 0)
 
         exit()

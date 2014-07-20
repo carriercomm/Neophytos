@@ -11,6 +11,7 @@ from lib import libload
 import struct
 import os
 import math
+import time
 
 '''
     THIS SECTION BUILDS THE INTERFACE TO THE NATIVE LIBRARY
@@ -216,13 +217,13 @@ class ReadWriteObject():
         self.finishfunc = finishfunc
 
     def read(self, offset, length):
-        return self.readfunc(offset, length)
+        return self.readfunc(self, offset, length)
 
     def write(self, offset, data):
-        return self.writefunc(offset, data)
+        return self.writefunc(self, offset, data)
 
     def finish(self):
-        return self.finishfunc()
+        return self.finishfunc(self)
 
 '''
     THIS SECTION IMPLEMENTS THE PLUGIN OBJECTS
@@ -254,13 +255,13 @@ class Scrypt:
         # read that data from the temporary file and delete it
         # when done
         try:
-            os.makedirs('./temp/scryptaesctr')
+            os.makedirs('./temp/')
         except:
             pass
-        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
+        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
         lxtemp = bytes(lxtemp, 'utf8')
 
-        hscryptenc_path(bytes(lpath, 'utf8'), lxtemp, self.pw, 1024 * 1024 * 512, 0.5, 3, None)
+        hscryptenc_path(lpath, lxtemp, self.pw, 1024 * 1024 * 512, 0.5, 3, None)
 
         fo = open(lxtemp, 'rb')
 
@@ -276,16 +277,20 @@ class Scrypt:
 
         return ReadWriteObject(_read, None, _finish)
 
+    def getencryptedsize(self, lpath):
+        """ Return the expected encrypted size. """
+        return int(math.ceil(os.stat(lpath).st_size / 32) + 128)
+
     def beginwrite(xself, lpath):
         # build an object to read the data into a temporary file
         # and when done decrypt it and create the decrypted file
         # or truncate the existing
         try:
-            os.makedirs('./temp/scryptaesctr')
+            os.makedirs('./temp/')
         except:
             pass
 
-        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
+        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
         lxtemp = bytes(lxtemp, 'utf8')
 
         fo = open(lxtemp, 'wb')
@@ -299,6 +304,8 @@ class Scrypt:
             # decrypt the file into the local file specified
             hscryptdec_path(lxtemp, lpath, xself.pw, 1024 * 1024 * 512, 0.5, 6, None)
             os.remove(lxtemp)
+
+        return ReadWriteObject(None, _write, _finish)
 
 '''
     Implements AESCTR, but breaks the input file into multiple keys of the largest
@@ -350,10 +357,10 @@ class AESCTRMULTI:
         # read that data from the temporary file and delete it
         # when done
         try:
-            os.makedirs('./temp/scryptaesctr')
+            os.makedirs('./temp/')
         except:
             pass
-        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
+        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
         lxtemp = bytes(lxtemp, 'utf8')
 
         # do encryption first ahead of time
@@ -373,17 +380,21 @@ class AESCTRMULTI:
 
         return ReadWriteObject(_read, None, _finish)
 
+    def getencryptedsize(self, lpath):
+        """ Return the expected encrypted size. """
+        return int(math.ceil(os.stat(lpath).st_size / 32))
+
     def beginwrite(xself, lpath):
         """ Return write object for file specified by path. """
         # build an object to read the data into a temporary file
         # and when done decrypt it and create the decrypted file
         # or truncate the existing
         try:
-            os.makedirs('./temp/scryptaesctr')
+            os.makedirs('./temp/')
         except:
             pass
 
-        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
+        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
         lxtemp = bytes(lxtemp, 'utf8')
 
         fo = open(lxtemp, 'wb')
@@ -481,9 +492,9 @@ class AESCTR:
         if self.key is None:
             raise Exception('No key specified. Try file:<path>. Must be at least 8 bytes in length for 64 bit.')
 
-    def getencryptedsize(lpath):
+    def getencryptedsize(self, lpath):
         """ Return the expected encrypted size. """
-        return int(math.ceil(os.state(lpath).st_size / 32) + 32)
+        return int(math.ceil(os.stat(lpath).st_size / 32) + 32)
 
     def beginread(xself, lpath):
         """ Returns read object. """
@@ -491,10 +502,10 @@ class AESCTR:
         # read that data from the temporary file and delete it
         # when done
         try:
-            os.makedirs('./temp/scryptaesctr')
+            os.makedirs('./temp/')
         except:
             pass
-        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
+        lxtemp = './temp/%s.tmp' % (int(time.time() * 1000))
         lxtemp = bytes(lxtemp, 'utf8')
 
         # do encryption first ahead of time
@@ -515,11 +526,11 @@ class AESCTR:
     def beginwrite(xself, lpath):
         """ Returns write object. """
         try:
-            os.makedirs('./temp/scryptaesctr')
+            os.makedirs('./temp/')
         except:
             pass
 
-        lxtemp = './temp/scryparesctr/%s.xor' % (int(time.time() * 1000))
+        lxtemp = './temp/scryparesctr/%s.tmp' % (int(time.time() * 1000))
         lxtemp = bytes(lxtemp, 'utf8')
 
         fo = open(lxtemp, 'wb')

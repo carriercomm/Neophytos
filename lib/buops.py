@@ -129,12 +129,19 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
         _lpath = pkg[0]
         _off = pkg[1]
         _fo = pkg[2]
+        _opcount = pkg[3]
 
         logger.debug('write:%s:%x' % (_lpath, _off))
 
         print('@@@@WRITE')
         _fo.write(_off, data)
         print('@@@@@')
+
+        _opcount[0] -= 1
+
+        if _opcount[0] < 1:
+            # we are finished
+            _fo.finish()
 
         # hey.. just keep on moving..
         #try:
@@ -270,13 +277,19 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
                 plug = getPM().getPluginInstance(_plugid, _etag, (None, _plugopts,))
                 _fo = plug.beginwrite(_lpath)
                 job.append(_fo)
+                _opcount = [0]
+                job.append(_opcount)
             else:
                 _fo = job[5]
+                _opcount = job[6]
+
+            # increment operation count
+            _opcount[0] += 1
 
             # determine amount we can read and choose maximum
             _rem = _rsize - _curoff
             rsz = min(_rem, chunksize)
-            pkg = (_lpath, _curoff, _fo)
+            pkg = (_lpath, _curoff, _fo, _opcount)
             c.FileRead(_rpath, _curoff, rsz, Client.IOMode.Callback, (__eventFileRead, pkg))
             if _curoff + rsz >= _rsize:
                 tr.append(job)
