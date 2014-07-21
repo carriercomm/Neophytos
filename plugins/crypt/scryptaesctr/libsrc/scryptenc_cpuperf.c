@@ -28,7 +28,7 @@
  */
 #include "scrypt_platform.h"
 
-#ifndef _WIN32
+#ifndef _WINDOWS
 #include <sys/time.h>
 #else
 #include <time.h>
@@ -43,7 +43,7 @@
 
 #include "scryptenc_cpuperf.h"
 
-#ifdef _WIN32
+#ifdef _WINDOWS
 struct timespec {
        time_t tv_sec;
        long tv_nsec;
@@ -106,7 +106,7 @@ getclockres(double * resd)
 	return (0);
 }
 
-#ifdef _WIN32
+#ifdef _WINDOWS
 int gettimeofday(struct timeval *tv/*in*/, void *nothing)
 {
   FILETIME ft;

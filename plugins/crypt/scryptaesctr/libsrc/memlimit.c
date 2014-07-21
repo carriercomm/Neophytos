@@ -30,18 +30,18 @@
 
 #include <sys/types.h>
 
-#ifndef _WIN32
+#ifndef _WINDOWS
 #include <sys/resource.h>
 #endif
 
-#ifdef _WIN32
+#ifdef _WINDOWS
 #define _WIN32_WINNT 0x0502
 #include <Windows.h>
 #include <tchar.h>
 #endif
 
 #ifdef HAVE_SYS_PARAM_H
-#ifndef _WIN32
+#ifndef _WINDOWS
 #include <sys/param.h>
 #endif
 #endif
@@ -55,7 +55,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
-#ifndef _WIN32
+#ifndef _WINDOWS
 #include <unistd.h>
 #endif
 
@@ -151,7 +151,7 @@ memlimit_sysinfo(size_t * memlimit)
 }
 #endif /* HAVE_SYSINFO */
 
-#ifndef _WIN32
+#ifndef _WINDOWS
 static int
 memlimit_rlimit(size_t * memlimit)
 {
@@ -247,7 +247,7 @@ memlimit_sysconf(size_t * memlimit)
 }
 #endif
 
-#ifdef _WIN32
+#ifdef _WINDOWS
 static int
 memlimit_windows(size_t * memlimit)
 {
@@ -286,7 +286,7 @@ memtouse(size_t maxmem, double maxmemfrac, size_t * memlimit)
 #else
 	sysinfo_memlimit = (size_t)(-1);
 #endif
-#ifndef _WIN32
+#ifndef _WINDOWS
 	if (memlimit_rlimit(&rlimit_memlimit))
 		return (1);
 #else
@@ -298,7 +298,7 @@ memtouse(size_t maxmem, double maxmemfrac, size_t * memlimit)
 #else
 	sysconf_memlimit = (size_t)(-1);
 #endif
-#ifdef _WIN32
+#ifdef _WINDOWS
     if (memlimit_windows(&windows_memlimit))
         return (1);
 #else

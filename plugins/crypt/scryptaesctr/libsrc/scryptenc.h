@@ -32,6 +32,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "export.h"
 /**
  * The parameters maxmem, maxmemfrac, and maxtime used by all of these
  * functions are defined as follows:
@@ -78,7 +79,7 @@
  * Encrypt inbuflen bytes from inbuf, writing the resulting inbuflen + 128
  * bytes to outbuf.
  */
-int
+int EXPORT
 scryptenc_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
@@ -91,7 +92,7 @@ scryptenc_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
  * decrypted data length to outlen.  The allocated length of outbuf must
  * be at least inbuflen.
  */
-int
+int EXPORT
 scryptdec_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
     size_t * outlen, const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
@@ -103,7 +104,7 @@ scryptdec_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
  * Read a stream from infile and encrypt it, writing the resulting stream to
  * outfile.
  */
-int
+int EXPORT
 scryptenc_file(FILE * infile, FILE * outfile,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
@@ -116,7 +117,7 @@ scryptenc_file(FILE * infile, FILE * outfile,
  * Read a stream from infile and decrypt it, writing the resulting stream to
  * outfile.
  */
-int
+int EXPORT
 scryptdec_file(FILE * infile, FILE * outfile,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,

@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include "aes256ctr.h"
+#include "export.h"
 
 /*
    I figured it could not hurt, and would be a little
@@ -24,7 +25,7 @@ const uint8_t noncesalt[32] = {
    context structure. It can use this to allocate enough memory
    and the init function will initialize it correctly.
 */
-int aes256ctr_getcontextsize() {
+int EXPORT aes256ctr_getcontextsize() {
    return sizeof(AES256CTR_CONTEXT);
 }
 
@@ -67,7 +68,7 @@ static int aes256ctr_nonce_stream_more(AES256CTR_CONTEXT *ctx) {
 /*
    This will initialize the stream ready for usage as a context.
 */
-int aes256ctr_init(AES256CTR_CONTEXT *ctx, const uint8_t *key, const uint8_t *nonce) {
+int EXPORT aes256ctr_init(AES256CTR_CONTEXT *ctx, const uint8_t *key, const uint8_t *nonce) {
    aes256_init(&ctx->ctx, (uint8_t*)key);
    /* copy nonce into our local buffer so we can modify it */
    if (nonce) {
@@ -86,13 +87,13 @@ int aes256ctr_init(AES256CTR_CONTEXT *ctx, const uint8_t *key, const uint8_t *no
    This will encrypt some bytes provided and will automatically
    increment the nonce and produce more bytes as needed.
 */
-int aes256ctr_crypt(AES256CTR_CONTEXT *ctx, const uint8_t *in, uint8_t *out, size_t sz) {
+int EXPORT aes256ctr_crypt(AES256CTR_CONTEXT *ctx, const uint8_t *in, uint8_t *out, size_t sz) {
    size_t      x;
 
    /* use stream bytes */
    x = 0;
    while (1) {
-      for (; ctx->streami < 32; ctx->streami++, x++) {
+      for (; ctx->streami < 16; ctx->streami++, x++) {
          if (x >= sz) {
             /* we are done so exit, and leave streami where it is.. */
             return 0;
@@ -110,7 +111,7 @@ int aes256ctr_crypt(AES256CTR_CONTEXT *ctx, const uint8_t *in, uint8_t *out, siz
    of our memory was allocated for us by the calling code and we
    just used that.
 */
-int aes256ctr_done(AES256CTR_CONTEXT *ctx) {
+int EXPORT aes256ctr_done(AES256CTR_CONTEXT *ctx) {
    aes256_done(&ctx->ctx);
    return 0;
 }

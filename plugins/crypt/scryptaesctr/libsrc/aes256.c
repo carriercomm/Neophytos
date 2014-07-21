@@ -18,6 +18,7 @@
 *   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 #include "aes256.h"
+#include "export.h"
 
 #define F(x)   (((x)<<1) ^ ((((x)>>7) & 1) * 0x1b))
 #define FD(x)  (((x) >> 1) ^ (((x) & 1) ? 0x8d : 0))
@@ -296,7 +297,7 @@ void aes_expandDecKey(uint8_t *k, uint8_t *rc)
 
 
 /* -------------------------------------------------------------------------- */
-void aes256_init(aes256_context *ctx, uint8_t *k)
+void EXPORT aes256_init(aes256_context *ctx, uint8_t *k)
 {
     uint8_t rcon = 1;
     register uint8_t i;
@@ -306,7 +307,7 @@ void aes256_init(aes256_context *ctx, uint8_t *k)
 } /* aes256_init */
 
 /* -------------------------------------------------------------------------- */
-void aes256_done(aes256_context *ctx)
+void EXPORT aes256_done(aes256_context *ctx)
 {
     register uint8_t i;
 
@@ -315,7 +316,7 @@ void aes256_done(aes256_context *ctx)
 } /* aes256_done */
 
 /* -------------------------------------------------------------------------- */
-void aes256_encrypt_ecb(aes256_context *ctx, uint8_t *buf)
+void EXPORT aes256_encrypt_ecb(aes256_context *ctx, uint8_t *buf)
 {
     uint8_t i, rcon;
 
@@ -335,7 +336,7 @@ void aes256_encrypt_ecb(aes256_context *ctx, uint8_t *buf)
 } /* aes256_encrypt */
 
 /* -------------------------------------------------------------------------- */
-void aes256_decrypt_ecb(aes256_context *ctx, uint8_t *buf)
+void EXPORT aes256_decrypt_ecb(aes256_context *ctx, uint8_t *buf)
 {
     uint8_t i, rcon;
 

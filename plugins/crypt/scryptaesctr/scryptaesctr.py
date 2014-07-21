@@ -252,7 +252,7 @@ class AESCTRMULTI:
         """ Initialize the AES-CTR-MULTI algorithm. """
         options = options.split(',')
 
-        self.keysz = -1
+        self.mk = None
 
         for option in options:
             kv = option.split(':')
@@ -264,7 +264,7 @@ class AESCTRMULTI:
 
             if k == 'file':
                 # read in key
-                kfo = open(self.keyfile, 'rb')
+                kfo = open(v, 'rb')
                 self.mk = kfo.read(32)
                 kfo.close()
                 if len(self.mk) < 32:
@@ -274,14 +274,11 @@ class AESCTRMULTI:
             if k == 'pass':
                 # use the scrypt KDF to generate 32 bytes for a key
                 pass
-                
+
             logger.warn('ignore option "%s"' % k)
 
-        if self.keysz < 0:
-            raise Exception('No key specified. Try file:<path>. Must be at least 8 bytes in length for 64 bit.')
-
-        if self.keysz < 64:
-            raise Exception('The key size is so small you should use AESCTR instead of AESCTRMULTI.')
+        if self.mk is None:
+            raise Exception('No key specified')
 
     def beginread(xself, lpath):
         """ Return read object for file specified by path. """
@@ -354,7 +351,9 @@ class AESCTRMULTI:
         ret = self.aesctrencpath(ifile, ofile, key = sk, iseek = 0, oseek = 32)
 
         # encrypt random sub-key
-        skh = haes_crypt_buf(sk, mk)
+        ctx = aes256ctr_init(mk)
+        skh = aes256ctr_crypt(ctx, sk)
+        aes256ctr_done(ctx)
 
         # write the index used at the beginning of the file in
         # the space we reserved for it
@@ -374,7 +373,9 @@ class AESCTRMULTI:
         mk = self.mk
 
         # decrypt the sub-key
-        sk = haes_crypt_buf(skh, mk)
+        ctx = aes256ctr_init(mk)
+        sk = aes256ctr_crypt(ctx, skh)
+        aes256ctr_done(ctx)
 
         # decrypt the file data (start reading 32 byte)
         self.aesctrencpath(ifile, ofile, key = sk, iseek = 32, oseek = 0)
@@ -412,10 +413,7 @@ class AESCTRMULTI:
         else:
             raise Exception('The AES key must be at least 64 bits in length.')
 
-        rcode, aeskey = haes_set_encrypt_key(key)
-        if rcode != 0:
-            raise Exception('It looks like there was an error setting the AES encryption key.')
-        rcode, aesptr = hcrypto_aesctr_init(aeskey)
+        ctx = aes256ctr_init(key)
 
         # loop through file data in multiples of key sizes
         while True:
@@ -425,11 +423,11 @@ class AESCTRMULTI:
             if not pdata:
                 # exit at EOF
                 break
-            _, edata = hcrypto_aesctr_stream(aesptr, pdata)
+            edata = aes256ctr_crypt(ctx, pdata)
             # write encrypted data to the file
             fo.write(edata)
 
-        hcrypto_aesctr_free(aesptr)
+        aes256ctr_done(ctx)
         fi.close()
         fo.close()
 

@@ -30,7 +30,7 @@
 
 #include <sys/types.h>
 
-#ifndef _WIN32
+#ifndef _WINDOWS
 #include <sys/mman.h>
 #endif
 
@@ -269,7 +269,7 @@ crypto_scrypt(const uint8_t * passwd, size_t passwdlen,
 	}
 
 	/* Allocate memory. */
-#ifdef _WIN32
+#ifdef _WINDOWS
 #undef HAVE_POSIX_MEMALIGN
 #endif
 

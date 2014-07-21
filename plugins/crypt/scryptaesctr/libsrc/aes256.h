@@ -19,6 +19,9 @@
 */
 #ifndef H_AES256
 #define H_AES256
+
+#include "export.h"
+
 #ifndef uint8_t
 #define uint8_t      unsigned char
 #define uint64_t     unsigned long long
@@ -34,10 +37,10 @@ extern "C" {
         uint8_t deckey[32];
     } aes256_context; 
 
-    void aes256_init(aes256_context *, uint8_t * /* key */);
-    void aes256_done(aes256_context *);
-    void aes256_encrypt_ecb(aes256_context *, uint8_t * /* plaintext */);
-    void aes256_decrypt_ecb(aes256_context *, uint8_t * /* cipertext */);
+    void EXPORT aes256_init(aes256_context *, uint8_t * /* key */);
+    void EXPORT aes256_done(aes256_context *);
+    void EXPORT aes256_encrypt_ecb(aes256_context *, uint8_t * /* plaintext */);
+    void EXPORT aes256_decrypt_ecb(aes256_context *, uint8_t * /* cipertext */);
 
 #ifdef __cplusplus
 }

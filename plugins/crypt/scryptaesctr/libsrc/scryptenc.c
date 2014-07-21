@@ -30,13 +30,14 @@
  * online backup system.
  */
 #include "scrypt_platform.h"
+#include "export.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#ifndef _WIN32
+#ifndef _WINDOWS
 #include <unistd.h>
 #endif
 
@@ -51,7 +52,7 @@
 
 #include "scryptenc.h"
 
-#ifdef _WIN32
+#ifdef _WINDOWS
 #include <windows.h>
 #include <Wincrypt.h>
 #endif
@@ -173,7 +174,7 @@ getsalt(uint8_t *salt, size_t buflen)
 	int lenread;
 	uint8_t * buf = salt;
 
-#ifndef _WIN32
+#ifndef _WINDOWS
 	/* Open /dev/urandom. */
 	if ((fd = open("/dev/urandom", O_RDONLY)) == -1)
 		goto err0;
@@ -235,7 +236,7 @@ struct SPARAMS {
 	int			logN;
 };
 
-int getparamsize() {
+int EXPORT getparamsize() {
 	return sizeof(struct SPARAMS);
 }
 /*
@@ -245,7 +246,7 @@ int getparamsize() {
 		if pick i false:
 			recover the drived key from the password and parameters
 */
-int
+int EXPORT
 scryptkdf(
 	uint8_t *passwd, size_t passwdlen, uint8_t *dk, size_t dklen, size_t saltsz,
 	double maxmem, double maxmemfrac, double maxtime, struct SPARAMS *params, 
@@ -404,7 +405,7 @@ scryptdec_setup(const uint8_t header[96], uint8_t *dk,
  * Encrypt inbuflen bytes from inbuf, writing the resulting inbuflen + 128
  * bytes to outbuf.
  */
-int
+int EXPORT
 scryptenc_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
@@ -465,7 +466,7 @@ scryptenc_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
  * decrypted data length to outlen.  The allocated length of outbuf must
  * be at least inbuflen.
  */
-int
+int EXPORT
 scryptdec_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
     size_t * outlen, const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
@@ -535,7 +536,7 @@ scryptdec_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
 	return (0);
 }
 
-int
+int EXPORT
 scryptenc_path(uint8_t *inpath, uint8_t *outpath,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
@@ -573,7 +574,7 @@ scryptenc_path(uint8_t *inpath, uint8_t *outpath,
  * Read a stream from infile and encrypt it, writing the resulting stream to
  * outfile.
  */
-int
+int EXPORT
 scryptenc_file(FILE * infile, FILE * outfile,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
@@ -639,7 +640,7 @@ scryptenc_file(FILE * infile, FILE * outfile,
 	return (0);
 }
 
-int
+int EXPORT
 scryptdec_path(uint8_t *inpath, uint8_t *outpath,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
@@ -678,7 +679,7 @@ scryptdec_path(uint8_t *inpath, uint8_t *outpath,
  * Read a stream from infile and decrypt it, writing the resulting stream to
  * outfile.
  */
-int
+int EXPORT
 scryptdec_file(FILE * infile, FILE * outfile,
     const uint8_t * passwd, size_t passwdlen,
     size_t maxmem, double maxmemfrac, double maxtime,
