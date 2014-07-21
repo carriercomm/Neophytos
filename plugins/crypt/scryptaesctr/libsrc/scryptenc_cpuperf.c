@@ -28,7 +28,12 @@
  */
 #include "scrypt_platform.h"
 
+#ifndef _WIN32
 #include <sys/time.h>
+#else
+#include <time.h>
+#include <windows.h>
+#endif
 
 #include <stdint.h>
 #include <stdio.h>
@@ -100,6 +105,31 @@ getclockres(double * resd)
 
 	return (0);
 }
+
+#ifdef _WIN32
+int gettimeofday(struct timeval *tv/*in*/, void *nothing)
+{
+  FILETIME ft;
+  __int64 tmpres = 0;
+  TIME_ZONE_INFORMATION tz_winapi;
+  int rez=0;
+
+   ZeroMemory(&ft,sizeof(ft));
+   ZeroMemory(&tz_winapi,sizeof(tz_winapi));
+
+    GetSystemTimeAsFileTime(&ft);
+
+    tmpres = ft.dwHighDateTime;
+    tmpres <<= 32;
+    tmpres |= ft.dwLowDateTime;
+
+    /*converting file time to unix epoch*/
+    tmpres /= 10;  /*convert into microseconds*/
+    tv->tv_sec = (__int32)(tmpres*0.000001);
+    tv->tv_usec =(tmpres%1000000);
+    return 0;
+}
+#endif
 
 static int
 getclocktime(struct timespec * ts)

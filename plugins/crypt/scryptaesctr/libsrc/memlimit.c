@@ -41,7 +41,9 @@
 #endif
 
 #ifdef HAVE_SYS_PARAM_H
+#ifndef _WIN32
 #include <sys/param.h>
+#endif
 #endif
 #ifdef HAVE_SYSCTL_HW_USERMEM
 #include <sys/sysctl.h>
@@ -53,7 +55,9 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #ifdef DEBUG
 #include <stdio.h>

@@ -31,12 +31,10 @@ if _hdll is not None:
     _hscryptdec_path = libload.getExportFunction(_hdll, 'scryptdec_path')
     _hscryptkdf = libload.getExportFunction(_hdll, 'scryptkdf')
     _hgetparamsize = libload.getExportFunction(_hdll, 'getparamsize')
-    _hexp_crypto_aesctr_free = libload.getExportFunction(_hdll, 'exp_crypto_aesctr_free')
-    _hexp_crypto_aesctr_stream = libload.getExportFunction(_hdll, 'exp_crypto_aesctr_stream')
-    _hexp_crypto_aesctr_init = libload.getExportFunction(_hdll, 'exp_crypto_aesctr_init')
-    _hexp_getpointersize = libload.getExportFunction(_hdll, 'exp_getpointersize')
-    _hexp_AES_set_encrypt_key = libload.getExportFunction(_hdll, 'exp_AES_set_encrypt_key')
-    _hexp_getaeskeysize = libload.getExportFunction(_hdll, 'exp_getaeskeysize')
+    _aes256ctr_init = libload.getExportFunction(_hdll, 'aes256ctr_init')
+    _aes256ctr_crypt = libload.getExportFunction(_hdll, 'aes256ctr_crypt')
+    _aes256ctr_done = libload.getExportFunction(_hdll, 'aes256ctr_done')
+    _aes256ctr_getcontextsize = libload.getExportFunction(_hdll, 'aes256ctr_getcontextsize')
 else:
     raise Exception('OOPS - DEBUGGING')
 
@@ -47,24 +45,24 @@ else:
     int exp_getpointersize() {
     int exp_AES_set_encrypt_key(uint8_t *key_enc, size_t keysz, AES_KEY *aeskey) {
 '''
-def hcrypto_aesctr_free(aesptr):
-    return _hexp_crypto_aesctr_free(aesptr)
 
-def hcrypto_aesctr_stream(aesptr, buf):
-    obuf = create_string_buffer(len(buf))
-    rcode = _hexp_crypto_aesctr_stream(aesptr, c_char_p(buf), obuf, c_size_t(len(buf)))
-    return (rcode, bytes(obuf))
+def aes256ctr_init(key, nonce = None):
+    if len(key) < 32:
+        raise Exception('The key must be 256-bit in length at least!')
+    if nonce is not None and len(nonce) < 32:
+        raise Exception('The nonce must be 256-bit in length at least!')
+    ctx = create_string_buffer(_aes256ctr_getcontextsize())
+    if _aes256ctr_init(ctx, c_char_p(key), c_char_p(nonce)) != 0:
+        return None
+    return ctx
 
-def hcrypto_aesctr_init(aeskey):
-    ptrsize = _hexp_getpointersize()
-    aesptr = create_string_buffer(ptrsize)
+def aes256ctr_crypt(ctx, xin):
+    out = create_string_buffer(len(xin))
+    _aes256ctr_crypt(ctx, c_char_p(xin), out, c_size_t(len(xin)))
+    return bytes(out)
 
-    return (_hexp_crypto_aesctr_init(aesptr, aeskey), aesptr)
-
-def haes_set_encrypt_key(key):
-    aeskey = create_string_buffer(_hexp_getaeskeysize())
-
-    return (_hexp_AES_set_encrypt_key(c_char_p(key), c_size_t(len(key) * 8), aeskey), aeskey)
+def aes256ctr_done(ctx):
+    _aes256ctr_done(ctx)
 
 '''
     static int
@@ -233,103 +231,23 @@ class ReadWriteObject():
 '''
     THIS SECTION IMPLEMENTS THE PLUGIN OBJECTS
 '''
-class Scrypt:
-    def __init__(self, client, options):
-        options = options.split(',')
 
-        for option in options:
-            kv = option.split(':')
-            if len(kv) < 2:
-                continue
-            k = kv[0]
-            v = kv[1]
-
-            if k == 'file':
-                fo = open(v, 'rb')
-                self.pw = fo.read()
-                fo.close()
-                continue
-            if k == 'data':
-                self.pw = bytes(v, 'utf8')
-                continue
-
-            logger.warn('ignore option "%s"' % k)
-
-    def beginread(self, lpath):
-        global gvector
-        # encrypt the file and store it in a temporary file then
-        # read that data from the temporary file and delete it
-        # when done
-        try:
-            os.makedirs('./temp/')
-        except:
-            pass
-        lxtemp = './temp/scrypt.%s.tmp' % (gvector)
-        lxtemp = bytes(lxtemp, 'utf8')
-        gvector = gvector + 1
-
-        hscryptenc_path(lpath, lxtemp, self.pw, 1024 * 1024 * 512, 0.5, 3, None)
-
-        fo = open(lxtemp, 'rb')
-
-        #scryptaesctr.hscryptenc_path(b'input', b'output', b'mypassword', 1024 * 1024 * 512, 0.5, 3, None)
-        #scryptaesctr.hscryptdec_path(b'output', b'output2', b'mypassword', 1024 * 1024 * 512, 0.5, 3, None)
-        def _read(self, offset, length):
-            fo.seek(offset)
-            return fo.read(length)
-
-        def _finish(self):
-            fo.close()
-            os.remove(lxtemp)
-
-        return ReadWriteObject(_read, None, _finish)
-
-    def getencryptedsize(self, lpath):
-        """ Return the expected encrypted size. """
-        return os.stat(lpath).st_size + 128
-
-    def beginwrite(xself, lpath):
-        global gvector
-        # build an object to read the data into a temporary file
-        # and when done decrypt it and create the decrypted file
-        # or truncate the existing
-        try:
-            os.makedirs('./temp/')
-        except:
-            pass
-
-        lxtemp = './temp/scrypt.%s.tmp' % (gvector)
-        lxtemp = bytes(lxtemp, 'utf8')
-        gvector = gvector + 1
-
-        fo = open(lxtemp, 'wb')
-
-        def _write(self, offset, data):
-            fo.seek(offset)
-            return fo.write(data)
-
-        def _finish(self):
-            fo.close()
-            # decrypt the file into the local file specified
-            ret = hscryptdec_path(lxtemp, lpath, xself.pw, 1024 * 1024 * 512, 0.5, 3000, None)
-            os.remove(lxtemp)
-
-        return ReadWriteObject(None, _write, _finish)
-
-'''
-    Implements AESCTR, but breaks the input file into multiple keys of the largest
-    key size if the data is long enough (it will not pad keys). So if you give it
-    a 64 byte file it will become two 256-bit keys which are randomly used on each
-    file. At the beginning of each file the key index used for that file is stored.
-
-    This allows you to say do (on Linux):
-        dd if=/dev/urandom of=key bs=1 count=32*1024*1024
-
-    This will produce a 32MB file that contains 1 million keys. For each file encrypted
-    one of the million keys will be selected at random and applied to the file.
-'''
 class AESCTRMULTI:
-    """ Implements the AES-CTR-MULTI algorithm. """
+    """ Implements the AES-CTR-MULTI algorithm. 
+
+    This works by using a master key. The master key is made from:
+        #1 the first 32 bytes of a specified file
+        #2 from a password passed to the scrypt KDF that produces 32 bytes
+    
+    Each file that is encrypted has a 256-bit key randomly generated known
+    as the sub-key. The file data is encrypted using the sub-key and
+    AES-CTR using a zeroed nonce which is incremented every X number of 
+    bytes.
+
+    Then the sub-key is encrypted using AES with the master key and placed
+    as the first 32 bytes of the encrypted file.
+
+    """
     def __init__(self, client, options):
         """ Initialize the AES-CTR-MULTI algorithm. """
         options = options.split(',')
@@ -345,13 +263,18 @@ class AESCTRMULTI:
             v = kv[1]
 
             if k == 'file':
-                self.keyfile = v
-                self.kfo = open(self.keyfile, 'rb')
-                self.kfo.seek(0, 2)
-                self.keysz = self.kfo.tell()
-                self.skc = self.keysz // 32
+                # read in key
+                kfo = open(self.keyfile, 'rb')
+                self.mk = kfo.read(32)
+                kfo.close()
+                if len(self.mk) < 32:
+                    raise Exception('The key file must contain at least 32-bytes!')
                 continue
 
+            if k == 'pass':
+                # use the scrypt KDF to generate 32 bytes for a key
+                pass
+                
             logger.warn('ignore option "%s"' % k)
 
         if self.keysz < 0:
@@ -422,141 +345,39 @@ class AESCTRMULTI:
 
     def aesctrencmultipath(self, ifile, ofile):
         """ Return no value but encrypts ifile and writes output to ofile. """
-        # randomly select key
-        rsel = os.urandom(4)
-        rsel = struct.unpack('>I', rsel)[0]
+        mk = self.mk
 
-        ski = int((rsel / 0xFFFFFFFF) * self.skc)
+        # generate random sub-key
+        sk = os.urandom(32)
 
-        self.kfo.seek(0)
-        fsk = self.kfo.read(32)              # read first sub-key
+        # encrypt file data with sub-key
+        ret = self.aesctrencpath(ifile, ofile, key = sk, iseek = 0, oseek = 32)
 
-        # seek to the sub-key index
-        self.kfo.seek(int(ski * 32))
-        # read the sub-key
-        sk = self.kfo.read(32)
+        # encrypt random sub-key
+        skh = haes_crypt_buf(sk, mk)
 
-        ret = AESCTR.aesctrencpath(None, ifile, ofile, key = sk, iseek = 0, oseek = 32)
-
-        print('ski:%s' % ski)
-        ski = struct.pack('>I', ski) + os.urandom(28)
-
-        fblock = haes_crypt_buf(ski, fsk)
-
-        print('fblock', fblock)
         # write the index used at the beginning of the file in
         # the space we reserved for it
         fo = open(ofile, 'r+b')
         fo.seek(0)
-        fo.write(fblock)
+        fo.write(skh)
         fo.close()
 
     def aesctrdecmultipath(self, ifile, ofile):
         """ Return no value but decrypts ifile and writes output to ofile. """
-        # read the input file and grab the sub-key index out
+        # read the sub-key header
         fo = open(ifile, 'rb')
-        fblock = fo.read(32)
+        skh = fo.read(32)
         fo.close()
 
-        self.kfo.seek(0)                     
-        fsk = self.kfo.read(32)              # read first sub-key
+        # read the master key
+        mk = self.mk
 
-        print('fblock', fblock)
+        # decrypt the sub-key
+        sk = haes_crypt_buf(skh, mk)
 
-        # decrypt the first block and recover the sub-key index
-        ski = haes_crypt_buf(fblock, fsk)
-        # drop random 28 bytes and decode from 32-bit big endian
-        ski = struct.unpack('>I', ski[0:4])[0]
-
-        print('ski:%s' % ski)
-
-        self.kfo.seek(ski * 32)
-        sk = self.kfo.read(32)               # read selected sub-key
-
-        if len(sk) < 32:
-            raise Exception('Error on AESMULTI decrypt. The sub-key index was out of range? Read returned less than 32-bytes!')
-
-        AESCTR.aesctrencpath(None, ifile, ofile, key = sk, iseek = 32, oseek = 0)
-
-class AESCTR:
-    """ Implements the AES-CTR cipher. """
-    def __init__(self, client, options):
-        options = options.split(',')
-
-        self.key = None
-
-        for option in options:
-            kv = option.split(':')
-            if len(kv) < 2:
-                continue
-            k = kv[0]
-            v = kv[1]
-
-            if k == 'file':
-                fo = open(v, 'rb')
-                self.key = fo.read()
-                fo.close()
-                continue
-
-            logger.warn('ignore option "%s"' % k)
-
-        if self.key is None:
-            raise Exception('No key specified. Try file:<path>. Must be at least 8 bytes in length for 64 bit.')
-
-    def getencryptedsize(self, lpath):
-        """ Return the expected encrypted size. """
-        return int(math.ceil(os.stat(lpath).st_size / 32) + 32)
-
-    def beginread(xself, lpath):
-        """ Returns read object. """
-        global gvector
-        try:
-            os.makedirs('./temp/')
-        except:
-            pass
-
-        lxtemp = './temp/%s.tmp' % (gvector)
-        lxtemp = bytes(lxtemp, 'utf8')
-        gvector = gvector + 1
-
-        # do encryption first ahead of time
-        xself.aesctrencpath(bytes(lpath, 'utf8'), lxtemp)
-
-        fo = open(lxtemp, 'rb')
-
-        def _read(self, offset, length):
-            fo.seek(offset)
-            return fo.read(length)
-
-        def _finish(self):
-            fo.close()
-            os.remove(lxtemp)
-
-        return ReadWriteObject(_read, None, _finish)
-
-    def beginwrite(xself, lpath):
-        """ Returns write object. """
-        global gvector
-        try:
-            os.makedirs('./temp/')
-        except:
-            pass
-
-        lxtemp = './temp/%s.tmp' % (gvector)
-        lxtemp = bytes(lxtemp, 'utf8')
-        gvector = gvector + 1
-
-        fo = open(lxtemp, 'wb')
-
-        def _write(self, offset, data):
-            fo.seek(offset)
-            return fo.write(data)
-
-        def _finish(self):
-            fo.close()
-            # do decryption
-            xself.aesctrencpath(lxtemp, lpath)
-            #os.remove(lxtemp)
+        # decrypt the file data (start reading 32 byte)
+        self.aesctrencpath(ifile, ofile, key = sk, iseek = 32, oseek = 0)
 
     def aesctrencpath(self, ifile, ofile, key = None, iseek = 0, oseek = 0):
         """Encrypt ifile writing output to ofile.
@@ -612,6 +433,8 @@ class AESCTR:
         fi.close()
         fo.close()
 
+
+
 def getplugins():
     """Return tuple or list of tuples of plugin reference name and type.
 
@@ -623,7 +446,5 @@ def getplugins():
         return tuple()          # no valid library then no plugins
 
     return (
-        ('crypt.scrypt',        Scrypt),            # scrypt plugin (colin's implementation)
-        ('crypt.aesctr',        AESCTR),            # aes-ctr (standard implementation)
         ('crypt.aesctrmulti',   AESCTRMULTI),       # aes-ctr-multi (my implementation)
     )
