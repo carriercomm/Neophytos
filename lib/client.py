@@ -353,7 +353,7 @@ class Client:
                     fname = fname[9:]
                 else:
                     revcode = None
-                print('fname:%s metaValid:%s metadata:%s' % (fname, metaValid, metadata))
+                #print('fname:%s metaValid:%s metadata:%s' % (fname, metaValid, metadata))
                 # build list
                 list.append((fname, ftype, metadata, revcode))
             # return list
@@ -667,7 +667,6 @@ class Client:
     
     def DirList(self, xdir, mode, callback = None, metasize = None):
         xdir = self.GetServerPathForm(xdir)
-        print('xdir', xdir)
         if metasize is None:
             metasize = self.metasize
         return self.WriteMessage(struct.pack('>BH', ClientType.DirList, metasize) + xdir, mode, callback)

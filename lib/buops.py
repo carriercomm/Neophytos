@@ -971,174 +971,112 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
     # we are done!
     return
 
-def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, filter = None, stash = True, ssl = True, sformat = True):
+def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
     if rpath is None:
         rpath = b'/'
 
-    sac = bytes(cfg['storage-auth-code'], 'utf8')
-    c = Client2(rhost, rport, sac, sformat)
+    sac = bytes(sac, 'utf8')
+    c = Client2(rhost, rport, sac, False)
     c.Connect(essl = ssl)
-    # produce remote and local paths
-    
-    # initialize our wait list
-    waitlist = {}
-    waitlist[c.DirList(rpath, block = False, discard = False)] = (lpath, rpath)
-    
-    donecount = 0
-    stashfilecount = 0
-    stashdircount = 0
-    
-    # keep going until nothing is left in the wait list
-    while len(waitlist) > 0:
-        dt = time.time() - c.bytesoutst
-    
-        # process any incoming messages; the 0 means
-        # wait 0 seconds which is non-blocking; if
-        # it was None we would block for a message
-        #print('handling messages')
-        c.HandleMessages(0, None)
-        
-        # do we have pending data to be sent
-        if c.canSend():
-            # send it.. we can eventually stall out
-            # waiting for data when there is data to
-            # send and the server's incoming buffer is
-            # empty
-            c.send()
-        
-        # see if anything has arrived
-        toremove = []
-        toadd = []
-        #print('checking for arrived requests')
-        for v in waitlist:
-            #print('checking for %s' % v)
-            # check if it has arrived
-            nodes = c.GetStoredMessage(v)
-            # okay remove it from waitlist
-            if nodes is None:
-                #print('    not arrived')
-                continue
-            toremove.append(v)
-            # yes, so process it
-            subdirs = []
-            for node in nodes:
-                lpath = waitlist[v][0]
-                rpath = waitlist[v][1]
-            
-                nodename = node[0]
-                nodetype = node[1]
-                
-                donecount = donecount + 1
-                
-                # get stash id 
-                try:
-                    nodestashid = int(nodename[0:nodename.find(b'.')])
-                except:
-                    # just skip it.. non-conforming to stash format or non-numeric stash id
-                    continue
-                
-                # check if current
-                if nodestashid != 0:
-                    # it is a stashed version (skip it)
-                    continue
-                
-                # drop stash id
-                nodename = nodename[nodename.find(b'.') + 1:]
-                
-                # build remote path as bytes type
-                remote = rpath + b'/' + nodename
-                
-                # build local path as string
-                local = '%s/%s' % (lpath, nodename.decode('utf8'))
-                
-                # determine if local resource exists
-                lexist = os.path.exists(local) 
-                rexist = True
-                
-                #print('checking remote:[%s] for local:[%s]' % (remote, local))
-                
-                # determine if remote is directory
-                if nodetype == 1:
-                    risdir = True
-                else:
-                    risdir = False
-                
-                # determine if local is a directory
-                if lexist:
-                    lisdir = os.path.isdir(local)
-                else:
-                    lisdir = False
 
-                #remote = b'%s/%s.%s' % (rpath, nodestashid, nodename)                # bytes  (including stash id)
-                remote = rpath + b'/' + bytes('%s' % nodestashid, 'utf8') + b'\x00' + nodename
-                
-                # local exist and both local and remote is a directory
-                if lexist and risdir and lisdir:
-                    # go into remote directory and check deeper
-                    # delay this..
-                    _lpath = '%s/%s' % (lpath, nodename.decode('utf8'))                            # string
-                    #print('[pushing for sub-directory]:%s' % _lpath)
-                    subdirs.append((_lpath, remote))
-                    continue
-                
-                # local exist and remote is a directory but local is a file
-                if lexist and risdir and not lisdir:
-                    logger.debug('[stashing remote directory]:%s' % local)
-                    # stash remote directory, use time.time() as the stash id since it
-                    # should be unique and also easily serves to identify the latest stashed
-                    # remote since zero/0 is reserved for current working version
-                    stashdircount = stashdircount + 1
-                    t = int(time.time() * 1000000.0)
-                    _newremote = rpath + b'/' + bytes('%s' % t, 'utf8') + b'\x00' + nodename
-                    # one problem is the remote directory could contain a lot of files that
-                    # are were actually moved or copied somewhere else - i am thinking of
-                    # using another algorithm to pass over and link up clones saving server
-                    # space
-                    c.FileMove(remote, _newremote, Client.IOMode.Discard)
-                    # let push function update local file to remote
-                    continue
-                    
-                # local exist and remote is a file but local is a directory
-                if lexist and not risdir and lisdir:
-                    logger.debug('[stashing remote file]:%s' % local)
-                    # stash remote file
-                    stashfilecount = stashfilecount + 1
-                    #_newremote = b'%s/%s.%s' % (rpath, time.time(), nodename)
-                    t = int(time.time() * 1000000.0)
-                    _newremote = rpath + b'/' + bytes('%s' % t, 'utf8') + b'\x00' + nodename
-                    c.FileMove(remote, _newremote, Client.IOMode.Discard)
-                    # let push function update local directory to remote
-                    continue
-                    
-                # local does not exist
-                if not lexist:
-                    logger.debug('[stashing deleted]:%s' % local)
-                    if risdir:
-                        stashdircount = stashdircount + 1
-                    else:
-                        stashfilecount = stashfilecount + 1
-                    #_newremote = b'%s/%s.%s' % (rpath, time.time(), nodename)
-                    t = int(time.time() * 1000000.0)
-                    _newremote = rpath + b'/' + bytes('%s' % t, 'utf8') + b'\x00' + nodename
-                    c.FileMove(remote, _newremote, Client.IOMode.Discard)
-                    continue
-                continue
-                # <end-of-node-loop> (looping over results of request)
-            # create requests for any sub-directories
-            for subdir in subdirs:
-                _lpath = subdir[0]
-                _rpath = subdir[1]
-                #print('[requesting]:%s' % _rpath)
-                toadd.append((c.DirList(_rpath, block = False, discard = False), _lpath, _rpath))
-            # <end-of-wait-list-loop> (looping over waiting vectors)
-        
-        # add anything we got
-        for p in toadd:
-            waitlist[p[0]] = (p[1], p[2])
-        # remove anything we got from the wait list
-        for v in toremove:
-            del waitlist[v]
-        
-        # if we just fly by we will end up burning
-        # like 100% CPU *maybe* so lets delay a bit in
-        #time.sleep(0.01)
+    pfiles = []         # pending files
+    pdirs = []          # pending directories
+
+    def _eventFileSize(pkg, result, vector):
+        if result[0] == 0:
+            # delete local file
+            os.remove(pkg[0])
+
+    while True:
+        c.handleOrSend()
+
+        pc = c.waitCount() + len(pfiles) + len(pdirs)
+
+        if pc < 1:
+            break
+
+        for pdir in pdirs:
+            nodes = os.listdir(pdir)
+
+            # enumerate directories and files
+            for node in nodes:
+                fullpath = pdir + b'/' + node
+                # decide if directory or file
+                if os.path.isdir(fullpath):
+                    pdirs.append(fullpath)
+                else:
+                    pfiles.append(fullpath)
+
+            # 
+            for pfile in pfiles:
+                # check if file exists remotely
+                pkg = (pfile,)
+                c.FileSize(pfile, mode = Client.IOMode.Callback, callback = (_eventFileSize, pkg))
+    return
+
+
+def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
+    if rpath is None:
+        rpath = b'/'
+
+    sac = bytes(sac, 'utf8')
+    c = Client2(rhost, rport, sac, True)
+    c.Connect(essl = ssl)
+
+    # used to chop rpath to produce relative which can be affixed to lpath
+    rpsz = len(rpath)
+
+    #result = c.DirList(rpath, Client.IOMode.Block)
+
+    penddirenums = []               # pending directories to be enumerated
+    pendfiles = []                  # pending files to be checked
+
+    penddirenums.append(rpath)      
+
+    # handle results from directory enumerations
+    def _eventDirEnum(pkg, result, vector):
+        _rpath = pkg[0]
+        # place enumeration as full path nodes
+        for node in result:
+            # create full path
+            fullpath = _rpath + b'/' + node[0]
+            # determine if directory and file then
+            # place in appropriate pending que
+            if node[1] == 1:
+                # directory
+                penddirenums.append(fullpath)
+            else:
+                pendfiles.append(fullpath)
+
+    while True:
+        c.handleOrSend()
+
+        pc = c.waitCount() + len(penddirenums) + len(pendfiles)
+
+        if pc < 1:
+            break
+
+        # enumerate remote directories
+        for prepath in penddirenums:
+            pkg = (prepath,)
+            c.DirList(prepath, mode = Client.IOMode.Callback, callback = (_eventDirEnum, pkg))
+        penddirenums = []
+
+        # check if file exists locally
+        for _rpath in pendfiles:
+            relrpath = _rpath[rpsz:]
+            if os.path.exists(lpath + b'/' + relrpath) is False:
+                # delete the file from the remote
+                print('deleting', _rpath)
+                c.FileDel(_rpath, mode = Client.IOMode.Discard)
+        pendfiles = []
+
+    exit()
+    # done
+    return
+
+
+
+
+
+

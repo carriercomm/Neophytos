@@ -151,6 +151,23 @@ def makeRandomNodes(path, maxSpace = 1024 * 1024 * 2, maxFiles = 20, maxPathLeng
             continue
     return
 
+def chooseRandomFileFromPath(_lpath):
+    # keep going until we get a file not a directory
+    # just incase we have some empty directories
+    lpath = _lpath
+    while os.path.isdir(lpath):
+        lpath = _lpath
+        while os.path.isdir(lpath):
+            nodes = os.listdir(lpath)
+            # well apparently, we have run into
+            # an empty directory so we will have
+            # to try again
+            if len(nodes) < 1:
+                break
+            node = random.choice(nodes)
+            lpath = lpath + b'/' + node
+    return lpath
+
 '''
     Does compareTreeTo but for both directions.
 '''
@@ -233,18 +250,18 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
 def unitTestBackupOps():
     for run in range(0, 100):
         # remove temp directories if they exist
-        if True:                                   # remove local
+        if False:                                   # remove local
             if os.path.exists('./temp/local'):
                 shutil.rmtree('./temp/local')
             os.makedirs('./temp/local')
             print('building random file tree (may take a while..)')
             makeRandomNodes('./temp/local', maxFiles = 25)
 
-        if True:                                    # remove server storage location
+        if False:                                    # remove server storage location
             if os.path.exists('./temp/remote'):
                 shutil.rmtree('./temp/remote')
             os.makedirs('./temp/remote')
-        if True:                                   # remove pulled
+        if False:                                   # remove pulled
             if os.path.exists('./temp/pulled'):
                 shutil.rmtree('./temp/pulled')
             os.makedirs('./temp/pulled')
@@ -311,7 +328,7 @@ def unitTestBackupOps():
         # create account file
         # start the server
         # issue a push operation (most basic operation.. no filters.. no catches..)
-        if True:
+        if False:
             buops.Push(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
                 b'', True, True, catches = catches
@@ -322,28 +339,35 @@ def unitTestBackupOps():
         #    compareTreeToTree('./temp/local', './temp/remote')
 
         # perform a pull operation and verify files and contents
-        if True:
+        if False:
             buops.Pull(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/pulled',
                 b'', True, True, catches = catches
             )
 
-        if True:
+        if False:
             # give it a chance to update the FS especially if it is
             # a non-standard file system...
             time.sleep(2)
             compareTreeToTree('./temp/local', './temp/pulled', 0, 0)
 
-        # issue a pull operation
-        # verify pull operation results of files and contents
-        # delete some random local directory files
-        # sync locally deleted files
-        # verify results
-        # delete some random remote directory files
-        # verify results
-        # issue a push operation with encryption
-        # issue a pull operation with decryption
-        # verify fs tree is the same as original local
+        if True:
+            # pick some random file
+            fdeleted = chooseRandomFileFromPath(b'./temp/local')
+            # delete the file
+            os.remove(fdeleted)
+        if True:
+            # synchronize the deleted file
+            buops.SyncRemoteWithDeleted(
+                'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
+                b'', True
+            )
+        if False:
+            # synchronize pulled directory
+            buops.SyncLocalWithDeleted(
+                'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
+                b'', True
+            )
 
 def main():
     #if unitTestHashKmc() is False:

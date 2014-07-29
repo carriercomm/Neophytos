@@ -368,6 +368,8 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 path = fmt.Sprintf("%s/%s", self.config.DiskPath, string(msg[2:]))
             }
 
+            fmt.Printf("CmdClientDirList:%s\n", path);
+
             //fmt.Printf("DirList:%s\n", path)
             nodes, err := ioutil.ReadDir(path)
 
@@ -380,6 +382,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 self.MsgWrite8(0)
                 self.MsgWrite16MSB(0)
                 self.MsgEnd()
+                fmt.Printf("ERRORERROR\n");
                 return nil
             }
 
@@ -430,6 +433,7 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 //self.MsgWrite([]byte(n.Name()))
                 self.MsgWriteString(n.Name())
             }
+            fmt.Printf("DONEDONE\n");
             // send message to remote
             self.MsgEnd()
             return nil
@@ -618,14 +622,19 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
                 self.MsgEnd()
                 return nil
             }
-            // the removal was a success now see if the directory
-            // that contained this file or directory is empty and
-            // if so let us delete the base directory
-            base := path[0:strings.Index(path, "/")]
-            nodes, err := ioutil.ReadDir(base)
-            if len(nodes) < 1 {
-                // just ignore any error for now
-                os.RemoveAll(base)
+            // remove all empty directories until we reach disk-path
+            base := path
+            for len(base) > len(self.config.DiskPath) {
+                // check is base directory is empty
+                base := base[0:strings.Index(base, "/")]
+                nodes, err := ioutil.ReadDir(base)
+                if err != nil {
+                    panic(fmt.Sprintf("error during file del '%s'", err))
+                }
+                if len(nodes) < 1 {
+                    // just ignore any error for now
+                    os.Remove(base)
+                }
             }
             // adjust space used to account for deleted file
             self.config.SpaceUsed(-stat.Size())
