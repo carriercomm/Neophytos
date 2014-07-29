@@ -351,21 +351,21 @@ def unitTestBackupOps():
             time.sleep(2)
             compareTreeToTree('./temp/local', './temp/pulled', 0, 0)
 
-        if True:
+        if False:
             # pick some random file
             fdeleted = chooseRandomFileFromPath(b'./temp/local')
             # delete the file
             os.remove(fdeleted)
-        if True:
+        if False:
             # synchronize the deleted file
             buops.SyncRemoteWithDeleted(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
                 b'', True
             )
-        if False:
+        if True:
             # synchronize pulled directory
             buops.SyncLocalWithDeleted(
-                'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
+                'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/pulled',
                 b'', True
             )
 

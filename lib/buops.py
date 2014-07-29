@@ -971,7 +971,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
     # we are done!
     return
 
-def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
+def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True, pretend = True):
     if rpath is None:
         rpath = b'/'
 
@@ -979,13 +979,21 @@ def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
     c = Client2(rhost, rport, sac, False)
     c.Connect(essl = ssl)
 
+    lpsz = len(lpath)
+
     pfiles = []         # pending files
     pdirs = []          # pending directories
+
+    dcount = 0
 
     def _eventFileSize(pkg, result, vector):
         if result[0] == 0:
             # delete local file
-            os.remove(pkg[0])
+            dcount = dcount + 1
+            if pretend is False:
+                os.remove(pkg[0])
+
+    pdirs.append(lpath)
 
     while True:
         c.handleOrSend()
@@ -995,6 +1003,7 @@ def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
         if pc < 1:
             break
 
+        _pdirs = []
         for pdir in pdirs:
             nodes = os.listdir(pdir)
 
@@ -1003,16 +1012,20 @@ def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
                 fullpath = pdir + b'/' + node
                 # decide if directory or file
                 if os.path.isdir(fullpath):
-                    pdirs.append(fullpath)
+                    _pdirs.append(fullpath)
                 else:
                     pfiles.append(fullpath)
+        pdirs = _pdirs
 
-            # 
-            for pfile in pfiles:
-                # check if file exists remotely
-                pkg = (pfile,)
-                c.FileSize(pfile, mode = Client.IOMode.Callback, callback = (_eventFileSize, pkg))
-    return
+        # 
+        for pfile in pfiles:
+            # check if file exists remotely
+            _rp = rpath + b'/' + pfile[lpsz:]
+            pkg = (pfile, _rp)
+            c.FileSize(_rp, mode = Client.IOMode.Callback, callback = (_eventFileSize, pkg))
+        pfiles = []
+
+    return dcount
 
 
 def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
@@ -1067,11 +1080,8 @@ def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
             relrpath = _rpath[rpsz:]
             if os.path.exists(lpath + b'/' + relrpath) is False:
                 # delete the file from the remote
-                print('deleting', _rpath)
                 c.FileDel(_rpath, mode = Client.IOMode.Discard)
         pendfiles = []
-
-    exit()
     # done
     return
 

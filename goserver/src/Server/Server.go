@@ -626,15 +626,19 @@ func (self *ServerClient) ProcessMessage(vector uint64, msg []byte) (err error) 
             base := path
             for len(base) > len(self.config.DiskPath) {
                 // check is base directory is empty
-                base := base[0:strings.Index(base, "/")]
+                //base = path.Dir(base)
+                base = base[0:strings.LastIndex(base, "/")]
+                if len(base) <= len(self.config.DiskPath) {
+                    break
+                }
                 nodes, err := ioutil.ReadDir(base)
                 if err != nil {
-                    panic(fmt.Sprintf("error during file del '%s'", err))
+                    panic(fmt.Sprintf("panic during parent trans delete for '%s' with '%s'", base, err))
                 }
-                if len(nodes) < 1 {
-                    // just ignore any error for now
-                    os.Remove(base)
+                if len(nodes) > 0 {
+                    break
                 }
+                os.Remove(base)
             }
             // adjust space used to account for deleted file
             self.config.SpaceUsed(-stat.Size())
