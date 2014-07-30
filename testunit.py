@@ -250,18 +250,18 @@ def compareTreeTo(lpath, rpath, lmetasize = 0, rmetasize = 128, checkcontents = 
 def unitTestBackupOps():
     for run in range(0, 100):
         # remove temp directories if they exist
-        if False:                                   # remove local
+        if True:                                   # remove local
             if os.path.exists('./temp/local'):
                 shutil.rmtree('./temp/local')
             os.makedirs('./temp/local')
             print('building random file tree (may take a while..)')
             makeRandomNodes('./temp/local', maxFiles = 25)
 
-        if False:                                    # remove server storage location
+        if True:                                    # remove server storage location
             if os.path.exists('./temp/remote'):
                 shutil.rmtree('./temp/remote')
             os.makedirs('./temp/remote')
-        if False:                                   # remove pulled
+        if True:                                   # remove pulled
             if os.path.exists('./temp/pulled'):
                 shutil.rmtree('./temp/pulled')
             os.makedirs('./temp/pulled')
@@ -285,12 +285,9 @@ def unitTestBackupOps():
                 return self.efilters.reverse(tag)
 
             def catchEncryptFilter(self, lpath, node, isDir):
-                print('catchEncryptFilter called for lpath:"%s"' % lpath)
                 if self.efilters is not None:
-                    print('    efilters is not None')
                     # get the encryption information we need
                     einfo = self.efilters.check(lpath, node, isDir)
-                    print('einfo:"%s"' % (einfo,))
                     # build and name some important stuff for readability
                     etag = einfo[0]
                     plugid = einfo[1]
@@ -304,14 +301,12 @@ def unitTestBackupOps():
                     etag = b''
                     plug = getPM().getPluginInstance('crypt.null', '', (None, []))
                     plugopts = (c, [])
-                print('    returned etag:%s plug:%s plugopts:%s' % (etag, plug, plugopts))
                 return (etag, plug, plugopts)
 
 
         # filter-file
         # efilter-file
         # defencstring
-
         fo = open('./temp/efilter', 'w')
         fo.close()
 
@@ -328,10 +323,10 @@ def unitTestBackupOps():
         # create account file
         # start the server
         # issue a push operation (most basic operation.. no filters.. no catches..)
-        if False:
+        if True:
             buops.Push(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
-                b'', True, True, catches = catches
+                b'', True, catches = catches
             )
         # verify directories are the same and file contents are equal
 
@@ -339,29 +334,31 @@ def unitTestBackupOps():
         #    compareTreeToTree('./temp/local', './temp/remote')
 
         # perform a pull operation and verify files and contents
-        if False:
+        if True:
             buops.Pull(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/pulled',
-                b'', True, True, catches = catches
+                b'', True, catches = catches
             )
 
-        if False:
+        if True:
             # give it a chance to update the FS especially if it is
             # a non-standard file system...
             time.sleep(2)
             compareTreeToTree('./temp/local', './temp/pulled', 0, 0)
 
-        if False:
+        if True:
             # pick some random file
             fdeleted = chooseRandomFileFromPath(b'./temp/local')
             # delete the file
             os.remove(fdeleted)
-        if False:
+
+        if True:
             # synchronize the deleted file
             buops.SyncRemoteWithDeleted(
                 'localhost', 4322, 'ok493L3Dx92Xs029W', b'./temp/local',
                 b'', True
             )
+
         if True:
             # synchronize pulled directory
             buops.SyncLocalWithDeleted(
@@ -374,6 +371,5 @@ def main():
     #    print('[TestHashKmc]    FAILED')
     if unitTestBackupOps() is False:
         print('[TestBackupOps]  FAILED')
-
 
 main()

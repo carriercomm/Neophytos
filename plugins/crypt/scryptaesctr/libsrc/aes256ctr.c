@@ -12,11 +12,9 @@
    generated nonce. So in this case I just premade one for
    you.
 */
-const uint8_t noncesalt[32] = {
+const uint8_t noncesalt[16] = {
    0x9F, 0xe4, 0x32, 0xf8, 0xf8, 0x93, 0x21, 0x11,
    0x44, 0x32, 0xae, 0xdd, 0x9d, 0x12, 0x76, 0x45,
-   0xff, 0xa1, 0x02, 0x05, 0x09, 0xed, 0xf3, 0x28,
-   0x93, 0x22, 0x33, 0xf1, 0x23, 0x03, 0x00, 0x34
 };
 
 /*
@@ -35,7 +33,7 @@ static int aes256ctr_nonce_inc(AES256CTR_CONTEXT *ctx) {
 
    nonce = &ctx->nonce[0];
 
-   for (x = 0; x < 32; ++x) {
+   for (x = 0; x < 16; ++x) {
       nonce[x]++;
       /* if nonce did not wrap */
       if (nonce[x] != 0) {
@@ -50,12 +48,18 @@ static int aes256ctr_nonce_stream_more(AES256CTR_CONTEXT *ctx) {
    int         x;
 
    /* copy nonce so we can encrypt it */
-   for (x = 0; x < 32; ++x) {
+   for (x = 0; x < 16; ++x) {
       ctx->stream[x] = ctx->nonce[x];
    }
 
+   #ifdef USEAES_P
    /* encrypt the nonce and store in stream */
    aes256_encrypt_ecb(&ctx->ctx, &ctx->stream[0]);
+   #endif
+
+   #ifdef USAES_O
+   oaes_encrypt(ctx->ctx, &ctx->stream[0], 16, &ctx->stream[0], 16);
+   #endif
 
    /* increment the nonce */
    aes256ctr_nonce_inc(ctx);
@@ -67,15 +71,25 @@ static int aes256ctr_nonce_stream_more(AES256CTR_CONTEXT *ctx) {
 
 /*
    This will initialize the stream ready for usage as a context.
+
+   The key must be 32 bytes and the nonce must be 16 bytes!
 */
 int EXPORT aes256ctr_init(AES256CTR_CONTEXT *ctx, const uint8_t *key, const uint8_t *nonce) {
+   #ifdef USEAES_P
    aes256_init(&ctx->ctx, (uint8_t*)key);
+   #endif
+   #ifdef USEAES_O
+   ctx->ctx = oaes_alloc();
+   oaes_set_option(ctx->ctx, OAES_OPTION_ECB, NULL);
+   oaes_key_import_data(ctx->ctx, key, 32);
+   #endif
+
    /* copy nonce into our local buffer so we can modify it */
    if (nonce) {
-      memcpy(&ctx->nonce[0], nonce, 32);
+      memcpy(&ctx->nonce[0], nonce, 16);
    } else {
       /* if none provided initialize it to zero */
-      memcpy(&ctx->nonce[0], &noncesalt[0], 32);
+      memcpy(&ctx->nonce[0], &noncesalt[0], 16);
    }
 
    /* generate first 32 stream bytes */
@@ -112,6 +126,11 @@ int EXPORT aes256ctr_crypt(AES256CTR_CONTEXT *ctx, const uint8_t *in, uint8_t *o
    just used that.
 */
 int EXPORT aes256ctr_done(AES256CTR_CONTEXT *ctx) {
+   #ifdef USEAES_P
    aes256_done(&ctx->ctx);
+   #endif
+   #ifdef USEAES_O
+   oaes_free(&ctx->ctx);
+   #endif
    return 0;
 }

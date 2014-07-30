@@ -68,7 +68,7 @@ def CallCatchEx(catches, signal, defret, *args):
     return catches[signal](*args)
 
 
-def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, catches = None):
+def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
     if rpath is None:
         rpath = b'/'
 
@@ -76,7 +76,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
     metasize = 128
 
     sac = bytes(sac, 'utf8')
-    c = Client2(rhost, rport, sac, sformat, metasize = metasize)
+    c = Client2(rhost, rport, sac, metasize = metasize)
     print('connecting')
     c.Connect(essl = ssl)
     print('connected')
@@ -319,14 +319,14 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
 '''
     PUSH
 '''
-def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, catches = None):
+def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
     if rpath is None:
         rpath = b'/'
 
     metasize = 128
 
     sac = bytes(sac, 'utf8')
-    c = Client2(rhost, rport, sac, sformat, metasize = metasize)
+    c = Client2(rhost, rport, sac, metasize = metasize)
     c.Connect(essl = ssl)
 
     # produce remote and local paths
@@ -927,7 +927,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, sformat = True, cat
             #_fd.close()
 
 
-            print('uploading _lpath:%s _curoff:%s _rem:%s' % (_lpath, _curoff, _rem))
             _data = _fo.read(_curoff, _rem)
 
             # if no more data then stop and terminate this job
@@ -976,7 +975,7 @@ def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True, pre
         rpath = b'/'
 
     sac = bytes(sac, 'utf8')
-    c = Client2(rhost, rport, sac, False)
+    c = Client2(rhost, rport, sac)
     c.Connect(essl = ssl)
 
     lpsz = len(lpath)
@@ -984,12 +983,12 @@ def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True, pre
     pfiles = []         # pending files
     pdirs = []          # pending directories
 
-    dcount = 0
+    dcount = [0]
 
     def _eventFileSize(pkg, result, vector):
         if result[0] == 0:
             # delete local file
-            dcount = dcount + 1
+            dcount[0] = dcount[0] + 1
             if pretend is False:
                 os.remove(pkg[0])
 
@@ -1025,7 +1024,7 @@ def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True, pre
             c.FileSize(_rp, mode = Client.IOMode.Callback, callback = (_eventFileSize, pkg))
         pfiles = []
 
-    return dcount
+    return dcount[0]
 
 
 def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
@@ -1033,7 +1032,7 @@ def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
         rpath = b'/'
 
     sac = bytes(sac, 'utf8')
-    c = Client2(rhost, rport, sac, True)
+    c = Client2(rhost, rport, sac)
     c.Connect(essl = ssl)
 
     # used to chop rpath to produce relative which can be affixed to lpath

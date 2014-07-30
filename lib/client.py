@@ -640,29 +640,6 @@ class Client:
         # remove leading slash if present
         if path[0] == b'/':
             path = path[1:]
-        # check the type of path to see if they specified
-        # an additional revision parameter, and if so check
-        # if it is zero (normal) - if not place it into a
-        # revision path
-        ptype = type(path)
-        if ptype is tuple or ptype is list:
-            rev = path[1]
-            path = path[0]
-            if rev != 0:
-                # check if path contains a base directory
-                if path.find(b'/') > -1:
-                    # grab off the base (hash to be directory)
-                    base = path[0:path.find(b'/')]
-                    # assign path with out the base
-                    path = path[path.find(b'/'):]
-                    # create the base using special revision format
-                    base = b'\xff'.join(struct.pack('>Q', rev), base)
-                    # create the new path
-                    path = b'/'.join((base, path))
-                else:
-                    # no base directory so we have to create one
-                    base = b''.join(b'\xff', self.to8byte7bit(rev) , b'\xff/', base)
-                    path = b'/'.join((base, path))
         return path
     
     def DirList(self, xdir, mode, callback = None, metasize = None):
@@ -751,7 +728,7 @@ class Client:
         return bytes(data[0:sz])
 
 class Client2(Client):
-    def __init__(self, rhost, rport, aid, sformat, metasize = None):
+    def __init__(self, rhost, rport, aid, metasize = None):
         Client.__init__(self, rhost, rport, aid, metasize = metasize)
 
     '''
