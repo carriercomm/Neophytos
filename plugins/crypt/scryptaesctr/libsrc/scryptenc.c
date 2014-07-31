@@ -236,6 +236,7 @@ struct SPARAMS {
 	int			logN;
 };
 
+
 int EXPORT getparamsize() {
 	return sizeof(struct SPARAMS);
 }
@@ -250,7 +251,7 @@ int EXPORT
 scryptkdf(
 	uint8_t *passwd, size_t passwdlen, uint8_t *dk, size_t dklen, size_t saltsz,
 	double maxmem, double maxmemfrac, double maxtime, struct SPARAMS *params, 
-	uint8_t recover
+	uint8_t recover, uint8_t nocheck
 ) {
 	uint64_t	N;
 	int			rc;
@@ -271,9 +272,10 @@ scryptkdf(
 			return (rc);
 	} else {
 		printf("@recovering\n");
-		if ((rc = checkparams(maxmem, maxmemfrac, maxtime, params->logN, params->r, params->p)) != 0)
-			return (rc);
-
+		if (!nocheck) {
+			if ((rc = checkparams(maxmem, maxmemfrac, maxtime, params->logN, params->r, params->p)) != 0)
+				return (rc);
+		}
 		N = (uint64_t)(1) << params->logN;
 	}
 

@@ -77,9 +77,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
 
     sac = bytes(sac, 'utf8')
     c = Client2(rhost, rport, sac, metasize = metasize)
-    print('connecting')
     c.Connect(essl = ssl)
-    print('connected')
 
     rpbsz = len(rpath)
     
@@ -94,7 +92,6 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
     def __eventDirEnum(pkg, result, vector):
         rpath = pkg[0]
         nodes = pkg[1]
-        print('__eventDirEnum', rpath)
         if result is None:
             return
         for node in result:
@@ -133,9 +130,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
 
         logger.debug('write:%s:%x' % (_lpath, _off))
 
-        print('@@@@WRITE')
         _fo.write(_off, data)
-        print('@@@@@')
 
         _opcount[0] -= 1
 
@@ -148,7 +143,6 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
         '''
         if _opcount[0] < 1 and _opcount[1] is False:
             # we are finished
-            print('FINISH:%s' % _lpath)
             _fo.finish()
 
         # hey.. just keep on moving..
@@ -168,11 +162,9 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
         pkg['echo'] = True
     
     # first enumerate the remote directory
-    print('dirlist for "%s"' % rpath)
     _nodes = c.DirList(rpath, Client.IOMode.Block)
     
     nodes = []
-    print('calling event')
     __eventDirEnum((rpath, nodes), _nodes, 0)
     
     sentEcho = False
@@ -196,7 +188,6 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
             _lpath = lpath + b'/' + node[0][rpbsz:]
             # if directory issue enumerate call
             if node[1] == 1:
-                print('requestingdirenum:%s' % _rpath)
                 pkg = (_rpath, nodes)
                 c.DirList(_rpath, Client.IOMode.Callback, (__eventDirEnum, pkg))
                 continue
@@ -223,7 +214,6 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
             if _rmtime >= _lmtime:
                 logger.debug('date failed for %s with local:%s remote:%s' % (_lpath, _lmtime, _rmtime))
                 pkg = (_rpath, _lpath, _lsize, _etag)
-                print('<request-time>:%s' % _lpath)
                 c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
         jobFileTime = []
         
@@ -281,7 +271,6 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                     _plugid = 'crypt.null'
                     _plugopts = (None, [])
 
-                print('etag:%s _:%s plugid:%s plugopts:%s' % (_etag, _, _plugid, _plugopts))
                 plug = getPM().getPluginInstance(_plugid, _etag, (None, _plugopts,))
                 _fo = plug.beginwrite(_lpath)
                 job.append(_fo)
@@ -380,7 +369,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
         jobGetModifiedDate.append((pkg, result)) 
     def __eventEcho(pkg, result, vector):
         logger.debug('ECHO')
-        print('GOT ECHO')
         pkg['echo'] = True
     def __eventFileWrite(pkg, result, vector):
         if result == 0:
@@ -399,9 +387,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
         _fo = pkg[7]
 
         if _success == 0:
-            print('HASH-ERROR:%s' % _rpath)
-            exit()
-            return
+            raise Exception('Hash Error')
 
         _data = _fo.read(_offset, _size)
         _lhash = _fo.read(_offset, _size)
@@ -420,9 +406,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
         # also its eating precious CPU with the double call above if its
         # using an encryption plugin
         _lhash = c.HashKmc(_lhash, 128)
-
-        if _size < 0:
-            print('_size LESS THAN ZERO!?!?!')
 
         # if we have used more bytes than the file's actual size then we are
         # basically just wasting bandwidth and should immediantly force all
@@ -607,21 +590,16 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
             nodes = os.listdir(dej)
 
             for node in nodes:
-                print(node, dej)
                 _lpath = b'/'.join((dej, node))
                 if os.path.isdir(_lpath):
                     # delay this..
-                    print('checking dir', node)
                     res = CallCatch(catches, 'Filter', _lpath, node, True)
                     if res or res is None:
-                        print('    accepted')
                         jobDirEnum.append(_lpath)
                     continue
-                print('checking file', node)
                 res = CallCatch(catches, 'Filter', _lpath, node, False)
                 if res or res is None:
                     jobPendingFiles.append(_lpath)
-                    print('    accepted')
         # drop what we completed
         jobDirEnum = jobDirEnum[x + 1:]
 
@@ -786,7 +764,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 manager (PM).
             '''
             tag, plug, plugopts = CallCatchEx(catches, 'EncryptFilter', (None, None, None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
-            print('encryptfilter returned tag:%s plugid:%s plugopts:%s' % (tag, plug, plugopts))
             if tag is None:
                 # if none specified then default to null
                 plug = getPM().getPluginInstance('crypt.null', '', (c, []))
@@ -795,7 +772,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 raise Exception('Apparently, we are missing a plugin referenced by "%s".' % plugid)
 
             _esize = plug.getencryptedsize(_lpath)
-            print('_lpath:%s _esize:%s _lsize:%s' % (_lpath, _esize, _lsize))
             _lsize = _esize
 
             _rpath = rpath + _lpath[lpbsz:]
@@ -832,7 +808,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 c.FileTime(_rpath, Client.IOMode.Callback, (__eventFileTime, pkg))
             else:
                 # first make the remote size match the local size
-                print('truncate; rpath:%s lsize:%s rsize:%s' % (_rpath, _lsize, _rsize))
                 c.FileTrun(_rpath, _lsize, Client.IOMode.Discard)
                 if max(_rsize, _lsize) < 1:
                     CallCatch(catches, 'Finished')
@@ -900,9 +875,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                     # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
                     tag = ''
-                print('$$$$$$$$$$$$$$$')
                 _fo = plug.beginread(_lpath)
-                print('$$$$$$$$$$$$$$$')
                 uj.append(_fo)
                 # make sure the correct metadata type/version (VERSION 1) byte is written
                 c.FileWriteMeta(_rpath, 0, b'\xAA', Client.IOMode.Discard)

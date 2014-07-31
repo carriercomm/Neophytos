@@ -16,6 +16,7 @@ ffunc = None
 class Class:
     Debug       = 1
     Warn        = 2
+    Info        = 3
 
 class Logger:
     def __init__(self, group):
@@ -35,6 +36,9 @@ class Logger:
 
     def warn(self, msg):
         self.report(Class.Warn, msg)
+
+    def info(self, msg):
+        self.report(Class.Info, msg)
 
     def debugNEOL(self, msg):
         self.report(Class.Debug, msg, True, False)
@@ -56,6 +60,7 @@ class Logger:
         # convert class to textual representation
         if mclass == Class.Warn: mclass = 'WARN'
         if mclass == Class.Debug: mclass = 'DEBUG'
+        if mclass == Class.Info: mclass = 'INFO'
 
         # if not just message
         if not justmsg:

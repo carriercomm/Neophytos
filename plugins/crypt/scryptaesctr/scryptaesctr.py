@@ -71,14 +71,14 @@ def aes256ctr_done(ctx):
         double maxmem, double maxmemfrac, double maxtime
     )
 '''
-def hscryptkdf(password, dklen, maxmem, maxmemfrac, maxtime, params = None, saltsz = 32):
+def hscryptkdf(password, dklen, maxmem, maxmemfrac, maxtime, params = None, saltsz = 32, nocheck = False):
     dk = create_string_buffer(dklen)
 
     # get lib's param size
     psz = _hgetparamsize()
     # check length of params
     if params is not None and len(params) < (psz + saltsz):
-        raise Exception('For this build of the scrypt lib params must be at least %s bytes! The salt size is %s.' % (psz, saltsz))
+        raise Exception('For this build of the scrypt lib the params are %s/%s bytes! The salt size is %s.' % (len(params), psz + saltsz, saltsz))
     if params is None:
         print('creating param bytes')
         params = create_string_buffer(psz + saltsz)
@@ -88,11 +88,16 @@ def hscryptkdf(password, dklen, maxmem, maxmemfrac, maxtime, params = None, salt
         params = c_char_p(params)
         recover = 1
 
+    if nocheck:
+        nocheck = 1
+    else:
+        nocheck = 0
+
     rcode = _hscryptkdf(
         c_char_p(password), c_size_t(len(password)), dk, c_size_t(dklen),
         c_size_t(saltsz),
         c_double(maxmem), c_double(maxmemfrac), c_double(maxtime), params,
-        c_uint8(recover)
+        c_uint8(recover), c_uint8(nocheck)
     )
 
     if recover == 0:
@@ -100,6 +105,7 @@ def hscryptkdf(password, dklen, maxmem, maxmemfrac, maxtime, params = None, salt
         params = bytes(params)
 
     return (rcode, bytes(dk), params)
+
 '''
     int
     scryptenc_buf(const uint8_t * inbuf, size_t inbuflen, uint8_t * outbuf,
@@ -271,9 +277,22 @@ class AESCTRMULTI:
                     raise Exception('The key file must contain at least 32-bytes!')
                 continue
 
-            if k == 'pass':
+            if k == 'pass' or k == 'key':
                 # use the scrypt KDF to generate 32 bytes for a key
-                pass
+                # r, p, logN
+                logger.info('generating derived key from password')
+                salt = b'%Zxlz9302#AKsj3928CMdn30293J#@!2'
+                # use the same parameters each time to prevent us from having to
+                # store this information inside the encrypted files, in the future
+                # i may support putting this information inside the file
+                params = struct.pack('IIi', 8, 10, 17) + salt
+                # encode the password into UTF8 format and produce derived key
+                result = hscryptkdf(bytes(v, 'utf8'), 32, 1024 * 1024 * 512, 0.9, 10.0, params, 32, True)
+                if result[0] != 0:
+                    raise Exception('Scrypt KDF Error When Generating Derived Key')
+                # use derived password as key
+                self.mk = result[1]
+                continue
 
             logger.warn('ignore option "%s"' % k)
 

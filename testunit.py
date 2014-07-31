@@ -314,7 +314,7 @@ def unitTestBackupOps():
         fo.write('any     accept    .*\n')
         fo.close()
 
-        sw = Catcher(None, './temp/filter', './temp/efilter', 'apple,crypt.aesctrmulti,file:key')
+        sw = Catcher(None, './temp/filter', './temp/efilter', 'apple,crypt.aesctrmulti,pass:mypassword')
         catches = {
             'DecryptByTag':         sw.catchDecryptByTag,       #
             'EncryptFilter':        sw.catchEncryptFilter,      #
