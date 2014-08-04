@@ -27,95 +27,161 @@ try:
 except:
     hasCurses = False
 
-class BufferInfo:
-    pass
 
+def findmulti(s, m):
+    f = -1
+    for _m in m:
+        i = s.find(_m)
+        if i > -1 and (i < f or f < 0):
+            f = i
+    return f
+
+'''
+    move cursor up N lines
+        \x1b[<N>A
+    move cursor down N lines
+        \x1b[<N>B
+    move cursor forward N columns
+        \x1b[<N>C
+    move cursor backward N columns
+        \x1b[<N>D
+
+    This class serves as a proxy to the actual stdout
+    stream object under Windows. It translates the 
+    implemented ANSI escape sequences into the equivilent
+    operation in an console buffer under Windows.
+'''
+class TextAttribute:
+    fg_red =           4
+    fg_green =         2
+    fg_blue =          1
+    fg_intense =       8
+    bg_blue =          16
+    bg_green =         32
+    bg_red =           64
+    bg_intense =       128
+
+class ProxyStream:
+    colors = {
+        1:      TextAttribute.fg_intense | TextAttribute.bg_intense,
+        30:     0,
+        31:     TextAttribute.fg_red,
+        32:     TextAttribute.fg_green,
+        33:     TextAttribute.fg_green | TextAttribute.fg_blue,
+        34:     TextAttribute.fg_blue,
+        35:     TextAttribute.fg_red | TextAttribute.fg_blue,
+        36:     TextAttribute.fg_red | TextAttribute.fg_green,
+        37:     TextAttribute.fg_red | TextAttribute.fg_green | TextAttribute.fg_blue,
+        40:     0,
+        41:     TextAttribute.bg_red,
+        42:     TextAttribute.bg_green,
+        43:     TextAttribute.bg_green | TextAttribute.bg_blue,
+        44:     TextAttribute.bg_blue,
+        45:     TextAttribute.bg_red | TextAttribute.bg_blue,
+        46:     TextAttribute.bg_red | TextAttribute.bg_green,
+        47:     TextAttribute.bg_red | TextAttribute.bg_green | TextAttribute.bg_blue,
+    }
+    def __init__(self, ct):
+        self.ct = ct
+        # need to read the attributes not guess about them...
+        self.cattr = ProxyStream.colors[37] | ProxyStream.colors[40]
+
+    def write(self, data):
+        parts = data.split('\x1b')
+
+        self.ct.stdout.write(parts[0])
+        for x in range(1, len(parts)):
+            part = parts[x]
+            # find one of the specific letters codes
+            i = findmulti(part, ('A', 'B', 'C', 'D', 'm'))
+            val = part[part.find('[') + 1:i]
+            code = part[i]
+            msg = part[i + 1:]
+            # just buffer onto the screen before we change position
+            self.ct.stdout.flush()
+            cx, cy = self.ct.wingetcursorposition()
+            if code == 'A':
+                cy = cy - int(val)
+            if code == 'B':
+                cy = cy + int(val)
+            if code == 'C':
+                cx = cx + int(val)
+            if code == 'D':
+                cx = cx - int(val)
+            if code == 'm':
+                vals = val.split(';')
+                attr = self.cattr
+                for val in vals:
+                    val = int(val)
+                    # foreground color set
+                    if val >= 30 and val <= 37:
+                        attr &= 0xf8
+                        attr |= ProxyStream.colors[val]
+                        continue
+                    # background color set
+                    if val >= 40 and val <= 47:
+                        # clear background colors
+                        attr &= 0x8f
+                        attr |= ProxyStream.colors[val]
+                        continue
+                self.ct.winsetconsoletextattribute(attr)
+                self.cattr = attr
+            # change position
+            self.ct.stdout.write('cx:%s cy:%s\n' % (cx, cy))
+            self.ct.winsetcursorposition(cx, cy)
+            # write remaining string
+            self.ct.stdout.write(msg)
+    def flush(self):
+        self.ct.stdout.flush()
 
 class CrossTerm:
-    def __init__(self, win):
+    def __init__(self):
         global hasCurses
-        self.win = win
         self.hasCurses = hasCurses
-        # if on win32 platform use kernel32 dynamic link library
+        # if on win32 platform use kernel32 dynamic link library and
+        # use a proxy to implement the ANSI escape sequences
         if not hasCurses:
             self.hdll = windll.LoadLibrary('kernel32.dll')
-            #self.hSetConsoleCursorPosition = CFUNCTYPE(c_int)(('SetConsoleCursorPosition', self.hdll))
             self.hSetConsoleCursorPosition = self.hdll['SetConsoleCursorPosition']
-            #self.hGetStdHandle = CFUNCTYPE(c_uint)(('GetStdHandle', self.hdll))
             self.hGetStdHandle = self.hdll['GetStdHandle']
-            #self.hWriteConsoleOutputCharacter = CFUNCTYPE(c_uint)(('WriteConsoleOutputCharacterA', self.hdll))
             self.hWriteConsoleOutputCharacter = self.hdll['WriteConsoleOutputCharacterA']
-            #self.hGetConsoleScreenBufferInfo = CFUNCTYPE(c_uint)(('GetConsoleScreenBufferInfo', self.hdll))
             self.hGetConsoleScreenBufferInfo = self.hdll['GetConsoleScreenBufferInfo']
-            sw, sh = self.getScreenSize()
+            self.hSetConsoleTextAttribute = self.hdll['SetConsoleTextAttribute']
+            self.hSetConsoleMode = self.hdll['SetConsoleMode']
+            self.hGetConsoleMode = self.hdll['GetConsoleMode']
+            self.stdout = sys.stdout
+            self.stderr = sys.stderr
+            sys.stdout = ProxyStream(self)
 
-            # scroll the buffer so we get a new blank space
-            # similar to how curses initializes the screen
-            for i in range(0, sh):
-                print('')
-            # get the row index of the top line of our current
-            # screen
-            binfo = self._getConsoleScreenBufferInfo()
-            self.topy = binfo.winY
+    def winsetconsolemode(self, mode):
+        ch = self.hGetStdHandle(c_int(-11))
+        return self.hSetConsoleMode(c_uint(ch), c_uint(mode))
+
+    def winsetconsoletextattribute(self, attr):
+        ch = self.hGetStdHandle(c_int(-11))
+        return self.hSetConsoleTextAttribute(c_uint(ch), c_uint(attr))
 
     '''
         This will set the absolute cursor position.
-
-        * curses did not implement this.. so me either but
-          just wanted the code to stay for future reference
-          if needed (for the win32 function call)
     '''
-    #def setCursorPosition(self, x, y):
-    #    if self.hasCurses:
-    #        
-    #    else:
-    #        ch = self.hGetStdHandle(c_int(-11))
-    #        self.hSetConsoleCursorPosition(c_uint(ch), c_short(x), c_short(y))
+    def winsetcursorposition(self, x, y):
+        ch = self.hGetStdHandle(c_int(-11))
+        s = (y << 16) | (x)
+        return self.hSetConsoleCursorPosition(c_uint(ch), c_ulong(s))
 
     '''
         Will return current cursor position.
     '''
-    def getCursorPosition(self):
-        if self.hasCurses:
-            return self.win.getyx()
-        else:
-            ch = self.hGetStdHandle(c_int(-11))
-            buf = struct.pack('<HHHHHHHHHHH', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-            self.hGetConsoleScreenBufferInfo(c_uint(ch), c_char_p(buf))
-            info = struct.unpack_from('<HHHH', buf)
-            cx = info[2]
-            cy = info[3]
-            return (cx, cy)
+    def wingetcursorposition(self):
+        ch = self.hGetStdHandle(c_int(-11))
+        buf = struct.pack('<HHHHHHHHHHH', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        self.hGetConsoleScreenBufferInfo(c_uint(ch), c_char_p(buf))
+        info = struct.unpack_from('hhhh', buf)
+        cx = info[2]
+        cy = info[3]
+        return (cx, cy)
 
-    '''
-        Should be caled after you make any changes to have them
-        displayed to the screen. This actually does nothin for Windows
-        but it is required for curses. So if you want cross-platform
-        operation then just call this as needed.
-    '''
-    def update(self):
-        if self.hasCurses:
-            self.win.refresh()
-
-    '''
-        Will clear the screen with all spaces.
-    '''
-    def clear(self):
-        if self.hasCurses:
-            self.win.clear()
-            return
-
-        # the win32 api has no function to clear the screen 
-        # so i have to implement it in this function
-        w, h = self.getScreenSize()
-        for y in range(0, h):
-            # create new lines the height of the current window (to keep scrollable history)
-            self.writeStringAt(0, self.topy + h, ' ' * w)
-
-    '''
-        Internal WinNT only function
-    '''
-    def _getConsoleScreenBufferInfo(self):
+    def _getconsolescreenbufferinfo(self):
             ch = self.hGetStdHandle(c_int(-11))
             buf = struct.pack('<HHHHHHHHHHH', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
             self.hGetConsoleScreenBufferInfo(c_uint(ch), c_char_p(buf))
@@ -136,11 +202,11 @@ class CrossTerm:
     '''
         Get size of visible screen. (Does not include buffer size if any.)
     '''
-    def getScreenSize(self):
+    def getscreensize(self):
         if self.hasCurses:
             return self.win.getyx()
         else:
-            binfo = self._getConsoleScreenBufferInfo()
+            binfo = self._getconsolescreenbufferinfo()
             #w = info[0] - width of entire screen buffer
             #h = info[1] - height of entire screen buffer
 
@@ -156,198 +222,15 @@ class CrossTerm:
     '''
         Write string at position.
     '''
-    def writeStringAt(self, x, y, s, attr = 0, maxpad = 0):
-        if maxpad > 0:
-            if len(s) < maxpad:
-                s = '%s%s' % (s, ' ' * (maxpad - len(s)))
-            else:
-                s = s[0:maxpad]
+    def winwritestringat(self, x, y, s, attr = 0):
+        y = self.topy + y
+        ch = self.hGetStdHandle(c_int(-11))
+        s = bytes(s, 'utf8')
+        wrote = struct.pack('<Q', 0)
+        cord = (y << 16) | x
+        err = self.hWriteConsoleOutputCharacter(c_uint(ch), c_char_p(s), c_uint(len(s)), cord, c_char_p(wrote))
 
-        if self.hasCurses:
-            self.win.addstr(y, x, s, attr)
-        else:
-            y = self.topy + y
-            ch = self.hGetStdHandle(c_int(-11))
-            s = bytes(s, 'utf8')
-            wrote = struct.pack('<Q', 0)
-            cord = (y << 16) | x
-            err = self.hWriteConsoleOutputCharacter(c_uint(ch), c_char_p(s), c_uint(len(s)), cord, c_char_p(wrote))
-
-'''
-    This version mainly adds support to help with boxing. It
-    mainly serves to prevent you from overwriting your allocated
-    area. 
-
-    I may add support for automatic allocation of boxes somewhere 
-    on the screen at a later time. But, for now you must specify
-    your box dimensions.
-'''
-class BoxOverlapException(Exception):
-    pass
-
-'''
-    The object used to write to the screen when using boxes.
-'''
-class CrossTerm2Box:
-    def __init__(self, ct, x, y, w, h, prefix = ''):
-        self.ct = ct
-        self.x = x
-        self.y = y
-        self.w = w
-        self.h = h
-        self.prefix = prefix
-
-    def setPrefix(self, prefix):
-        self.prefix = prefix
-
-    def getRect(self):
-        return (self.x, self.y, self.w, self.h)
-
-    def write(self, text):
-        text = '%s%s' % (self.prefix, text)
-        if len(text) > self.w * self.h:
-            # truncate it
-            text = text[0:self.w * self.h]
-        rowcnt = int(math.ceil(len(text) / self.w))
-        # write it over entire box
-        for row in range(0, rowcnt):
-            off = row * self.w
-            line = text[off:self.w]
-            if len(line) < self.w:
-                line = '%s%s' % (line, ' ' * (self.w - len(line)))
-            self.ct.writeStringAt(self.x, self.y + row, line)
-
-
-'''
-    This provides enhanced and extra features.
-
-    [X] box support
-    [ ] tcp server support
-'''
-class CrossTerm2(CrossTerm):
-    def __init__(self, *args):
-        super().__init__(*args)
-        self.w, self.h = self.getScreenSize()
-        self.boxes = []
-
-    '''
-        You specify the box width and height and it will
-        find a spot to put it.
-    '''
-    def getBoxAuto(self, w, h, prefix = ''):
-        for x in range(0, self.w):
-            for y in range(0, self.h):
-                box = self.getBox(x, y, w, h, prefix = prefix)
-                if box is not None:
-                    return box
-        # no space big enough for the box
-        return None
-
-    '''
-        This will create a new box.
-    '''
-    def getBox(self, x, y, w, h, prefix = ''):
-        # look through list of boxes and find place to put
-        nx1 = x
-        ny1 = y
-        nx2 = (x + w) - 1
-        ny2 = (y + h) - 1
-
-        # check for overlap
-        for box in self.boxes:
-            bx1, by1, bx2, by2 = box.getRect()
-            bx2 += bx1
-            by2 += by1
-
-            if nx1 >= bx1 and nx1 < bx2 and ny1 >= by1 and ny1 < by2:
-                if nx2 >= bx1 and nx2 < bx2 and ny2 >= by1 and ny2 < by2:
-                    return None
-        nbox = CrossTerm2Box(self, x, y, w, h, prefix = prefix)
-        # trigger prefix if any
-        if len(prefix) > 0:
-            nbox.write('')
-        self.boxes.append(nbox)
-        return nbox
-
-'''
-    If using curses it wraps the code path so the terminal
-    can be restored when program exits. If not using curses
-    it either does an alternative initialization or nothing.
-'''
-def wrapper(f, *args):
-    win = None
-    if hasCurses:
-        # initial screen
-        win = curses.initscr()
-        # turn on cbreak
-        curses.cbreak()
-        # turn off echo
-        curses.noecho()
-        # turn on terminal keypad
-        win.keypad(1)
-        # initialize colors
-        try:
-            curses.start_color()
-        except:
-            pass
-
-    ct = CrossTerm2(win)
-    if True or not hasCurses:
-        #
-        #            WINDOWS ONLY
-        #
-        # to keep the programming from accidentally
-        # messing the window up by print something
-        # to the screen we will direct all output
-        # from print statements to a file; curses on
-        # linux can handle print statements and do
-        # not effect the buffer but we have no good 
-        # way to do it on windows platform unless 
-        # we created a brand new console window just
-        # for our output
-        stdout = open('.stdout', 'w')
-        ct.stdout = sys.stdout         # save it
-        sys.stdout = stdout            # protect it
-        ct.stderr = sys.stderr
-        sys.stderr = stdout
-
-    try:
-        f(ct, *args)
-    finally:
-        if hasCurses:
-            # restore cooked mode
-            curses.nocbreak()
-            # turns on echo
-            curses.echo()
-            # disales terminal keypad
-            win.keypad(0)
-            # restore terminal mode
-            curses.endwin()
-        ct.stdout.close()
-        sys.stdout = ct.stdout
-        sys.stderr = ct.stderr
-'''
-    My testing function.
-'''
-def main(xc):
-    #print('\033[%sA' % y)   # move cursor up
-    #print('\033[%sD' % x)   # move cursor left
-    #print('\033[%s;%sH%s' % (y + 1, x + 1, s))   # set cursor position
-    #writeStringAtPosition(0, 0, 'a world')
-    #writeStringAtPosition(0, 1, 'b apple')
-    #writeStringAtPosition(0, 2, 'c grape')
-    #print('\033[6n')
-    #win = curses.initscr()
-
-    xc.clear()
-
-    for a in range(0, 15):
-        xc.writeStringAt(10, 2 + a, 'HELLO WORLD', 253)
-    #xc.writeStringAt(10, 10, 'HELLO WORLD')
-    xc.update()
-
-    while True:
-        pass
+ct = CrossTerm()
 
 if __name__ == '__main__':
     wrapper(main)

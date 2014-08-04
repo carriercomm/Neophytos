@@ -260,7 +260,6 @@ scryptkdf(
 	salt = (uint8_t*)&params[1];
 
 	if (!recover) {
-		printf("@generating\n");
 		/* Pick values for N, r, p. */
 		if ((rc = pickparams(maxmem, maxmemfrac, maxtime,
 		    &params->logN, &params->r, &params->p)) != 0)
@@ -271,7 +270,6 @@ scryptkdf(
 		if ((rc = getsalt(salt, 32)) != 0)
 			return (rc);
 	} else {
-		printf("@recovering\n");
 		if (!nocheck) {
 			if ((rc = checkparams(maxmem, maxmemfrac, maxtime, params->logN, params->r, params->p)) != 0)
 				return (rc);
@@ -279,7 +277,7 @@ scryptkdf(
 		N = (uint64_t)(1) << params->logN;
 	}
 
-	printf("passwd:%s N:%x r:%x p:%x dklen:%x\n", passwd, N, params->r, params->p, dklen);
+	//printf("passwd:%s N:%x r:%x p:%x dklen:%x\n", passwd, N, params->r, params->p, dklen);
 
 	/* Generate the derived keys. */
 	if (crypto_scrypt(passwd, passwdlen, salt, 32, N, params->r, params->p, dk, dklen))

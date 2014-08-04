@@ -14,6 +14,9 @@ from lib.pluginman import getPM
 import lib.flycatcher as flycatcher
 logger = flycatcher.getLogger('BuOps')
 
+def dummy(*args):
+    return
+
 '''
     This is used to share state between the asynchronous sub-jobs
     of a patch operation. When a patch is started one or more sub
@@ -68,7 +71,7 @@ def CallCatchEx(catches, signal, defret, *args):
     return catches[signal](*args)
 
 
-def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
+def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
     if rpath is None:
         rpath = b'/'
 
@@ -257,7 +260,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
             '''
             if len(job) < 6:
                 _etag = _etag.decode('utf8', 'ignore')
-                _, _plugid, _plugopts = CallCatchEx(catches, 'DecryptByTag', (None, None, None), _etag)
+                _, _plugid, _plugopts = eventfunc('DecryptByTag', _etag)
 
                 if _ is None and _etag is not None and len(_etag) > 0:
                     # well, we apparently have no entry for this file so we
@@ -308,7 +311,7 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
 '''
     PUSH
 '''
-def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
+def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
     if rpath is None:
         rpath = b'/'
 
@@ -417,14 +420,13 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
             logger.debug('hash; [%s] minus one' % id(_shrstate))
             _shrstate.dec()
             if _shrstate.opCount < 1:
-                CallCatch(catches, 'Finish', _rpath, _lpath, _offset, _size)
-                CallCatch(catches, 'PatchFinish', _shrstate)
+                eventfunc('PatchFinish', _rpath, _lpath)
                 _fo.finish()
             return
 
         # if the hashes are the same do nothing
         if _lhash != _rhash:
-            CallCatch(catches, 'HashBad', _rpath, _lpath, _offset, _size, _rhash, _lhash)
+            eventfunc('HashBad', _rpath, _lpath, _offset, _size, _rhash, _lhash)
             # let us decide if it is worth breaking down futher
             # or we should just cut our loses and force a patch
 
@@ -468,7 +470,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 return
 
             # just upload this section..
-            CallCatch(catches, 'Write', _rpath, _lpath, _offset, _size)
+            eventfunc('Write', _rpath, _lpath, _offset, _size)
             _shrstate.bytesPatched += _size
 
             logger.debug('patching-section:%s:%x:%x' % (_lpath, _offset, _size))
@@ -476,7 +478,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
         else:
             # track how many bytes we saved!
             _shrstate.bytesSaved += _size
-            CallCatch(catches, 'HashGood', _rpath, _lpath, _offset, _size)
+            eventfunc('HashGood', _rpath, _lpath, _offset, _size)
             logger.debug('patching-match:%s:%x:%x' % (_lpath, _offset, _size))
         # decrement since we just died and spawned no sub-hash jobs
         logger.debug('hash; [%s] minus one' % id(_shrstate))
@@ -486,8 +488,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
             # time by way of hashing
             ct = time.time()
             c.FileSetTime(_rpath, int(ct), int(ct), Client.IOMode.Discard)
-            CallCatch(catches, 'Finish', _rpath, _lpath, _offset, _size)
-            CallCatch(catches, 'PatchFinish', _shrstate)
+            eventfunc('PatchFinish', _rpath, _lpath, _size)
             _fo.finish()
     
     # statistics
@@ -508,7 +509,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
         c.handleOrSend()
 
         # update our throughput
-        CallCatch(catches, 'Throughput', c.getThroughput())
+        eventfunc('Cycle', c.getThroughput())
 
         ########################################################
         ##################### LIMITERS #########################
@@ -570,8 +571,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 # the remote side could not read because it can not write
                 c.handleOrSend()
 
-                CallCatch(catches, 'BufferDump', c.getBytesToSend())
-                CallCatch(catches, 'Throughput', c.getThroughput())
+                eventfunc('DumpCycle', c.getThroughput(), c.getBytesToSend())
                 time.sleep(0.01)
         else:
             # just send what we can right now
@@ -593,11 +593,11 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 _lpath = b'/'.join((dej, node))
                 if os.path.isdir(_lpath):
                     # delay this..
-                    res = CallCatch(catches, 'Filter', _lpath, node, True)
+                    res = eventfunc('Filter', _lpath, node, True)
                     if res or res is None:
                         jobDirEnum.append(_lpath)
                     continue
-                res = CallCatch(catches, 'Filter', _lpath, node, False)
+                res = eventfunc('Filter', _lpath, node, False)
                 if res or res is None:
                     jobPendingFiles.append(_lpath)
         # drop what we completed
@@ -654,7 +654,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 hv = time.time() - op.startTime
                 he = op
         if he is not None:
-            CallCatch(catches, 'LongestPatchOp', he)
+            eventfunc('LongestPatchOp', he)
 
         for t in tr:
             jobPatchOperations.remove(t)
@@ -690,13 +690,14 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                     See ./plugins/ and especially ./plugins/crypt for examples of the 
                     implementation of this.
                 '''
-                tag, plugid, plugopts = CallCatchEx(catches, 'EncryptFilter', ('', None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+                tag, plugid, plugopts = eventfunc('EncryptFilter', _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
                 if plugid is None:
                     # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
                     tag = ''
                 else:
                     plug = getPM().getPluginInstance(plugid, tag, plugopts)
+                    print('plug', plug)
                 _fo = plug.beginread(_lpath)
                 job.append(_fo)
                 # make sure the correct metadata type/version (VERSION 1) byte is written
@@ -763,7 +764,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 that here. The plugin instance is cached by the plugin
                 manager (PM).
             '''
-            tag, plug, plugopts = CallCatchEx(catches, 'EncryptFilter', (None, None, None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+            tag, plug, plugopts = eventfunc('EncryptFilter', _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
             if tag is None:
                 # if none specified then default to null
                 plug = getPM().getPluginInstance('crypt.null', '', (c, []))
@@ -777,7 +778,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
             _rpath = rpath + _lpath[lpbsz:]
             stat_checked = stat_checked + 1
             pkg = (_rpath, _lpath, _lsize, None, int(stat.st_mtime))
-            CallCatch(catches, 'Start', _rpath, _lpath)
+            eventfunc('Start', _rpath, _lpath)
             c.FileSize(_rpath, Client.IOMode.Callback, (__eventFileSize, pkg))
         # drop what we completed
         jobPendingFiles = jobPendingFiles[x + 1:]
@@ -798,7 +799,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
             _vector = pkg[3]
             _lmtime = pkg[4]
 
-            CallCatch(catches, 'SizeReply', _rpath, _lpath)
+            eventfunc('SizeReply', _rpath, _lpath)
 
             # result[0] = success code is non-zero and result[1] = size (0 on failure code)
             _rsize = _result[1]
@@ -810,7 +811,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 # first make the remote size match the local size
                 c.FileTrun(_rpath, _lsize, Client.IOMode.Discard)
                 if max(_rsize, _lsize) < 1:
-                    CallCatch(catches, 'Finished')
+                    eventfunc('Finished')
                     continue
                 # need to decide if we want to upload or patch
                 if min(_rsize, _lsize) / max(_rsize, _lsize) < 0.5:
@@ -835,7 +836,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
             _vector = pkg[4]
             _lmtime = pkg[5]
 
-            CallCatch(catches, 'DateReply', _rpath, _lpath)
+            eventfunc('DateReply', _rpath, _lpath)
 
             if _rmtime < _lmtime:
                 # need to decide if we want to upload or patch
@@ -847,7 +848,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                     jobPatch.append([_rpath, _lpath, _rsize, _lsize, 0])
             else:
                 # just drop it since its either up to date or newer
-                CallCatch(catches, 'Finished')
+                eventfunc('Finished')
                 stat_uptodate = stat_uptodate + 1
                 continue
         jobGetModifiedDate = [] 
@@ -870,7 +871,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 do read operations instead of directly on the file.
             '''
             if len(uj) < 6:
-                tag, plug, plutopts = CallCatchEx(catches, 'EncryptFilter', (None, None, None), _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
+                tag, plug, plugopts = eventfunc('EncryptFilter', _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)  
                 if plug is None:
                     # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
@@ -907,7 +908,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
                 tr.append(uj)
                 continue
 
-            CallCatch(catches, 'Write', _rpath, _lpath, _curoff, _chunksize)
+            eventfunc('Write', _rpath, _lpath, _curoff, _chunksize)
 
             c.FileWrite(_rpath, _curoff, _data, Client.IOMode.Discard)
             # advance our current offset
@@ -931,7 +932,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
         # remove finished jobs
         ct = time.time()
         for uj in tr:
-            CallCatch(catches, 'Finish', uj[0], uj[1])
+            eventfunc('Finish', uj[0], uj[1])
             # set the modified time on the file to the current
             # time to represent it is up to date
             _rpath = uj[0]
@@ -943,7 +944,8 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, catches = None):
     # we are done!
     return
 
-def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True, pretend = True):
+
+def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True, pretend = True, eventfunc = dummy):
     if rpath is None:
         rpath = b'/'
 
@@ -1000,7 +1002,7 @@ def SyncLocalWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True, pre
     return dcount[0]
 
 
-def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True):
+def SyncRemoteWithDeleted(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
     if rpath is None:
         rpath = b'/'
 

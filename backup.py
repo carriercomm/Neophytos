@@ -10,9 +10,12 @@ from lib import misc                        # ... likely old unused junk.. need 
 from lib import output                      # serves as tcp status server.. needs to be rebuilt and
                                             # possibly integrated into or with crossterm for remote
                                             # output
+from lib.pluginman import getPM
 
 from lib.filter import Filter               # single filter created from file normally
 from lib.efilters import EncryptionFilters  # encryption filters created from encryption filter file
+
+
 
 import lib.crossterm as crossterm           # cross-platform console API
 import lib.flycatcher as flycatcher         # debugging tool
@@ -61,9 +64,7 @@ flycatcher.setFilterFunction(flyFilter)
 import lib.buops                        # backup operations
 
 class Catcher:
-    def __init__(self, ct, filterFile, efilterFile, defcryptstring):
-        self.ct = ct
-
+    def __init__(self, filterFile, efilterfile, defcryptstring):
         # ensure default encryption filter object is created
         self.efilters = EncryptionFilters(efilterfile, defcryptstring)
 
@@ -71,30 +72,6 @@ class Catcher:
             self.filter = Filter(filterFile)
         else:
             self.filter = None
-        fsz = 30
-        # allocate boxes to be used to hold status elements
-        self.boxCurFile = ct.getBox(0, 0, 80, 1,     'CurFile:   ')
-        self.boxStartCount = ct.getBox(0, 1, fsz, 1,  'Processed: ')
-        self.boxFinishCount = ct.getBox(0, 2, fsz, 1, 'Finished:  ')
-        self.boxHashGood = ct.getBox(0, 3, fsz, 1,    'HashGood:  ')
-        self.boxHashBad = ct.getBox(0, 4, fsz, 1,     'HashBad:   ')
-        self.boxDateReply = ct.getBox(0, 5, fsz, 1,   'DateReply: ')
-        self.boxSizeReply = ct.getBox(0, 6, fsz, 1,   'SizeReply: ')
-        self.boxBufferSize = ct.getBox(0, 7, fsz, 1,  'Buffer:    ')
-        self.boxBytesWrote = ct.getBox(0, 8, fsz, 1,  'BytesOut:  ')
-        self.boxLocalHash = ct.getBox(0, 9, 128, 1,   'LocalHash: ')
-        self.boxRemoteHash = ct.getBox(0, 10, 128, 1, 'RemoteHash:')
-        self.boxWriteCount = ct.getBox(0, 11, fsz, 1, 'WriteCount:')
-        self.boxLastWrite = ct.getBox(0, 12, 128, 1,  'LastWrite: ')
-        self.boxThroughput = ct.getBox(0, 13, fsz, 1, 'Throughput:')
-        self.boxLPatchTime = ct.getBox(0, 14, fsz, 1, 'LPatch:Time: ')
-        self.boxLPatchFile = ct.getBox(0, 15, 128, 1, 'LPatch:File: ')
-        self.boxLPatchUp = ct.getBox(0, 16, fsz, 1,   'LPatch:Data: ')
-        self.boxLPatchCtrl = ct.getBox(0, 17, fsz, 1, 'LPatch:Ctrl: ')
-        self.boxLPatchOpCnt = ct.getBox(0, 18, fsz, 1,'LPatch:Ops:  ')
-        self.boxLPatchSaved = ct.getBox(0, 19, fsz, 1,'LPatch:Saved:')
-        self.boxAccepted = ct.getBox(0, 20, fsz, 1,   'Accepted:  ')
-        self.boxRejected = ct.getBox(0, 21, fsz, 1,   'Rejected:  ')
 
         self.writeCount = 0
         self.startCount = 0
@@ -106,6 +83,24 @@ class Catcher:
         self.bytesWrote = 0
         self.acceptedCount = 0
         self.rejectedCount = 0
+
+    def writeline(self, txt):
+        txt = txt[0:40]
+        txt = txt.ljust(40)
+        print(txt, end = '\x1b[1000D')
+
+    def event(self, *args):
+        ename = args[0]
+
+        self.writeline(ename)
+
+        if ename == 'DecryptByTag':
+            return self.catchDecryptByTag(*args[1:])
+        if ename == 'EncryptFilter':
+            return self.catchEncryptFilter(*args[1:])
+        if ename == 'Filter':
+            return self.catchFilter(*args[1:])
+
 
     def catchDecryptByTag(self, tag):
         # we need to search throuh our encryption filter
@@ -122,7 +117,7 @@ class Catcher:
             plugid = einfo[1]
             plugopts = einfo[2]
             plugtag = '%s.%s' % (plugid, plugopts)
-            plug = getPM().getPluginInstance(plugid, plugtag, (c, plugopts,))
+            plug = getPM().getPluginInstance(plugid, plugtag, (None, plugopts,))
         else:
             # this should rarely be used.. the caller will likely be providing
             # the efilter object when calling this function, but it is here
@@ -132,6 +127,8 @@ class Catcher:
             plugopts = (c, [])
         return (etag, plug, plugopts)
     def catchFilter(self, lpath, node, isDir):
+        if self.filter is None:
+            return True
         result = self.filter.check(lpath, node, isDir)
         if result:
             self.acceptedCount += 1
@@ -139,70 +136,6 @@ class Catcher:
             self.rejectedCount += 1
         print('result', result)
         return result
-    def catchPatchFinish(self, shrstate):
-        self.catchFinished(None)
-    def catchLongestPatchOp(self, op):
-        self.boxLPatchTime.write('%s' % (time.time() - op.startTime))
-        self.boxLPatchFile.write('%s' % op.lpath)
-        self.boxLPatchUp.write('%s' % op.bytesPatched)
-        self.boxLPatchCtrl.write('%s' % op.bytesProtoUsed)
-        self.boxLPatchOpCnt.write('%s' % op.opCount)
-        self.boxLPatchSaved.write('%s' % op.bytesSaved)
-        self.ct.update()
-    def catchThroughput(self, throughput):
-        self.boxThroughput.write('%.01f' % throughput)
-        self.ct.update()
-    def catchFinished(self, *args):
-        self.finishCount += 1
-        self.boxFinishCount.write('%s' % self.finishCount)
-        # i need to stuff these somewhere so they were not
-        # called constantly from the filter function; it would
-        # likely decrease the speed by a large amount
-        self.boxAccepted.write('%s' % (self.acceptedCount))
-        self.boxRejected.write('%s' % (self.rejectedCount))
-        self.ct.update()
-    def catchPatchReply(self, *args):
-        pass
-    def catchDateReply(self, *args):
-        self.dateReplyCount += 1
-        self.boxDateReply.write('%s' % self.dateReplyCount)
-        self.ct.update()
-    def catchSizeReply(self, *args):
-        self.sizeReplyCount += 1
-        self.boxSizeReply.write('%s' % self.sizeReplyCount)
-        self.ct.update()
-    def catchStart(self, *args):
-        self.startCount += 1
-        self.boxCurFile.write(args[1])
-        self.boxStartCount.write('%s' % self.startCount)
-        self.ct.update()
-    def catchHashBad(self, *args):
-        self.hashBadCount += 1
-        self.boxHashBad.write('%s' % self.hashBadCount)
-        rhash = args[4]
-        lhash = args[5]
-        rhash = '%s:%s' % (len(rhash), ''.join('{:02x}'.format(c) for c in rhash))
-        lhash = '%s:%s' % (len(lhash), ''.join('{:02x}'.format(c) for c in lhash))
-        self.boxLocalHash.write(lhash)
-        self.boxRemoteHash.write(rhash)
-        self.ct.update()
-    def catchHashGood(self, *args):
-        self.hashGoodCount += 1
-        self.boxHashGood.write('%s' % self.hashGoodCount)
-        self.ct.update()
-    def catchBufferDump(self, *args):
-        self.boxBufferSize.write('%s' % args[0])
-        self.ct.update()
-    def catchWrite(self, *args):
-        # rfile, lfile, offset, size
-        self.writeCount += 1
-        self.bytesWrote += args[3]
-        self.boxBytesWrote.write('%s' % self.bytesWrote)
-        self.boxWriteCount.write('%s' % self.writeCount)
-        self.boxLastWrite.write('%s' % args[1])
-        self.ct.update()
-    def catchUncaught(self, *args):
-        pass
 
 def showHelp():
     opts = {}
@@ -229,10 +162,9 @@ def showHelp():
     for k in opts:
         print(k.ljust(20), opts[k])
 
-def main(ct, args):
+def main(args):
     '''
     '''
-
     # parse command line arguments
     opts = (
         'lpath', 'rpath', 'password', 'push', 'pull', 'sync-deleted-to-server',
@@ -299,6 +231,8 @@ def main(ct, args):
     filter = None
     if 'filter-file' in setopts:
         filterFile = setopts['filter-file']
+    else:
+        filterFile = None
 
     # convert certain arguments needed into proper types
     if 'port' in setopts:
@@ -317,53 +251,33 @@ def main(ct, args):
         showHelp()
         return
 
-    sw = Catcher(ct, filterFile, setopts.get('efilter-file', None), setopts.get('def-crypt', ',crypt.null'))
-
-    '''
-        A catch is basically a callback, but were are not really going to be
-        performing work but rather displaying the status. You could technically
-        control something from a catch, but is not yet implemented.
-    '''
-    catches = {
-        'Finished':             sw.catchFinished,           # when file is finished
-        'PatchReply':           sw.catchPatchReply,         # on hash/patch reply
-        'HashBad':              sw.catchHashBad,            # if hash was bad
-        'HashGood':             sw.catchHashGood,           # if hash was good
-        'DateReply':            sw.catchDateReply,          # on date/time reply
-        'SizeReply':            sw.catchSizeReply,          # on size eply
-        'Start':                sw.catchStart,              # when file is started
-        'Uncaught':             sw.catchUncaught,           # anything we dont catch
-        'Write':                sw.catchWrite,              # when write happens
-        'BufferDump':           sw.catchBufferDump,         # during buffer dumps
-        'Throughput':           sw.catchThroughput,         # periodically
-        'LongestPatchOp':       sw.catchLongestPatchOp,     # longest living patch operation
-        'PatchFinish':          sw.catchPatchFinish,        # when patch operation finishes
-        'Filter':               sw.catchFilter,             # called to filter a file or dir
-        'DecryptByTag':         sw.catchDecryptByTag,       #
-        'EncryptFilter':        sw.catchEncryptFilter,      #
-    }
+    sw = Catcher(filterFile, setopts.get('efilter-file', None), setopts.get('def-crypt', ',crypt.null'))
 
     if 'push' in setopts:
         lib.buops.Push(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['ssl'], setopts['sformat'], catches,
-            efilters
+            setopts['rpath'], setopts['ssl'], sw.event
         )
         return 
     if 'pull' in setopts:
         lib.buops.Pull(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['ssl'], setopts['sformat'], catches
+            setopts['rpath'], setopts['ssl'], sw.event
         )
         return
     if 'sync-deleted-to-server' in setopts:
         lib.buops.SyncRemoteWithDeleted(
             setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
-            setopts['rpath'], filter, setopts['stash'], setopts['ssl'], setopts['sformat'], catches
+            setopts['rpath'], setopts['ssl'], sw.event
         )
         return
     if 'sync-deleted-to-local' in setopts:
-        raise Exception('not implemented')
+        lib.buops.SyncLocalWithDeleted(
+            setopts['host'], setopts['port'], setopts['password'], setopts['lpath'],
+            setopts['rpath'], setopts['ssl'], sw.event
+        )
+        return
+        
     return
 
 # only execute this if we are the primary
@@ -373,4 +287,4 @@ if __name__ == '__main__':
     misc.setProcessPriorityIdle()
     # setup standard outputs (run TCP server)
     output.Init(output.Mode.TCPServer)
-    crossterm.wrapper(main, sys.argv[1:])
+    main(sys.argv[1:])

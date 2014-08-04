@@ -44,7 +44,6 @@ class __PluginMan:
             plugtype = self.getPlugin(plugid)
             if plugtype is None:
                 return None
-            print('options:%s koptions:%s' % (options, koptions))
             self.instances[plugid][tag] = plugtype(*options, **koptions)
         return self.instances[plugid][tag]
 
