@@ -424,7 +424,8 @@ class Client:
             data.write(_data)
         except:
             # the socket was not ready to be read
-            pass
+            return
+        self.eventfunc('DataIn', len(_data))
     '''
         A wrapper around the socket which is used to read incoming into
         our application level buffer. It will only return data if it is
@@ -487,6 +488,8 @@ class Client:
         # get type
         type = data[0]
         
+        self.eventfunc('MessageOut', vector, type)
+
         # leave get public key and setup crypt unaltered
         if type == ClientType.GetPublicKey:
             # do not encrypt at all
@@ -606,6 +609,8 @@ class Client:
                 except:
                     raise ConnectionDeadException()
                 
+                self.eventfunc('DataOut', sent)
+
                 if sent == 0:
                     # place remaining data back at front of queue and
                     # we will try to send it next time
@@ -666,6 +671,7 @@ class Client:
     def FileWrite(self, fid, offset, data, mode, callback = None):
         fid = self.GetServerPathForm(fid)
         # compensate for metadata length
+        self.eventfunc('FileWrite', fid, offset, len(data))
         offset += self.metasize
         return self.WriteMessage(struct.pack('>BQHB', ClientType.FileWrite, offset, len(fid), self.bz2compression) + fid + data, mode, callback)
     def FileSetTime(self, fid, atime, mtime, mode, callback = None):
@@ -701,9 +707,9 @@ class Client:
         return self.WriteMessage(struct.pack('>B', ClientType.FileTime) + fid, mode, callback)
     def HashKmc(self, data, max):
         if self.hentry is not None:
-            #out = create_string_buffer(len(data))
-            sz = self.hentry(c_char_p(data), c_uint(len(data)), max)
-            return data[0:sz]
+            out = create_string_buffer(data)
+            sz = self.hentry(out, c_uint(len(data)), max)
+            return bytes(out)[0:sz]
 
         data = list(data)
 

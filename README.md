@@ -179,93 +179,21 @@ also build an executable using `go`, but I will leave that as an excercise for y
 
 Technical Limitations Of Client And Server
 =====
-_When I refer to stashing I am refering to the ability to create an one or more alternative data
-streams each with meta-data._
-
 _When I refer to meta-data I am refering to the ability to tag a file with an variable sized byte
 header._
 
-If you use the byte 0xff as the first byte
-in a directory name you will be unable to use the stashing features of the client. 
-The stashing is implemented completely by the client. The server is unaware of stashing. You can
-however modify the client and circumvent this limitation. I implemented it this way to balance between
-performance, or so I intended to do so. It is possible to make this limitation only apply to the very
-first directory of a path but it requires a little work which I have not done quite yet.
-
 The server at this time is expected to support a filename of at least a length of 255 bytes. 
 If you use UTF-16 that means you can have a filename length of 128 bytes. If you use UTF-8 it can vary. 
-This is the maximum supported filename length of the EXT4 file system on linux. The server does not 
+That 255 byte limit is the maximum supported filename length of the EXT4 file system on linux. The server does not 
 enforce this limitation, but instead the OS and file system that the server is running on and 
 manipulating files on does. If your OS has no limitation then it is solely dependant on the 
-file system you are using such as NTFS, NFS, EXT, and any other. The server places no maximum
-length on filenames or paths but it does place a limitation on the maximum message size at 
-around 4MB currently. This means if your filename is 3MB in length then you only have 1MB left 
-for data and that might slighlty impact uploading speed.
+file system you are using such as NTFS, NFS, EXT, and any other. And, if they have no limit then the server has no limit.
 
-The client using stashing expects the very first directory to be 253 bytes at most. The
-larger the stash identifier (no matter numeric or byte string) the more is subtracted from the
-255 limit (unless your OS and FS supports longer directory names). The standard client currently
-uses a 64-bit big endian integer to represent the revision identifier which is unix time 
-in seconds. This is done by not using the value 255 in any byte position.
+The server technically places no maximum length on filenames or paths but it does place a limitation on the maximum message size at around 4MB currently. This means if your filename is 3MB in length then you only have 1MB left for data and that might slighlty impact uploading speed. Also, if your filename is 4MB in length then there would be no room for anything else.
 
-Let us talk about the first directory name as it means something different that what would
-normaly be expected. When you push files you can specify the `--rpath`. This means just
-what you would imagine. It is a prefix to the remote path. So for example if you use
-`--lpath=/home/dave/documents` and `/home/dave/documents` looks like this:
-
-    /home/dave/documents
-        /workstuff/...
-        /homestuff/...
-        /manuals/...
-        /armx86x64/..
-        /companyreport.pdf
-
-If you use `--rpath=dave-documents` then the client will do this:
-
-    /dave-documents/workstuff/...
-    /dave-documents/homestuff/...
-    /dave-documents/manuals/...
-    /dave-documents/arm86x64/...
-    /dave-documents/companyreport.pdf
-
-This is very useful as it allows you to not only prefix a path, but it can also be used
-to only pull from certain remote paths. The `--rpath` serves as a target identifier and
-a remote path prefix. You can treat `--rpath` like a path, group name, target name, or
-whatever you like.
-
-The client implements stashing (alternative data streams) by prefixing something this to the path once
-the `--rpath` prefix is added. This something is the byte `0xff`. It only does it for the very first
-directory. The client also uses a 64-bit big-endian unix time in seconds after the `0xff`. So if you
-stashed a file like `/dave-documents/armx86x64/intelmanual.pdf` it will be turned into something
-like this `/\xff\x34\xe3\x23\x87dave-documents/armx86x64/intelmanual.pdf`. As you can see now the
-exact same file is stored but under a prefix.
-
-So you say that seems easy right? Well, if you dont use `--rpath` you do not get a prefix so instead
-the remote server directory would look like this:
-
-        /workstuff/...
-        /homestuff/...
-        /manuals/...
-        /armx86x64/..
-        /companyreport.pdf
-
-Which is not the greatest idea in the world, but it will work. But, how will it stash a file? Well,
-a stashed file would look like this:
-
-    \xff\x34\xe3\x23\x32\xff/companyreport.pdf
-    \xff\x34\xe3\x24\x32workstuff/...
-    \xff\x34\xe3\x24\x32homestuff/...
-    \xff\x34\xe3\x24\x32manuals/...
-    \xff\x34\xe3\x24\x32armx86x64/...
-
-It treated the base directories like you would expect, but for the base files it prefixed them
-with the directory name `\xff`. So it essentially named the directory `\xff`. 
-
-The major point here is that it is a great idea to use `--rpath` even if you only do things like
-`--rpath=dave-documents`, `--rpath=companypc-0392`, or `--rpath=serverpc-9382`. However, in order
-to keep flexibility in place you can if you so desire to omit any `--rpath` but you will actually
-limit future flexibility. There are times with an omitted `--rpath` can be quite useful such as
-downloading/pulling the entire repository of files or other things (and along with filters).
+_The stashing feature is implemented using a specialy named sub-directory in your root directory which is able to store files that have been deleted in the event you need to
+recover them. I abandoned my original method for stashing files so I do not have any details
+on the new method as this time._
 
 Let us talk a moment about meta data and how it works. The meta data is really just data except
 it describes one or more things about a file. The meta data support is partially implemented by
@@ -304,6 +232,11 @@ _So meta data is really helpful for the client where client means both software 
 Client Side Isolated Encryption
 =====
 I call it client side isolated because the only place encryption or decryption ever takes place is on the client. I hope to have a decent plugin system in place to provide encryption. The standard client also supports mixing of encryption using filters. You can specify encryption using one of these two ways or both where one will override the other.
+
+This really is a very safe and powerful way to encrypt your data. It removes the server side
+being comprimised from being a problem and this is exactly what you want. It also prevents
+the server administrator from copying your data and making it public since they do not have
+the encryption key to recover the actual data.
 
 The first way is using the command line option `--def-crypt=<algorithm>,<parameters>`. This causes the standard client to look for the encryption plugin specified by algorithm. Then pass the parameters to it that are specified and encrypt any file using this.
 
@@ -357,154 +290,34 @@ There are some standard plugins packaged by default. Some may contain any needed
 others may require you to build the binary for them to be usable. At the moment all the plugins
 use a binary backing because Python is just a tad too slow for heavy integer crunching in loops.
 
-_You are welcome to development your own plugins and submit them for inclusion here!_
+Most plugins should be very portable in their binary form. You may find a pre-built binary
+for each plugin that needs one. Some platforms may not have a binary and in that case you
+will need to build one. I recommend looking at `/lib/pluginman.py` to determine the proper
+name for the library and then building it from the source in each plugin sub-directory.
 
 ##### NULL
 This plugin is not generaly used directly. It essentially applies no transformation to the data.
 ##### XOR
-This is a very simple and basic repeating XOR. If it repeats depends on the length of you data. It
-is highly vulnerable if the attacker can know or guess the plain text. If guessed the attacker 
-essentially gains the key and therefore gains access to any other file. This means your weakest link
-causes the remaining to fall. This should only be used to prevent casual non-technical users or
-system administrators from snooping your data. _The only advantage if even significant is the speed
-at which it can encrypt. So if you are CPU bound on encrypting and your network link can handle
-more then this could give you that boost you are looking for while still preventing casual prying
-eyes from your data._
-##### SCRYPT 
-The main advantage to this is that you can use short _rememerable_ passwords. It essentially computes
-a larger password from your smaller password. It does this in such a way that it is not technically
-feasible for the attacker to try to guess your small password, instead they must guess the larger
-generated password. The larger password is generated at run-time and is not stored anywhere. After
-generating your larger password the AES-CTR-256 cipher is used to encrypt your data. The AES-CTR-256
-uses a 64 byte password (uses 255 values per byte). This 64 byte password is generated from your short
-password. So using a password longer than 64 characters or byte is likely to bring no real gain to the
-security. The purpose of scrypt is mainly to allow you to use a _rememerable_ password. _If it were
-possible for humans to remember 64 bytes then scrypt would be useless._
-##### AESCTR
-This essentially skips the scrypt step of making a larger password and directly uses the password you
-supply. You can use a file to supply the password using this method if you so desire. I mainly included
-this for those who wish to reduce the time required for stretching their password with scrypt. You can
-provide it with 8 bytes for a 64-bit key, 16 bytes for a 128-bit key, and 32 bytes for a 256-bit key.
+A very simple plugin mainly to be used as a demonstration plugin.
 
-An input file with more than 32 bytes will just have anything after the 32nd byte ignored and not used 
-so there is no gain in using a key file larger than 32 bytes unless there is a another reason for it to
-have more than 32 bytes.
-
-_Your underlying cryptography library backing the AES functions on your OS may support key sizes larger
-than 256-bit or arbitrary key sizes but at this time the plugin does not try to enumerate this support
-and is hard coded to only support 64, 128, and 256 bit key sizes and expects that support._
 ##### AESCTRMULTI
-This is essentially the same as AESCTR except it can make use of more than 32 bytes in a keyfile. It will
-only use a multiple of 32 bytes. It should reject or error on a key file less than 64 bytes. So it can
-use 64, 96, 128, 160, 192, 224, 256, 288 byte chunks and so forth. If you had a 287 byte file it would
-only use 224 bytes for the key. This is because it takes the file and splits it up into 32 byte chunks, and
-if there a sequence of bytes less than 32 at the end (for example a file with 287 bytes) it will just discard
-those 31 bytes and will _NOT_ pad in order to not introduce a weak key.
+This plugin uses AES-256-ECB and AES-256-CTR to encrypt individual files. It requires either a master key file that contains at least 32 bytes of data (remaining bytes ignored), or a normal
+password supplied. If you supply a normal password the SCRYPT KDF is used to generate 32 bytes
+and that is used as the key for AES.
 
-_So for example your 288 byte file becomes 9 individual 256-bit AES-CTR keys._
-
-When the plugin is presented with a file to encrypt it random selects one of the sub-keys (the entire file or portion
-of the file used is considered the key) using a cryptographically secure random generator provided by your OS
-and selected by the Python standard library's `os` module. It then uses this sub-key to encrypt the file with
-256-bit AES-CTR. The output is prefixed with the index of this sub-key. 
-
-You must use the same key file for decryption as you used for encryption because any changes will cause the
-wrong key to be used. So treat the key file as a whole key. I only explained how it is broken up for the more
-technical users to be able to understand what is happening.
-
-Also, the protection affording by for example a 288-bit AESCTRMULTI key is not the same as afforded by a
-288 byte (2304-bit) key is not the same as the protection by a 288 byte (2304-bit) AES-CTR key. With this
-in mind an example if say for example that tomorrow a system is built that can brute force 256-bit AES-CTR
-in one year. This means that your 2304-bit AES-CTR-MULTI key could be broken by this machine in 9 years but
-a 2304-bit AES-CTR key might still be atronomical to break for this machine. But, this is dependant on the
-attacker breaking the encryption on the key index block at the beginning of the file.
-
-After randomly selecting a sub-key and encrypting the file an additional 32 bytes are created that hold
-the first 4 bytes which hold the sub-key index in big endian then the remaining 28 bytes are random. This
-32 byte block is then encrypted using the first sub-key. So an attacker must first recover the first sub-key
-then they must recover the remaining sub-keys to recover the plain text for all files. By making each file
-encrypted with a different key the attacker is unable to make the relationship between plaintext and ciphertext
-for known files because they do not know which sub-key was used making AES even more resistant to a plaintext
-attack.
+Each file has a random 256-bit key generated and that key is used in AES-256-CTR mode to encrypt the entire file with a known nonce. Then this random key is encrypted with the
+master key and placed at the beginning of the file.
 
 ##### What encryption plugin should I use?
-Well, this depends on how secure you want your data to be. At the moment the AESCTR using _should_ be 
-really strong if you use a decently random key. The difference in SCRYPT and AESCTR256 is that
-the SCRYPT takes a short password and through a memory and CPU intensive process produces a long
-key that is 256-bits in length _then_ it performs the AESCTR256. Also, the scrypt produces a different
-key across invocation resulting in different keys used to encrypt different files which might make
-it more difficult for an attacker but could be entirely overkill. So your best encryption is likely
-going to be using SCRYPT with a 64-byte input (essentially letting it transform it). But, your more
-practicle encryption might instead be using AESCTR256 with a file containing 32 bytes of randomly
-generated data. For example on Linux you can do `dd if=/dev/urandom of=mykey bs=1 count=32`. This
-will produce a 256-bit key file for usage with AESCTR256 plugin. This is practical and fast meaning
-you wont speed a tremendous amount of time encrypting your files. The SCRYPT plugin on the other hand
-will take considerable time on each file as it generates a key from your key and there is still the
-possibility of it being broken in the future because it is less mature than AES. So for lots of
-truely sensitive data I would likely use the AESCTR256 because it offers a good balance of proof
-through time with testing over the years, speed, and strength. 
-
-However, SCRYPT has the potential to
-produce different keys for each file therefore if there is no undiscovered weakness in SCRYPT it
-could essentially provide more strength by requiring the attacker to discover multiple keys instead
-of just a single key and you can use a shorter (longer the better) passwords that you can remember
-in your head instead of having to store anywhere.
-
-I mainly strive to provide the plugins to perform encryption and leave it to YOU to ultimately
-make the decision on how to protect your data, because I am unable to provide assurance that the
-algorithm, implementation, and way in which you use it will ultimately be secure enough for your
-needs not only today but in years to come.
-
-Another alternative and possibly stronger plugin to use is the aesctrmulti. This essentially takes
-a file as input and divides the file into 256-bit keys. It will not pad a key. So if you have a file
-with 255 bits you will get one key and have the equivilent to the AESCTR
+You should either use no encryption or the `AESCTRMULTI`.
 
 ##### I need something that is not likely to be broken in my life time... 
-_This section talks about using AES-CTR-1024 which is not supported at this time. The AES-CTR-256 is
-very strong and should be used, but this section mainly tries to show how even with the strongest
-encryption in the universe your still at the mercy of the system you use it on. If your system is
-comprimised then your key and your data should be considered commprised rendering encryption ineffective._
+It is very hard to estimate what kind of hardware we will have in 20 years, and if a
+cryptographic weakness in AES will be discovered. However, at this moment the usage
+of `AESCTRMULTI` provides _very_ strong encryption and is not likely to be broken by
+anyone. 
 
-So at this point your looking for something that can pretty much give you enough security that
-it can be reasonably assumed that the encryption will not be broken in your life time, right? Well,
-your best bet is to use AES-CTR-1024. That should be impossible to brute force, unless
-some structural weakness exists in the AES-CTR algorithm and if one does exist it very well may still
-be enough of a key size to still hold up to the onslaught that would surely ensue from such a weakness
-that would cripple the entire world I would imagine. So at least if your in trouble now that someone
-has your data you likely should have no worries because the whole world is in trouble.
-
-So, now on to the more important problem. You likely should feel confident at this point that your about
-to completely overkill encryption to the point you should have no trouble sleeping at night, but before
-you relax let me explain how your encryption will be broken. The AES-CTRL-1024 will require you to store
-a key in a file because it is very difficult if not impossible for you to remember it and it is infeasible
-to write it down (although you could) but that would mean you would have to enter it in. So let me explain
-the two different methods in which an attacker would gain this key.
-
-The first method is the attacker gains access to the key file. Now that nice 1024-bit key becomes about as
-good as a 1-bit key because hes not going to have to do any work to decrypt your data. So how could he get
-the file? Well, if you store it on your computer he could sit down at it and copy it. Also, a trojan could
-be used via an exploit to your system or whatever system the key is stored on. This would yield the ability
-to access the key likely and reduce your restful night.
-
-The second method relies on the fact that instead of storing the file on the system you kinda take it with
-you on say a USB stick, or maybe you have a circuit implanted inside your skull and a piece of hardware
-on your computer that recieves the key from your head then enters it into the program or provides it to the
-program. Sounds great right? Well, there is one catch. If the attacker has gained access to your system from
-a software point of view and has elevated priviledges then he could essentially snoop that file or data up
-as the program is using it to encrypt or decrypt data. Of course this is much harder than the attacker just
-sitting down and copying the file it is still a very real threat.
-
-So the point is the 1024-bit key basically eliminated brute force, dictionary attacks, and random guessing. 
-What it did not eliminate was the problem of a comprimised system. The point inside the point is that you
-should, even if using AES-CTR-256 (256-bit key), pay more attention to securing your system. Also, to note is
-the fact that if the attacker has access to the system he likely has access to the data. Sure maybe the NSA
-will not be able to break the encryption, but the point being they might just knock on your door and place
-you into custody and demand the keys - so keep that in mind. 
-
-_The only contrast to
-this is if you used the key one time to encrypt and backup your data then deleted the original data and never
-plug your key back into that system again. In this case, short from destroying the key, your data is almost
-perfectly safe for your life time._
-
+_Instead, you should be more worried about your local system being comprised by an 
+attacker._
 
 

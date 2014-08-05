@@ -29,10 +29,18 @@ def dummy(*args):
 class PatchJobSharedState:
     def dec(self):
         self.opCount -= 1
+        self.patchrunning[0] -= 1
         if self.opCount < 0:
             raise Exception('DEC TOO MANY TIMES')
+        #print('dec: opCount:%s patchrunning[0]:%s' % (self.opCount, self.patchrunning[0]))
     def inc(self):
         self.opCount += 1
+        self.patchrunning[0] += 1
+        #print('inc: opCount:%s patchrunning[0]:%s' % (self.opCount, self.patchrunning[0]))
+    def decsleeping(self):
+        self.opSleeping -= 1
+    def incsleeping(self):
+        self.opSleeping += 1
 
 def TruncateFile(lpath, size):
     if os.path.exists(lpath) is False:
@@ -149,17 +157,6 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
         if _opcount[0] < 1 and _opcount[1] is False:
             # we are finished
             _fo.finish()
-
-        # hey.. just keep on moving..
-        #try:
-        #    fd = open(_lpath, 'r+b')
-        #    fd.seek(_off)
-        #    fd.write(data)
-        #    fd.close()
-        #except Exception as e:
-        #    print('exception writing to %s' % (_lpath))
-        #    print(e)
-        #    exit()
         
     echo = { 'echo': False }
         
@@ -394,8 +391,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
         if _success == 0:
             raise Exception('Hash Error')
 
+        #gc.collect()
+
         _data = _fo.read(_offset, _size)
-        _lhash = _fo.read(_offset, _size)
+        #_lhash = _fo.read(_offset, _size)
         #fd = open(_lpath, 'rb')
         #fd.seek(_offset)
         #_data = fd.read(_size)
@@ -403,25 +402,20 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
         #_lhash = fd.read(_size)
         #fd.close()
 
-        # function is BAD because it modifies an immutable object, if the
-        # call is pure python then it returns a new bytes object but if
-        # the call is to C library then it modifies it in place - this is
-        # why i assigned the return value so it works for both pure python
-        # and an native library call but i need to fix this shit very soon,
-        # also its eating precious CPU with the double call above if its
-        # using an encryption plugin
-        _lhash = c.HashKmc(_lhash, 128)
+        # this returns a new bytes instance representing
+        # the hash
+        _lhash = c.HashKmc(_data, 128)
 
         # if we have used more bytes than the file's actual size then we are
         # basically just wasting bandwidth and should immediantly force all
         # remaining operations to perform a write to turn this into an upload
         if _shrstate.bytesProtoUsed > (_shrstate.firstSize * 0.5) - _shrstate.bytesPatched:
-            logger.debug('FORCEDPATCH:%s:%x:%x' % (_lpath, _offset, _size))
             _shrstate.bytesPatched += len(_data)
             c.FileWrite(_rpath, _offset, _data, Client.IOMode.Discard)
-            logger.debug('hash; [%s] minus one' % id(_shrstate))
             _shrstate.dec()
-            if _shrstate.opCount < 1:
+            if _shrstate.opCount < 1 and _shrstate.init is False:
+                ct = time.time()
+                c.FileSetTime(_rpath, int(ct), int(ct), Client.IOMode.Discard)
                 eventfunc('PatchFinish', _rpath, _lpath)
                 _fo.finish()
             return
@@ -440,12 +434,11 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
             #
             logger.debug('hash-bad:%s:%x:%x\n' % (_lpath, _offset, _size))
             # limit the minimum size of a hash
-            if _size > 1024 * 1024 * 4:
+            if _size > 1024 * 128:
                 # we have not decremented for this operation and we are
                 # going to create two new (but we are going to die) so
                 # only increment it by one
                 logger.debug('hash; [%s] plus one' % id(_shrstate))
-                _shrstate.inc()
                 _nsz = int(_size / 2)
                 if _size % 2 == 0:
                     _aoff = int(_offset + _nsz)
@@ -463,9 +456,15 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
                 # either execute it or delay it
                 subjob = [_rpath, _lpath, _rsize, _lsize, _aoff, _alen, _shrstate, _fo]
                 jobPatchQueryDelayed.append((_rpath, _aoff, _alen, subjob))
+                # represent this sub-job/job as sleeping
+                _shrstate.incsleeping()
 
                 subjob = [_rpath, _lpath, _rsize, _lsize, _boff, _blen, _shrstate, _fo]
                 jobPatchQueryDelayed.append((_rpath, _boff, _blen, subjob))
+                # represent this sub-job/job as sleeping
+                _shrstate.incsleeping()
+                # this one turned into two (so only increment once)
+                _shrstate.inc()
 
                 # just an estimate of how much we are about to use
                 _shrstate.bytesProtoUsed += 128 + (8 * 2 + 32) * 2
@@ -477,6 +476,9 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
 
             logger.debug('patching-section:%s:%x:%x' % (_lpath, _offset, _size))
             c.FileWrite(_rpath, _offset, _data, Client.IOMode.Callback, (__eventFileWrite, None))
+            _shrstate.dec()
+            # exit here
+            return
         else:
             # track how many bytes we saved!
             _shrstate.bytesSaved += _size
@@ -485,7 +487,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
         # decrement since we just died and spawned no sub-hash jobs
         logger.debug('hash; [%s] minus one' % id(_shrstate))
         _shrstate.dec()
-        if _shrstate.opCount < 1:
+        if _shrstate.opCount < 1 and _shrstate.init is False:
             # set the time to the current time to keep it from being check every
             # time by way of hashing
             ct = time.time()
@@ -499,11 +501,15 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
     stat_uploaded = 0
     stat_patched = 0
     stat_checked = 0
+
+    patchrunning = [0]
     
     dd = time.time()
     
     # the soft limit for application level buffer size
     buflimit = 1024 * 1024 * 4
+
+    lt = time.time()
 
     # keep going until we get the echo 
     while echo['echo'] is False:
@@ -533,7 +539,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
         # do not process any new files unless we have no patch operations
         # and no more than 19 upload operations.. otherwise we start spreading
         # things out and nothing really gets completely done
-        if c.waitCount() < 500 and len(jobPatchOperations) == 0 and len(jobUpload) < 20:
+        if c.waitCount() < 500 and len(jobPatchOperations) == 0 and len(jobUpload) < 4:
             # only throw files into pipeline when wait count is low
             jobPendingFilesLimit = min(500, len(jobPendingFiles))
         else:
@@ -621,16 +627,26 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
         #       thus that is what this is doing - holding patch operations until
         #       our queue count is under the limit.
         x = -1
-        for x in range(0, jobPatchQueryDelayedLimit):
+        keep = []
+        #print('len(jobPatchQueryDelayed):%s patchrunning:%s' % (len(jobPatchQueryDelayed), patchrunning[0]))
+        for x in range(0, len(jobPatchQueryDelayed)):
             job = jobPatchQueryDelayed[x]
             _rpath = job[0]
             _off = job[1]
             _size = job[2]
             subjob = job[3]
+            # track how many are active [sent to server] (versus sleeping)
+            if (subjob[6].opCount - subjob[6].opSleeping) > jobPatchQueryDelayedLimit:
+                # we have too many active requests so wait until they complete
+                # and are then represented as sleeping..
+                keep.append(job)
+                continue
             v = c.FileHash(_rpath, _off, _size, Client.IOMode.Callback, (__eventHashReply, subjob))
-
+            # decrement sleeping to represent one that has been sent to the server
+            subjob[6].decsleeping()                
+        jobPatchQueryDelayed = keep
         # drop the ones we executed
-        jobPatchQueryDelayed = jobPatchQueryDelayed[x + 1:]
+        #jobPatchQueryDelayed = jobPatchQueryDelayed[x + 1:]
 
         #
         # JOB-PATCH
@@ -646,26 +662,16 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
         #       so we can finish our patch jobs before moving on the to next
         #       file
 
-        tr = []
-        hv = 0
-        he = None
-        for op in jobPatchOperations:
-            if op.opCount < 1 and op.init is False:
-                # this operation has finished
-                tr.append(op)
-                continue
-            # report the longest lived
-            if time.time() - op.startTime > hv:
-                hv = time.time() - op.startTime
-                he = op
-        if he is not None:
-            eventfunc('LongestPatchOp', he.rpath, he.lpath, he)
-
-        for t in tr:
-            jobPatchOperations.remove(t)
-
+        #if patchrunning[0] > 999999:
+        #    _jobPatchLimit = 0
+        #else:
+        #    _jobPatchLimit = jobPatchLimit
+        if patchrunning[0] > 10:
+            _max = 0
+        else:
+            _max = min(jobPatchLimit, len(jobPatch))
         x = 0
-        while x < jobPatchLimit:
+        while x < _max:
             job = jobPatch[x]
             _rpath = job[0]
             _lpath = job[1]
@@ -681,10 +687,12 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
                 shrstate.bytesPatched = 0
                 shrstate.bytesSaved = 0
                 shrstate.opCount = 0
+                shrstate.opSleeping = 0
                 shrstate.startTime = time.time()
                 shrstate.lpath = _lpath
                 shrstate.rpath = _rpath
                 shrstate.init = True
+                shrstate.patchrunning = patchrunning
                 job.append(shrstate)
                 jobPatchOperations.append(shrstate)
                 '''
@@ -711,7 +719,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
                 _fo = job[6]
 
             # hash 32MB chunks (server is threaded so it should be okay)
-            csz = chunksize
+            csz = 1024 * 1024 * 4
             # get actual size due to what we have remaining of the file
             _tsz = min(csz, _lsize - _curoff)
 
@@ -731,7 +739,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
                 # of being bad code
                 shrstate.init = False
                 del jobPatch[x]
-                jobPatchLimit = jobPatchLimit - 1
+                _max = _max - 1
                 continue
 
             # increment x since we did not remove anything
@@ -856,9 +864,12 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
         # 
         # JOB-UPLOAD
         #
+        # Limit, ourselves to only 4 at a time.
         tr = []
         cjc = 0
-        for uj in jobUpload:
+        #for uj in jobUpload:
+        for x in range(0, min(4, len(jobUpload))):
+            uj = jobUpload[x]
             _rpath = uj[0]
             _lpath = uj[1]
             _rsize = uj[2]

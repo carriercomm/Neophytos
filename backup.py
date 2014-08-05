@@ -5,6 +5,9 @@ import pprint                               # not used anymore..
 import re                                   # not directly used
 import threading                            # not used anymore
 import time                                 # not used anymore
+import signal
+import gc
+import operator
 
 from lib import misc                        # ... likely old unused junk.. need removal really..
 from lib import output                      # serves as tcp status server.. needs to be rebuilt and
@@ -20,6 +23,32 @@ from lib.efilters import EncryptionFilters  # encryption filters created from en
 import lib.crossterm as crossterm           # cross-platform console API
 import lib.flycatcher as flycatcher         # debugging tool
 
+def dumpmemory():
+    types = {}
+    sizes = {}
+    objs = gc.get_objects()
+    for obj in objs:
+        xtype = type(obj)
+        if xtype not in types:
+            types[xtype] = 0
+            sizes[xtype] = 0
+        types[xtype] += 1
+        try:
+            sizes[xtype] += obj.__sizeof__()
+        except:
+            pass
+    fd = open('memdbg', 'w')
+    _sorted = sorted(sizes.items(), key=operator.itemgetter(1))
+    for key, value in _sorted:
+        fd.write('%s:%s:%s\n' % (sizes[key], types[key], key))
+    fd.close()
+    exit()
+
+#def hand_inter(signum, frame):
+#    dumpmemory()
+#    exit()
+#signal.signal(signal.SIGINT, hand_inter)
+
 '''
     The fly filter has to be setup before modules are loaded, because
     they may create a logger object during initialization. The logger
@@ -30,14 +59,12 @@ def flyFilter(logger, mclass, group, module, caller, lineno, msg):
     if mclass != flycatcher.Class.Debug:
         return True
 
-    return True
-
     onlythese = (
-        '<wrote>',
+        'keep-length',
     )
 
     for ot in onlythese:
-        if msg.find(ot) == 0:
+        if msg.find(ot) > -1:
             return True
 
     return False
@@ -87,7 +114,7 @@ class Catcher:
         self.linecnt = 0
         self.smsgcnt = 0
 
-        print('\n\n\n', end='\x1b[3A')
+        print('\n\n\n\n\n', end='\x1b[3A')
 
     def writeline(self, txt, row = 0):
         # write line and move back
@@ -108,27 +135,42 @@ class Catcher:
             return self.catchEncryptFilter(*args[1:])
         if ename == 'Filter':
             return self.catchFilter(*args[1:])
+        if False:
+            return
+        if ename == 'FileWrite':
+            txt = '%s:%x:%x' % (args[1], args[2], args[3])
+            txt = txt.ljust(40)
+            self.writeline(txt, row = 3)
+            return
         if ename == 'Cycle' or ename == 'DumpCycle':
+            return
+        if ename == 'DataOut':
+            ch = '#'
             vp = '#'.rjust(self.smsgcnt % 40)
             vp = vp.ljust(40)
             vp = 'Local: [%s]' % vp
             self.smsgcnt += 1
             self.writeline(vp, row = 1)            
             return
-        if ename == 'MessageIn':
+        if ename == 'DataIn':
             vp = '#'.rjust(self.smsgcnt % 40)
             vp = vp.ljust(40)
             vp = 'Server:[%s]' % vp
             self.smsgcnt += 1
             self.writeline(vp, row = 2)
             return
+        
+        ignored = ('MessageOut', 'MessageIn')
 
-        rpath = args[1]
+        if ename in ignored:
+            return
+
         lpath = args[2]
-        txt = '%s:%s:' % (self.linecnt, ename)
-        lpath = lpath[len(lpath) - (70 - len(txt)):]
-        txt = '%s:%s' % (txt, lpath.decode('utf8', 'ignore'))
-        self.writeline(txt.ljust(70))
+        txt = lpath.decode('utf8', 'ignore')
+        if len(txt) > 40:
+            txt = txt[-40:]
+        txt = 'File:  [%s]' % (txt.ljust(40))
+        self.writeline(txt)
 
         self.linecnt += 1
 
