@@ -108,6 +108,8 @@ class ProxyStream:
                 cx = cx + int(val)
             if code == 'D':
                 cx = cx - int(val)
+                if cx < 0:
+                    cx = 0
             if code == 'm':
                 vals = val.split(';')
                 attr = self.cattr
@@ -127,7 +129,6 @@ class ProxyStream:
                 self.ct.winsetconsoletextattribute(attr)
                 self.cattr = attr
             # change position
-            self.ct.stdout.write('cx:%s cy:%s\n' % (cx, cy))
             self.ct.winsetcursorposition(cx, cy)
             # write remaining string
             self.ct.stdout.write(msg)

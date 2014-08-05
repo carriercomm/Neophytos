@@ -4,6 +4,8 @@
 import time
 import os
 import sys
+import gc
+import inspect
 
 from lib import output
 from lib.client import Client
@@ -311,14 +313,14 @@ def Pull(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
 '''
     PUSH
 '''
-def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
+def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, chunksize = 1024 * 32):
     if rpath is None:
         rpath = b'/'
 
     metasize = 128
 
     sac = bytes(sac, 'utf8')
-    c = Client2(rhost, rport, sac, metasize = metasize)
+    c = Client2(rhost, rport, sac, metasize = metasize, eventfunc = eventfunc)
     c.Connect(essl = ssl)
 
     # produce remote and local paths
@@ -587,7 +589,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
         x = -1
         for x in range(0, jobDirEnumLimit):
             dej = jobDirEnum[x] 
-            nodes = os.listdir(dej)
+            try:
+                nodes = os.listdir(dej)
+            except:
+                continue
 
             for node in nodes:
                 _lpath = b'/'.join((dej, node))
@@ -654,7 +659,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
                 hv = time.time() - op.startTime
                 he = op
         if he is not None:
-            eventfunc('LongestPatchOp', he)
+            eventfunc('LongestPatchOp', he.rpath, he.lpath, he)
 
         for t in tr:
             jobPatchOperations.remove(t)
@@ -691,13 +696,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
                     implementation of this.
                 '''
                 tag, plugid, plugopts = eventfunc('EncryptFilter', _lpath, _lpath[_lpath.rfind(b'/') + 1:], False)
-                if plugid is None:
-                    # if none specified then default to null
-                    plug = getPM().getPluginInstance('crypt.null', '', (c, []))
-                    tag = ''
-                else:
-                    plug = getPM().getPluginInstance(plugid, tag, plugopts)
-                    print('plug', plug)
                 _fo = plug.beginread(_lpath)
                 job.append(_fo)
                 # make sure the correct metadata type/version (VERSION 1) byte is written
@@ -713,7 +711,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
                 _fo = job[6]
 
             # hash 32MB chunks (server is threaded so it should be okay)
-            csz = 1024 * 1024 * 32
+            csz = chunksize
             # get actual size due to what we have remaining of the file
             _tsz = min(csz, _lsize - _curoff)
 
@@ -750,7 +748,10 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
         for x in range(0, jobPendingFilesLimit):
             _lpath = jobPendingFiles[x]
             ##### DEBUG (NO FILES GREATER THAN 200MB) #####
-            stat = os.stat(_lpath)
+            try:
+                stat = os.stat(_lpath)
+            except:
+                continue
             _lsize = stat.st_size
             if _lsize > 1024 * 1024 * 200:
                 continue
@@ -811,12 +812,11 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
                 # first make the remote size match the local size
                 c.FileTrun(_rpath, _lsize, Client.IOMode.Discard)
                 if max(_rsize, _lsize) < 1:
-                    eventfunc('Finished')
+                    eventfunc('Finished', _rpath, _lpath)
                     continue
                 # need to decide if we want to upload or patch
                 if min(_rsize, _lsize) / max(_rsize, _lsize) < 0.5:
                     # make upload job
-                    logger.debug('<upload>:%s' % _lpath)
                     jobUpload.append([_rpath, _lpath, _rsize, _lsize, 0])
                 else:
                     # make patch job
@@ -848,7 +848,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
                     jobPatch.append([_rpath, _lpath, _rsize, _lsize, 0])
             else:
                 # just drop it since its either up to date or newer
-                eventfunc('Finished')
+                eventfunc('Finished', _rpath, _lpath)
                 stat_uptodate = stat_uptodate + 1
                 continue
         jobGetModifiedDate = [] 
@@ -891,7 +891,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy):
                 At this point we have the modification plugin instance
                 read object and we are treating it like a normal file.
             '''
-            _chunksize = 1024 * 1024 * 4
+            _chunksize = chunksize
             # see what we can send
             _rem = min(_lsize - _curoff, _chunksize)
             # open local file and read chunk

@@ -69,7 +69,7 @@ class Client:
         Callback       = 3        # Execute callback on arrival.
         Discard        = 4        # Async, but do not keep results.
         
-    def __init__(self, rhost, rport, aid, metasize = 128):
+    def __init__(self, rhost, rport, aid, metasize = 128, eventfunc = None):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.keepresult = {}
         self.callback = {}
@@ -81,6 +81,7 @@ class Client:
         self.socklockwrite = threading.RLock()
         self.bz2compression = 0                 # not really used anymore
         self.maxmsgsz = 1024 * 1024 * 4
+        self.eventfunc = eventfunc
 
         if metasize is None:
             metasize = 128
@@ -303,6 +304,8 @@ class Client:
             
         type = data[0]
         data = data[1:]
+
+        self.eventfunc('MessageIn', svector, vector, type)
 
         # since SSL supports compression i might turn this
         # into something else, maybe even controlling the
@@ -728,8 +731,8 @@ class Client:
         return bytes(data[0:sz])
 
 class Client2(Client):
-    def __init__(self, rhost, rport, aid, metasize = None):
-        Client.__init__(self, rhost, rport, aid, metasize = metasize)
+    def __init__(self, rhost, rport, aid, metasize = None, eventfunc = None):
+        Client.__init__(self, rhost, rport, aid, metasize = metasize, eventfunc = eventfunc)
 
     '''
         We re-implement the FileWrite to enforce the maximum

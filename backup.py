@@ -84,15 +84,23 @@ class Catcher:
         self.acceptedCount = 0
         self.rejectedCount = 0
 
-    def writeline(self, txt):
-        txt = txt[0:40]
-        txt = txt.ljust(40)
+        self.linecnt = 0
+        self.smsgcnt = 0
+
+        print('\n\n\n', end='\x1b[3A')
+
+    def writeline(self, txt, row = 0):
+        # write line and move back
+        if row > 0:
+            print('', end='\x1b[%sB' % row)
         print(txt, end = '\x1b[1000D')
+        if row > 0:
+            print('', end='\x1b[%sA' % row)
 
     def event(self, *args):
         ename = args[0]
 
-        self.writeline(ename)
+        #self.writeline(ename)
 
         if ename == 'DecryptByTag':
             return self.catchDecryptByTag(*args[1:])
@@ -100,6 +108,29 @@ class Catcher:
             return self.catchEncryptFilter(*args[1:])
         if ename == 'Filter':
             return self.catchFilter(*args[1:])
+        if ename == 'Cycle' or ename == 'DumpCycle':
+            vp = '#'.rjust(self.smsgcnt % 40)
+            vp = vp.ljust(40)
+            vp = 'Local: [%s]' % vp
+            self.smsgcnt += 1
+            self.writeline(vp, row = 1)            
+            return
+        if ename == 'MessageIn':
+            vp = '#'.rjust(self.smsgcnt % 40)
+            vp = vp.ljust(40)
+            vp = 'Server:[%s]' % vp
+            self.smsgcnt += 1
+            self.writeline(vp, row = 2)
+            return
+
+        rpath = args[1]
+        lpath = args[2]
+        txt = '%s:%s:' % (self.linecnt, ename)
+        lpath = lpath[len(lpath) - (70 - len(txt)):]
+        txt = '%s:%s' % (txt, lpath.decode('utf8', 'ignore'))
+        self.writeline(txt.ljust(70))
+
+        self.linecnt += 1
 
 
     def catchDecryptByTag(self, tag):
