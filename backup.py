@@ -138,9 +138,9 @@ class Catcher:
         if False:
             return
         if ename == 'FileWrite':
-            txt = '%s:%x:%x' % (args[1], args[2], args[3])
-            txt = txt.ljust(40)
-            self.writeline(txt, row = 3)
+            #txt = '%s:%x:%x' % (args[1], args[2], args[3])
+            #txt = txt.ljust(40)
+            #self.writeline(txt, row = 3)
             return
         if ename == 'Cycle' or ename == 'DumpCycle':
             return

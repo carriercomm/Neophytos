@@ -539,7 +539,7 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
         # do not process any new files unless we have no patch operations
         # and no more than 19 upload operations.. otherwise we start spreading
         # things out and nothing really gets completely done
-        if c.waitCount() < 500 and len(jobPatchOperations) == 0 and len(jobUpload) < 4:
+        if c.waitCount() < 500 and len(jobUpload) < 4:
             # only throw files into pipeline when wait count is low
             jobPendingFilesLimit = min(500, len(jobPendingFiles))
         else:
@@ -887,7 +887,13 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
                     # if none specified then default to null
                     plug = getPM().getPluginInstance('crypt.null', '', (c, []))
                     tag = ''
-                _fo = plug.beginread(_lpath)
+                try:
+                    _fo = plug.beginread(_lpath)
+                except PermissionError:
+                    eventfunc('OpenFailed', _rpath, _lpath)
+                    tr.append(uj)
+                    continue
+
                 uj.append(_fo)
                 # make sure the correct metadata type/version (VERSION 1) byte is written
                 c.FileWriteMeta(_rpath, 0, b'\xAA', Client.IOMode.Discard)
@@ -910,7 +916,6 @@ def Push(rhost, rport, sac, lpath, rpath = None, ssl = True, eventfunc = dummy, 
             #_fd.seek(_curoff)
             #_data = _fd.read(_rem)
             #_fd.close()
-
 
             _data = _fo.read(_curoff, _rem)
 
